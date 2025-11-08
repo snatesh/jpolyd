@@ -70,6 +70,37 @@ if(JPOLYD_ENABLE_TEST)
   )
 endif()
 
+# --- Python site selection: user (no sudo) vs system ---
+option(JPOLYD_PY_INSTALL_USER "Install Python bits into user site-packages" ON)
+
+find_package(Python COMPONENTS Interpreter REQUIRED)
+
+# Pick target site-packages (user by default)
+if(JPOLYD_PY_INSTALL_USER)
+  execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import site; print(site.getusersitepackages())"
+    OUTPUT_VARIABLE PY_SITE
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+else()
+  execute_process(  # system site (may need sudo)
+    COMMAND ${Python_EXECUTABLE} -c "import site,sys; print(next((p for p in site.getsitepackages() if 'site-packages' in p), ''))"
+    OUTPUT_VARIABLE PY_SITE
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+endif()
+
+message(STATUS "Python install target: ${PY_SITE}")
+
+# Install the Python wrapper
+install(FILES ${CMAKE_SOURCE_DIR}/python/jweight.py DESTINATION ${PY_SITE})
+
+# Install the shared lib next to it so ctypes can find it without extra paths
+if(JPOLYD_BUILD_CAPI)
+  install(TARGETS jpolyd_c
+    LIBRARY DESTINATION ${PY_SITE}   # .so/.dylib
+    RUNTIME DESTINATION ${PY_SITE}   # .dll on Windows
+    ARCHIVE DESTINATION ${PY_SITE})  # (rarely used)
+endif()
+
 # -------- summary --------
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Install dir: ${JPOLYD_INSTALL_DIR}")

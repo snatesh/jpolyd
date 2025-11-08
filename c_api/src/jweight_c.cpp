@@ -3,7 +3,7 @@
 
 using namespace jsimplex;
 
-// Internal helpers: template dispatch by D
+/* Internal helpers: template dispatch by D */
 template<int D>
 static inline double w_kappa_D(const double* kappa)
 {
@@ -11,24 +11,14 @@ static inline double w_kappa_D(const double* kappa)
 }
 
 template<int D>
-static inline double eval_D(const double* x, const double* kappa)
+static inline void eval_D(const double* X, int ld_point, int ld_dim,
+                          int npts, const double* kappa, double* out)
 {
-  return Weight<D, double>::eval(x, kappa);
+  return Weight<D, double>::eval(X, ld_point, ld_dim, npts, kappa, out);
 }
 
-template<int D>
-static inline double monomial_D(const double* x, const double* kappa)
-{
-  return Weight<D, double>::monomial(x, kappa);
-}
 
-template<int D>
-static inline double x_last_D(const double* x)
-{
-  return Weight<D, double>::x_last(x);
-}
-
-// Public C API (runtime dispatch). Extend the switch as needed.
+/* Public C API (runtime dispatch). Extend the switch as needed. */
 extern "C"
 {
 
@@ -44,39 +34,16 @@ double jweight_w_kappa(const double* kappa, int D)
   }
 }
 
-double jweight_eval(const double* x, const double* kappa, int D)
+void jweight_eval(const double* X, int ld_point, int ld_dim,
+                    int npts, const double* kappa, double* out, int D)
 {
   switch (D)
   {
-    case 1: return eval_D<1>(x, kappa);
-    case 2: return eval_D<2>(x, kappa);
-    case 3: return eval_D<3>(x, kappa);
-    case 4: return eval_D<4>(x, kappa);
-    default: return 0.0;
-  }
-}
-
-double jweight_monomial(const double* x, const double* kappa, int D)
-{
-  switch (D)
-  {
-    case 1: return monomial_D<1>(x, kappa);
-    case 2: return monomial_D<2>(x, kappa);
-    case 3: return monomial_D<3>(x, kappa);
-    case 4: return monomial_D<4>(x, kappa);
-    default: return 0.0;
-  }
-}
-
-double jweight_x_last(const double* x, int D)
-{
-  switch (D)
-  {
-    case 1: return x_last_D<1>(x);
-    case 2: return x_last_D<2>(x);
-    case 3: return x_last_D<3>(x);
-    case 4: return x_last_D<4>(x);
-    default: return 0.0;
+    case 1: eval_D<1>(X, ld_point, ld_dim, npts, kappa, out); return;
+    case 2: eval_D<2>(X, ld_point, ld_dim, npts, kappa, out); return;
+    case 3: eval_D<3>(X, ld_point, ld_dim, npts, kappa, out); return;
+    case 4: eval_D<4>(X, ld_point, ld_dim, npts, kappa, out); return;
+    default: return; // no-op
   }
 }
 

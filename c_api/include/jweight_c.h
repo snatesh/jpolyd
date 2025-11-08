@@ -5,17 +5,15 @@
 extern "C" {
 #endif
 
-// Returns w_kappa for given D and kappa[0..D]
+/* Returns w_kappa for given D and kappa[0..D] */
 double jweight_w_kappa(const double* kappa, int D);
 
-// W_kappa(x) = w_kappa * monomial, x[0..D-1], kappa[0..D]
-double jweight_eval(const double* x, const double* kappa, int D);
+/* Evaluate normalized weight at npts points from a single flat buffer X.
+   Indexing: X[p*ld_point + j*ld_dim],  p=0..npts-1, j=0..D-1.
+   Works for AoS (ld_point=D, ld_dim=1) and SoA/column-major (ld_point=1, ld_dim=npts). */
+void jweight_eval(const double* X, int ld_point, int ld_dim,
+                  int npts, const double* kappa, double* out, int D); 
 
-// Monomial only (no gamma ratio)
-double jweight_monomial(const double* x, const double* kappa, int D);
-
-// x_last = 1 - sum(x[0..D-1])
-double jweight_x_last(const double* x, int D);
 
 #ifdef __cplusplus
 } // extern "C"
