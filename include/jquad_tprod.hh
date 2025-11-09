@@ -6,8 +6,8 @@
 #include <cmath>
 #include <jdetail.hh>
 
-/* Mapped tensor-product quadrature on the D-simplex
-   for the normalized unit weight function
+/* Mapped tensor-product quadrature for the 
+   Lebesgue measure on the d-simplex (sum(weights) = vol(d-simplex))
 
    Construction:
    - Use stick-breaking map t in [0,1]^D -> x in simplex T^D.
