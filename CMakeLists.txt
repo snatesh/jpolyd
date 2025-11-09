@@ -10,6 +10,14 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# Tell FindBLAS / FindLAPACK which vendor you prefer
+set(BLA_VENDOR OpenBLAS)
+find_package(BLAS   REQUIRED)
+find_package(LAPACK REQUIRED)
+find_library(LAPACKE_LIB lapacke REQUIRED)
+message(STATUS "Found LAPACKE: ${LAPACKE_LIB}")
+
+
 # -------- output directories (all local) --------
 set(JPOLYD_INSTALL_DIR ${CMAKE_SOURCE_DIR}/install)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/lib)
@@ -28,12 +36,18 @@ target_compile_features(jpolyd INTERFACE cxx_std_17)
 if(JPOLYD_BUILD_CAPI)
   add_library(jpolyd_c SHARED
     c_api/src/jweight_c.cpp
+    c_api/src/jquad_tprod_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/c_api/include
   )
-  target_link_libraries(jpolyd_c PRIVATE jpolyd)
+  target_link_libraries(jpolyd_c 
+    PRIVATE 
+      jpolyd 
+      ${LAPACKE_LIB}
+      openblas
+  )
 
   # link libm for lgamma() if on UNIX
   if(UNIX AND NOT APPLE)
@@ -48,17 +62,6 @@ if(JPOLYD_BUILD_CAPI)
   )
 endif()
 
-# -------- local install rules --------
-install(DIRECTORY include/ DESTINATION ${JPOLYD_INSTALL_DIR}/include)
-install(DIRECTORY c_api/include/ DESTINATION ${JPOLYD_INSTALL_DIR}/include)
-
-if(JPOLYD_BUILD_CAPI)
-  install(TARGETS jpolyd_c
-    LIBRARY DESTINATION ${JPOLYD_INSTALL_DIR}/lib
-    ARCHIVE DESTINATION ${JPOLYD_INSTALL_DIR}/lib
-    RUNTIME DESTINATION ${JPOLYD_INSTALL_DIR}/bin
-  )
-endif()
 
 # -------- optional python test --------
 if(JPOLYD_ENABLE_TEST)
@@ -67,6 +70,10 @@ if(JPOLYD_ENABLE_TEST)
   add_test(
     NAME python_jweight
     COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jweight_test.py
+  )
+  add_test(
+    NAME jquad_tprod
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jquad_tprod_test.py
   )
 endif()
 
@@ -91,7 +98,9 @@ endif()
 message(STATUS "Python install target: ${PY_SITE}")
 
 # Install the Python wrapper
+install(FILES ${CMAKE_SOURCE_DIR}/python/libjpolyd_loader.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jweight.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_tprod.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)

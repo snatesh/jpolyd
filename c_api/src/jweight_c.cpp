@@ -30,6 +30,7 @@ double jweight_w_kappa(const double* kappa, int D)
     case 2: return w_kappa_D<2>(kappa);
     case 3: return w_kappa_D<3>(kappa);
     case 4: return w_kappa_D<4>(kappa);
+    case 5: return w_kappa_D<5>(kappa);
     default: return 0.0;
   }
 }
@@ -43,6 +44,7 @@ void jweight_eval(const double* X, int ld_point, int ld_dim,
     case 2: eval_D<2>(X, ld_point, ld_dim, npts, kappa, out); return;
     case 3: eval_D<3>(X, ld_point, ld_dim, npts, kappa, out); return;
     case 4: eval_D<4>(X, ld_point, ld_dim, npts, kappa, out); return;
+    case 5: eval_D<5>(X, ld_point, ld_dim, npts, kappa, out); return;
     default: return; // no-op
   }
 }

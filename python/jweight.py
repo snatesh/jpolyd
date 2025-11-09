@@ -1,41 +1,28 @@
 import ctypes
-import os
-import sys 
 import numpy as np
-
-_here = os.path.dirname(__file__)
-if sys.platform.startswith("linux"):
-  _libname = "libjpolyd.so"
-elif sys.platform == "darwin":
-  _libname = "libjpolyd.dylib"
-elif sys.platform == "win32":
-  _libname = "jpolyd.dll"
-else:
-  _libname = "libjpolyd.so"
-
-libjweight = ctypes.CDLL(os.path.join(_here, _libname))
+from libjpolyd_loader import libjpolyd
 
 # double jweight_w_kappa(const double* kappa, int D);
-libjweight.jweight_w_kappa.argtypes = [ctypes.POINTER(ctypes.c_double),\
+libjpolyd.jweight_w_kappa.argtypes = [ctypes.POINTER(ctypes.c_double),\
                                        ctypes.c_int]
-libjweight.jweight_w_kappa.restype = ctypes.c_double
+libjpolyd.jweight_w_kappa.restype = ctypes.c_double
 
 # void jweight_eval(const double* X, int ld_point, int ld_dim, int npts,
 #                   const double* kappa, double* out, int D);
-libjweight.jweight_eval.argtypes = [ctypes.POINTER(ctypes.c_double),  # X
+libjpolyd.jweight_eval.argtypes = [ctypes.POINTER(ctypes.c_double),  # X
                                     ctypes.c_int,                     # ld_point
                                     ctypes.c_int,                     # ld_dim
                                     ctypes.c_int,                     # npts
                                     ctypes.POINTER(ctypes.c_double),  # kappa
                                     ctypes.POINTER(ctypes.c_double),  # out
                                     ctypes.c_int]                     # D
-libjweight.jweight_eval.restype = None
+libjpolyd.jweight_eval.restype = None
 
 
 def jweight_w_kappa(kappa: np.ndarray, D: int) -> float:
   kappa = np.ascontiguousarray(kappa, dtype=np.float64)
   kappa_ptr = kappa.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
-  return float(libjweight.jweight_w_kappa(kappa_ptr, int(D)))
+  return float(libjpolyd.jweight_w_kappa(kappa_ptr, int(D)))
 
 
 def jweight_eval(X: np.ndarray, ld_point: int, ld_dim: int, npts: int,
@@ -58,6 +45,6 @@ def jweight_eval(X: np.ndarray, ld_point: int, ld_dim: int, npts: int,
   out_ptr   = out.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
 
   # Call C API (AoS version)
-  libjweight.jweight_eval(X_ptr, int(ld_point), int(ld_dim), int(npts),
+  libjpolyd.jweight_eval(X_ptr, int(ld_point), int(ld_dim), int(npts),
                           kappa_ptr, out_ptr, int(D))
   return out
