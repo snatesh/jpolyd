@@ -29,7 +29,7 @@ int jquad_mapped_build(int D, int n, double* X, double* W)
     case 2: return quad_mapped_build_D<2>(n, X, W);
     case 3: return quad_mapped_build_D<3>(n, X, W);
     case 4: return quad_mapped_build_D<4>(n, X, W);
-    case 5: return quad_mapped_build_D<4>(n, X, W);
+    case 5: return quad_mapped_build_D<5>(n, X, W);
     default:
       return 0; // unsupported D
   }

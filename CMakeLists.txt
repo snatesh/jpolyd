@@ -37,6 +37,7 @@ if(JPOLYD_BUILD_CAPI)
   add_library(jpolyd_c SHARED
     c_api/src/jweight_c.cpp
     c_api/src/jquad_tprod_c.cpp
+    c_api/src/jbasis_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -72,8 +73,12 @@ if(JPOLYD_ENABLE_TEST)
     COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jweight_test.py
   )
   add_test(
-    NAME jquad_tprod
+    NAME python_jquad_tprod
     COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jquad_tprod_test.py
+  )
+  add_test(
+    NAME python_jbasis
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jbasis_test.py
   )
 endif()
 
@@ -101,6 +106,7 @@ message(STATUS "Python install target: ${PY_SITE}")
 install(FILES ${CMAKE_SOURCE_DIR}/python/libjpolyd_loader.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jweight.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_tprod.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jbasis.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)

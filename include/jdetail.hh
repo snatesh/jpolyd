@@ -11,6 +11,81 @@ namespace jsimplex
 namespace detail
 {
 
+
+/* Classical 1D Jacobi basis P_n^{(a,b)} on [-1,1].
+
+   This struct provides a stable 3-term recurrence to evaluate
+   P_k^{(a,b)}(x) at a single point x.
+
+   Base Cases:
+     P_0^{(a,b)}(x) = 1
+     P_1^{(a,b)}(x) = 0.5 * [ (a + b + 2) x + (a - b) ]
+
+   Interface:
+     - n degree
+     - a,b > -1
+     - x in [-1,1]
+    Return:
+     - P_k^{(a,b)}(x), 
+
+   Notes:
+     - This is the *classical* Jacobi orthogonalization (non-orthonormal).
+     - Intended for internal use by simplex basis evaluators. */
+template<class Real>
+struct BasisClassic1D
+{
+
+  /* Single-value evaluator: orthogonal Jacobi P_n^{(a,b)}(x) */
+  static inline Real eval_n(int n, Real a, Real b, Real x)
+  {
+    if (n == 0)
+    {
+      return Real(1.0);
+    }
+  
+    Real apb = a + b;
+    Real aa  = a * a;
+    Real bb  = b * b;
+  
+    // P_0(x)
+    Real Pkm1 = Real(1.0);
+  
+    // P_1(x)
+    Real Pk = Real(0.5) *
+              ( Real(2.0) * (a + Real(1.0)) +
+                (apb + Real(2.0)) * (x - Real(1.0)) );
+  
+    if (n == 1)
+    {
+      return Pk;
+    }
+  
+    // n >= 2: recurrence for k = 2..n
+    for (int k = 2; k <= n; ++k)
+    {
+      Real kR    = static_cast<Real>(k);
+      Real k2    = Real(2.0) * kR;
+      Real k2apb = k2 + apb;
+  
+      Real q1 =  k2 * (kR + apb) * (k2apb - Real(2.0));
+      Real q2 = (k2apb - Real(1.0)) * (aa - bb);
+      Real q3 = (k2apb - Real(2.0)) *
+                (k2apb - Real(1.0)) *
+                 k2apb;
+      Real q4 = Real(2.0) * (kR + a - Real(1.0)) *
+                            (kR + b - Real(1.0)) *
+                             k2apb;
+  
+      Real Pkp1 = ( (q2 + q3 * x) * Pk - q4 * Pkm1 ) / q1;
+  
+      Pkm1 = Pk;
+      Pk   = Pkp1;
+    }
+  
+    return Pk;
+  }
+}; // BasisClassic1D
+
 /* Symmetric tridiagonal eigen-decomposition:
      - For Real = float  -> LAPACKE_sstevd
      - For Real = double -> LAPACKE_dstevd
@@ -72,8 +147,7 @@ static void legendre_unit(unsigned int n, Real* t, Real* w)
   }
 
   // For Legendre (a = b = 0), the orthonormal recurrence gives:
-  //   diagonal entries: 0
-  //   off-diagonal: a_i = (i+1) / sqrt((2i+1)(2i+3)),  i = 0..n-2
+  // diagonal entries: 0, off-diagonal: a_i = (i+1) / sqrt((2i+1)(2i+3))
   for (unsigned int i = 0; i < n; ++i)
   {
     d[i] = Real(0.0);
@@ -117,7 +191,6 @@ static void legendre_unit(unsigned int n, Real* t, Real* w)
 
   // Nodes: u_i = d[i] in [-1,1].
   // Weights: w_i = (first component of eigenvector i)^2.
-  // In column-major Z, first component is Z[0 + i*N].
   for (unsigned int i = 0; i < n; ++i)
   {
     Real u_i = d[i];
@@ -132,6 +205,23 @@ static void legendre_unit(unsigned int n, Real* t, Real* w)
   std::free(d);
   std::free(Z);
 }
+
+/* log_pochhammer(a, n) = log (a)_n = log Gamma(a+n) - log Gamma(a) */
+template<class Real>
+inline Real log_pochhammer(Real a, int n)
+{
+  if (n <= 0)
+  {
+    return Real(0);
+  }
+
+  double ad  = static_cast<double>(a);
+  double val = std::lgamma(ad + static_cast<double>(n))
+             - std::lgamma(ad);
+
+  return static_cast<Real>(val);
+}
+
 
 } // namespace detail
 
