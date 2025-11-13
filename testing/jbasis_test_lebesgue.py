@@ -1,5 +1,5 @@
 import numpy as np
-from jquad_mapped import *
+from jquad_tprod import *
 from jweight import *
 from jbasis import *
 import matplotlib.pyplot as plt 
@@ -49,11 +49,6 @@ max_err = np.max(np.abs(E))
 
 print("Gram matrix deviation ||G - I||_F =", frob_err)
 print("Max absolute entry of G - I      =", max_err)
-
-# Optionally, inspect first few diagonal and off-diagonal entries
-print("First 15 diagonal entries of G:", np.diag(G)[:15])
-print("First 5 off-diagonal abs entries:", np.sort(np.abs(G - I).ravel())[:5])
-
 
 spy_matrix = (np.abs(G) > 1e-6)
 plt.figure(figsize=(5, 5))

@@ -1,5 +1,5 @@
 import numpy as np
-from jquad_mapped import *
+from jquad_tprod import *
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 

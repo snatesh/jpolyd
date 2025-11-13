@@ -11,6 +11,18 @@ libjpolyd.jquad_mapped_build.argtypes = [
 ]
 libjpolyd.jquad_mapped_build.restype = ctypes.c_int
 
+libjpolyd.jquad_mapped_npoints.argtypes = [ctypes.c_int, ctypes.c_uint]
+libjpolyd.jquad_mapped_npoints.restype  = ctypes.c_int
+
+libjpolyd.jquad_mapped_build_kappa.argtypes = [
+    ctypes.POINTER(ctypes.c_double),  # kappa
+    ctypes.c_int,                     # D
+    ctypes.c_uint,                    # n
+    ctypes.POINTER(ctypes.c_double),  # points
+    ctypes.POINTER(ctypes.c_double),  # weights
+]
+libjpolyd.jquad_mapped_build_kappa.restype = ctypes.c_int
+
 
 def jquad_mapped_build(D, n):
     """
@@ -55,3 +67,26 @@ def jquad_mapped_build(D, n):
         )
 
     return X, W
+
+
+def jquad_mapped_build_kappa(D, n, kappa):
+    kappa = np.asarray(kappa, dtype=np.float64)
+    if kappa.shape[0] != D + 1:
+        raise ValueError("kappa must have length D+1")
+
+    N = libjpolyd.jquad_mapped_npoints(D, n)
+    if N <= 0:
+        raise ValueError("invalid (D, n) or overflow computing n^D")
+
+    points = np.zeros((N, D), dtype=np.float64, order="C")
+    weights = np.zeros((N,), dtype=np.float64, order="C")
+
+    kappa_p  = kappa.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    points_p = points.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+    weights_p= weights.ctypes.data_as(ctypes.POINTER(ctypes.c_double))
+
+    ret = libjpolyd.jquad_mapped_build_kappa(kappa_p, D, n, points_p, weights_p)
+    if ret != N:
+        raise RuntimeError("jquad_mapped_build_kappa failed")
+
+    return points, weights

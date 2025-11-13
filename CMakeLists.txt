@@ -77,8 +77,12 @@ if(JPOLYD_ENABLE_TEST)
     COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jquad_tprod_test.py
   )
   add_test(
-    NAME python_jbasis
-    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jbasis_test.py
+    NAME python_jbasis_lebesgue
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jbasis_test_lebesgue.py
+  )
+  add_test(
+    NAME python_jbasis_jacobi
+    COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/testing/jbasis_test_jacobi.py
   )
 endif()
 

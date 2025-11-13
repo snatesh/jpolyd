@@ -145,6 +145,103 @@ struct QuadMapped
     return (int)npts;
   }
 
+  /*
+    κ-aware mapped tensor product rule for the simplex Jacobi measure.
+
+    Inputs:
+      n        : nodes per axis (total nodes = n^D)
+      kappa    : length-(D+1) Jacobi parameters (all > -1/2)
+    Outputs:
+      points   : length (n^D * D), AoS (p*D + j) = coordinate j of point p
+      weights  : length (n^D), product of per-axis Jacobi weights
+                 (no extra Jacobian multiply is required)
+
+    Per-axis parameters on [0,1]:
+      alpha_j = kappa[j] - 1/2
+      beta_j  = kappa[D] + sum_{m=j+1..D-1} kappa[m] + (D - j - 1)/2
+    We pass these into gauss_jacobi_unit via k2 = {alpha_j+1/2, beta_j+1/2}.
+  */
+  static int build_kappa(unsigned int n, const Real* kappa,
+                         Real* points, Real* weights)
+  {
+    if (n == 0 || !kappa || !points || !weights) { return 0; }
+
+    Real* t1d[D];
+    Real* w1d[D];
+    for (int j = 0; j < D; ++j)
+    {
+      t1d[j] = (Real*) std::malloc(n * sizeof(Real));
+      w1d[j] = (Real*) std::malloc(n * sizeof(Real));
+      if (!t1d[j] || !w1d[j])
+      {
+        for (int r = 0; r <= j; ++r) { std::free(t1d[r]); std::free(w1d[r]); }
+        return 0;
+      }
+    }
+
+    for (int j = 0; j < D; ++j)
+    {
+      // alpha_j = κ_j - 1/2
+      Real alpha_j = kappa[j] - Real(0.5);
+
+      // tail sum: κ_{j+1} + ... + κ_{D}   (note: D is the last index, length is D+1)
+      Real tail = Real(0);
+      for (int m = j + 1; m <= D; ++m) { tail += kappa[m]; }
+
+      // beta_j = tail + (D - j - 2)/2
+      Real beta_j = tail + Real(0.5) * Real(D - j - 2);
+
+      // pass as k2 = {alpha+1/2, beta+1/2} so that inside gauss_jacobi_unit:
+      //   a = k2[1]-1/2 = beta_j, b = k2[0]-1/2 = alpha_j
+      Real k2[2];
+      k2[0] = alpha_j + Real(0.5);
+      k2[1] = beta_j  + Real(0.5);
+
+      detail::gauss_jacobi_unit<Real>(n, k2, t1d[j], w1d[j]);
+    }
+
+    unsigned long long Ntot = 1ULL;
+    for (int r = 0; r < D; ++r) { Ntot *= (unsigned long long)n; }
+
+    unsigned long long p = 0ULL; int idx[D];
+    for (int j = 0; j < D; ++j) { idx[j] = 0; }
+
+    while (p < Ntot)
+    {
+      Real wprod = Real(1);
+      Real tmp   = Real(1);
+
+      // Duffy m ap and product weights
+      for (int j = 0; j < D; ++j)
+      {
+        Real tj = t1d[j][ idx[j] ];
+        points[p * D + j] = tmp * tj; // x_j
+        tmp *= (Real(1) - tj); // carry forward prod(1-t_i)
+        wprod *= w1d[j][ idx[j] ];
+      }
+
+      weights[p] = wprod;
+
+      // mixed-radix index
+      int carry = D - 1;
+      while (carry >= 0)
+      {
+        idx[carry] += 1;
+        if (idx[carry] < (int)n) { break; }
+        idx[carry] = 0;
+        --carry;
+      }
+      if (carry < 0) { break; }
+
+      ++p;
+    }
+
+    for (int j = 0; j < D; ++j) { std::free(t1d[j]); std::free(w1d[j]); }
+
+    return (int)Ntot;
+  }
+
+
 
   /* Integrate with a prebuilt rule; function-pointer overload. */
   static Real integrate_with_rule(const Real* points,
