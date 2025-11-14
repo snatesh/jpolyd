@@ -1,7 +1,6 @@
 #ifndef JQUAD_TPROD_H
 #define JQUAD_TPROD_H
 
-#include <jmat.hh>
 #include <cstdlib>
 #include <cmath>
 #include <jdetail.hh>

@@ -4,7 +4,6 @@
 #include <type_traits>
 #include <lapacke.h>
 #include <cblas.h>
-#include <jmat.hh>
 
 namespace jsimplex
 {
@@ -97,7 +96,7 @@ struct LapackStevd;
 template<>
 struct LapackStevd<float> // float specialization
 {
-  static lapack_int run(lapack_int n, float* d, float* e,
+  static inline lapack_int run(lapack_int n, float* d, float* e,
                         float* Z, lapack_int ldz)
   {
     return LAPACKE_sstevd(LAPACK_COL_MAJOR, 'V', n, d, e, Z, ldz);
@@ -107,12 +106,67 @@ struct LapackStevd<float> // float specialization
 template<>
 struct LapackStevd<double> // double specialization
 {
-  static lapack_int run(lapack_int n, double* d, double* e,
+  static inline lapack_int run(lapack_int n, double* d, double* e,
                         double* Z, lapack_int ldz)
   {
     return LAPACKE_dstevd(LAPACK_COL_MAJOR, 'V', n, d, e, Z, ldz);
   }
 };
+
+
+/* Jacobi ON (orthonormal) tridiagonal for w(x)=(1-x)^a(1+x)^b on [-1,1].
+   Fills:
+     d[0..n-1]   = main diagonal
+     e[0..n-2]   = off diagonal (super- and sub-diagonal, same values)
+   Real can be float or double. */
+template<class Real>
+inline void jacobi_tridiag_ON(int n, Real a, Real b, Real* d, Real* e)
+{
+  if (n <= 0 || !d || (n>1 && !e)) return;
+
+  // bvec: main diagonal entries
+  // avecON: off-diagonal (positive) entries
+  Real* bvec   = (Real*) std::calloc((size_t)n, sizeof(Real));
+  Real* avecON = (Real*) std::calloc((size_t)n, sizeof(Real));
+  if (!bvec || !avecON) { std::free(bvec); std::free(avecON); return; }
+
+  const Real apb = a + b;
+  const Real aa  = a * a;
+  const Real bb  = b * b;
+
+  bvec[0]   = -(Real(0.5) * (a - b)) / (Real(0.5) * (a + b) + Real(1));
+  avecON[0] = (Real(2) / (a + b + Real(2))) *
+              std::sqrt( (a + Real(1)) * (b + Real(1)) / (a + b + Real(3)) );
+
+  for (int i = 1; i < n; ++i)
+  {
+    const Real ii   = Real(i);
+    const Real k2   = Real(2) * ii;
+    const Real k2apb= k2 + apb;
+
+    const Real av =
+      ( (k2apb + Real(1)) * (k2apb + Real(2)) ) /
+      ( Real(2) * (ii + Real(1)) * (ii + apb + Real(1)) );
+
+    const Real bv =
+      ( (aa - bb) * (k2apb + Real(1)) ) /
+      ( Real(2) * (ii + Real(1)) * (ii + apb + Real(1)) * (k2apb) );
+
+    bvec[i] = -bv / av;
+
+    avecON[i] =
+      ( Real(2) / (a + b + Real(2) * ii + Real(2)) ) *
+      std::sqrt( (a + ii + Real(1)) * (b + ii + Real(1)) *
+                 (ii + Real(1)) * (a + b + ii + Real(1)) /
+                 ( (a + b + Real(2) * ii + Real(1)) *
+                   (a + b + Real(2) * ii + Real(3)) ) );
+  }
+
+  for (int i = 0; i < n; ++i) d[i] = bvec[i];
+  for (int i = 0; i+1 < n; ++i) e[i] = avecON[i];
+
+  std::free(bvec); std::free(avecON);
+}
 
 
 /* 1D Gauss-Jacobi on [0,1] for weight t^k_1 (1-t)^k_2,
@@ -125,86 +179,40 @@ struct LapackStevd<double> // double specialization
      t[0..n-1] : nodes in [0,1]
      w[0..n-1] : weights */
 template<class Real>
-static void gauss_jacobi_unit(unsigned int n, Real* kappa,
+inline void gauss_jacobi_unit(unsigned int n, Real* kappa,
                               Real* t, Real* w)
 {
-  /* For now, only float and double are supported by LAPACK. */
-  static_assert(std::is_same<Real,float>::value  ||
-                std::is_same<Real,double>::value,
-                "gauss_jacobi_unit requires Real=float or Real=double");
+  if (n == 0) return;
 
-  if (n == 0)
-  {
-    return;
-  }
+  // map κ -> (a,b) on [-1,1]: a = κ2-1/2, b = κ1-1/2 (then map to [0,1])
+  const Real a = kappa[1] - Real(0.5);
+  const Real b = kappa[0] - Real(0.5);
 
-  // Jacobi parameters on [-1,1] for (1-u)^a (1+u)^b:
-  // under change of variable, we find a = k_2 - 1/2, b = k_1-1/2
-  Real a = kappa[1] - Real(0.5);
-  Real b = kappa[0] - Real(0.5);
-
-  // Build full Jacobi matrix J (n x n, row-major) in type Real.
-  Real* J = (Real*) std::calloc(n * n, sizeof(Real));
-  if (!J) { return; }
-
-  jsimplex::JMat<1,Real>::build(n, a, b, J);
-
-  // Extract diagonal d[0..n-1] and off-diagonal e[0..n-2]
-  //   for the symmetric tridiagonal form.
   Real* d = (Real*) std::malloc(n * sizeof(Real));
-  if (!d) { std::free(J); return; }
-
   Real* e = (Real*) std::malloc((n > 1 ? (n - 1) : 1) * sizeof(Real));
-  if (!e) { std::free(J); std::free(d); return; }
+  Real* Z = (Real*) std::calloc((size_t)n * (size_t)n, sizeof(Real));
+  if (!d || !e || !Z) { std::free(d); std::free(e); std::free(Z); return; }
 
+  jacobi_tridiag_ON<Real>((int)n, a, b, d, e);
+
+  // eigendecompose tridiagonal (d,e) with LAPACK
+  const lapack_int N = (lapack_int)n;
+  if (LapackStevd<Real>::run(N, d, e, Z, N) != 0)
+  {
+    for (unsigned int i=0;i<n;++i){ t[i]=Real(0); w[i]=Real(0); }
+    std::free(d); std::free(e); std::free(Z); return;
+  }
+
+  // nodes (map to [0,1]) and weights from first component
   for (unsigned int i = 0; i < n; ++i)
   {
-    d[i] = J[i + n * i];
-    if (i + 1 < n)
-    {
-      e[i] = J[i + n * (i + 1)];
-    }
+    const Real u  = d[i];
+    const Real v0 = Z[0 + i * N];
+    t[i] = (u + Real(1)) * Real(0.5);
+    w[i] = v0 * v0;
   }
 
-  // Eigenvectors Z (n x n), column-major for LAPACK. 
-  Real* Z = (Real*) std::calloc(n * n, sizeof(Real));
-  if (!Z) { std::free(J); std::free(d); std::free(e); return; }
-
-  std::free(J);
-
-  lapack_int N    = (lapack_int) n;
-  lapack_int info = detail::LapackStevd<Real>::run(N, d, e, Z, N);
-
-  std::free(e);
-
-  if (info != 0)
-  {
-    // LAPACK failure: zero outputs and bail.
-    for (unsigned int i = 0; i < n; ++i)
-    {
-      t[i] = Real(0.0);
-      w[i] = Real(0.0);
-    }
-    std::free(d);
-    std::free(Z);
-    return;
-  }
-
-  // Nodes: u_i = d[i] in [-1,1].
-  //   Weights: w_i = (first component of eigenvector i)^2.
-  //   In column-major Z, first component is Z[0 + i*N]. 
-  for (unsigned int i = 0; i < n; ++i)
-  {
-    Real u_i = d[i];
-    Real v0  = Z[0 + i * N];   // first component of i-th eigenvector
-    Real wi  = v0 * v0;
-
-    t[i] = (u_i + Real(1.0)) * Real(0.5);  // map to [0,1] 
-    w[i] = wi;
-  }
-
-  std::free(d);
-  std::free(Z);
+  std::free(d); std::free(e); std::free(Z);
 }
 
 
@@ -216,7 +224,7 @@ static void gauss_jacobi_unit(unsigned int n, Real* kappa,
    This mirrors gauss_jacobi_unit, but with a=b=0 specialized,
    and works for Real = float or double via LapackStevd. */
 template<class Real>
-static void legendre_unit(unsigned int n, Real* t, Real* w)
+inline void legendre_unit(unsigned int n, Real* t, Real* w)
 {
   static_assert(std::is_same<Real,float>::value  ||
                 std::is_same<Real,double>::value,
