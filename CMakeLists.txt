@@ -39,6 +39,7 @@ if(JPOLYD_BUILD_CAPI)
     c_api/src/jquad_tprod_c.cpp
     c_api/src/jbasis_c.cpp
     c_api/src/jmat_c.cpp
+    c_api/src/jevd_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -122,6 +123,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jweight.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_tprod.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jbasis.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jmat.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jevd.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)
