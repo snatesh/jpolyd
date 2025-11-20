@@ -2,7 +2,8 @@
 #define JBASIS_H
 
 #include <cmath>
-#include "jdetail.hh"
+#include <jdetail.hh>
+#include <omp.h>
 
 /* Evaluators for the Jacobi basis on the D-simplex. */
 
@@ -252,7 +253,8 @@ struct Basis
       }
       Ktail[j] = sum;
     }
-
+  
+    #pragma omp parallel for schedule(static)
     for (int p = 0; p < npts; ++p)
     {
       Real prefix_sum[D];

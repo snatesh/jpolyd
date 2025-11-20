@@ -2,8 +2,10 @@ import numpy as np
 from jmat import jmat_build
 from jevd import jevd_serial
 from jbasis import jbasis_build_structures, jbasis_eval_all
+import omp_control
 import nlopt
 import matplotlib.pyplot as plt
+import time
 
 def max_offdiag(J):
     """
@@ -421,14 +423,247 @@ def optimize_quadrature(D,
 
   return z_opt, float(f_opt)
 
+def finite_diff_jacobian(F, x, h):
+  """
+  Central 2nd-order finite-difference Jacobian for a vector-valued F.
 
+  Parameters
+  ----------
+  F : callable
+    F(x) -> array_like, shape (M,)
+  x : array_like, shape (nvar,)
+    Point at which to evaluate the Jacobian.
+  h : float
+    Step size for central differences.
+
+  Returns
+  -------
+  J : ndarray, shape (M, nvar)
+    Approximate Jacobian, J[i,j] = dF_i/dx_j.
+  """
+  x = np.asarray(x, dtype=np.float64).reshape(-1)
+  f0 = np.asarray(F(x), dtype=np.float64)
+  M = f0.size
+  nvar = x.size
+
+  J = np.empty((M, nvar), dtype=np.float64)
+
+  for j in range(nvar):
+    x[j] += h
+    fp = np.asarray(F(x), dtype=np.float64)
+    x[j] -= 2*h
+    fm = np.asarray(F(x), dtype=np.float64)
+    x[j] += h
+    J[:, j] = (fp - fm) / (2.0 * h)
+
+  return J
+
+def project_simplex_leq1(y):
+  """
+  Project y in R^D onto { x >= 0, sum(x) <= 1 } w.r.t. Euclidean norm.
+  """
+  y = np.asarray(y, dtype=np.float64)
+  y_plus = np.clip(y, 0.0, None)
+  s = y_plus.sum()
+  if s <= 1.0:
+    return y_plus
+
+  # Project onto standard simplex {x >= 0, sum x = 1}
+  # Algorithm: sort, find threshold theta, set x_i = max(y_i - theta, 0)
+  u = np.sort(y)[::-1]        # descending
+  cssv = np.cumsum(u)
+  rho = np.nonzero(u * np.arange(1, len(u)+1) > (cssv - 1.0))[0][-1]
+  theta = (cssv[rho] - 1.0) / (rho + 1.0)
+  x = np.clip(y - theta, 0.0, None)
+  return x
+
+def project_z(z, D, N):
+  """
+  Project z = [X_flat, w] onto:
+      X_{p,:} in {x>=0, sum x <=1}, w_p >= 0.
+  """
+  z = np.asarray(z, dtype=np.float64).reshape(-1)
+  X_flat = z[:N*D]
+  w = z[N*D:]
+
+  X = X_flat.reshape(N, D)
+  for p in range(N):
+    X[p, :] = project_simplex_leq1(X[p, :])
+
+  w = np.clip(w, 0.0, None)
+
+  z_proj = np.concatenate([X.reshape(-1), w])
+  return z_proj
+
+
+def gauss_newton(F, J, z0, data=None,
+                 alpha=0.1,
+                 tol=1e-16,
+                 tol_up=1e3,
+                 maxiter=1000,
+                 verbose=True):
+  """
+  Gauss-Newton iteration:
+      z_{k+1} = z_k - alpha * (J^+ F)(z_k)
+
+  F : callable
+    F(z, data) -> (M,) residual.
+  J : callable
+    J(z, data) -> (M, nvar) Jacobian.
+  """
+  z = np.asarray(z0, dtype=np.float64).reshape(-1)
+  Fk = F(z, data)
+  pk = np.linalg.norm(Fk, 2)
+
+  iter_count = 0
+  converged = False
+
+  if verbose:
+    print(f"GN iter {iter_count:4d}, ||F||_2 = {pk:.6e}")
+
+  while pk > tol and pk < tol_up and iter_count < maxiter:
+    iter_count += 1
+
+    Jk = np.asarray(J(z, data), dtype=np.float64)  # M x nvar
+
+    # Solve Jk * delta ≈ Fk in least-squares sense
+    delta, *_ = np.linalg.lstsq(Jk, Fk, rcond=None)
+
+    # Step
+    z_new = z - alpha * delta
+
+    # project onto feasible set C
+    z = project_z(z_new, D, N)
+
+    # New residual
+    Fk = F(z, data)
+    pk = np.linalg.norm(Fk, 2)
+
+    if verbose:
+      print(f"GN iter {iter_count:4d}, ||F||_2 = {pk:.6e}")
+
+    if pk <= tol:
+      converged = True
+      break
+    if pk >= tol_up:
+      break
+
+  info = {
+    "pk": float(pk),
+    "iter": int(iter_count),
+    "converged": bool(converged),
+  }
+  return z, info
+
+
+def optimize_quadrature_gn(D,
+                           n_nodes,      # N = number of nodes
+                           m_basis,      # degree for basis Pi_m^D
+                           kappa,
+                           z0,
+                           alpha=0.1,
+                           maxiter=100,
+                           fd_step=1e-6,
+                           tol=1e-15,
+                           tol_up=1e3,
+                           verbose=True):
+  """
+  Gauss-Newton optimizer for the quadrature system
+      F(z) = V^T w - e1 = 0.
+
+  Uses finite-difference Jacobian via finite_diff_jacobian and
+  the generic gauss_newton stepper.
+  """
+  kappa = np.asarray(kappa, dtype=np.float64)
+  if kappa.shape[0] != D + 1:
+    raise ValueError("kappa must have length D+1")
+
+  z0 = np.asarray(z0, dtype=np.float64)
+  N = n_nodes
+  nvar = N * (D + 1)
+  if z0.size != nvar:
+    raise ValueError(f"z0 must have length N*(D+1)={nvar}, got {z0.size}")
+
+  # Build basis structures once
+  alpha_table, tail_deg, inv_h = jbasis_build_structures(D, m_basis, kappa)
+  M = alpha_table.shape[0]
+
+  e1 = np.zeros(M, dtype=np.float64)
+  e1[0] = 1.0
+
+  # helper: unpack z -> X, w
+  def unpack_z(z):
+    z = np.asarray(z, dtype=np.float64).reshape(-1)
+    X_flat = z[:N * D]
+    W_flat = z[N * D:]
+    X = X_flat.reshape(N, D)
+    w = W_flat
+    return X, w
+
+  # vector residual F(z)
+  def F_vec(z, data=None):
+    X, w = unpack_z(z)
+    V = jbasis_eval_all(X, kappa, m_basis,
+                        alpha_table, tail_deg, inv_h, D)  # N x M
+    Ihat = V.T @ w
+    F = Ihat - e1
+    return F
+
+  # Jacobian via finite differences
+  def J_fd(z, data=None):
+    return finite_diff_jacobian(F_vec, z, fd_step)
+
+  if verbose:
+    print(f"[GN] dim Pi_{m_basis}^{{{D}}} = M = {M}, N = {N}, nvar = {nvar}")
+    F0 = F_vec(z0)
+    print(f"[GN] initial ||F||_2 = {np.linalg.norm(F0):.6e}")
+
+  # Run Gauss-Newton
+  z_opt, info = gauss_newton(F_vec, J_fd, z0,
+                             data=None,
+                             alpha=alpha,
+                             tol=tol,
+                             tol_up=tol_up,
+                             maxiter=maxiter,
+                             verbose=verbose)
+
+  if verbose:
+    print(f"[GN] finished: converged={info['converged']}, "
+          f"iter={info['iter']}, ||F||_2={info['pk']:.6e}")
+
+    X_opt, w_opt = unpack_z(z_opt)
+    V_opt = jbasis_eval_all(X_opt, kappa, m_basis,
+                            alpha_table, tail_deg, inv_h, D)
+    Ihat_opt = V_opt.T @ w_opt
+    F_opt = Ihat_opt - e1
+    print("[GN] diagnostics:")
+    print("  ||Ihat - e1||_2 =", float(np.linalg.norm(F_opt)))
+    print("  sum(weights)     =", float(np.sum(w_opt)))
+    print("  min(weights)     =", float(np.min(w_opt)))
+    print("  max(weights)     =", float(np.max(w_opt)))
+
+  # For consistency with optimize_quadrature, return z_opt, scalar f
+  f_opt = 0.5 * float(info["pk"] ** 2)
+  return np.asarray(z_opt, dtype=np.float64), f_opt, info, V_opt
+
+def cond_number(V):
+  """
+  Return the 2-norm condition number of V.
+  """
+  # singular values
+  s = np.linalg.svd(V, compute_uv=False)
+  return s[0] / s[-1]
 
 if __name__ == "__main__":
 # Example settings
 
+  omp_control.set_omp_threads(10)  
+
+  start_time = time.time()
+  
   D = 3
-  n_node_deg = 5
-  m_basis = 8
+  n_node_deg = 10
+  m_basis = 16
   #kappa = np.array([0.5, 0.5, 0.5], dtype=np.float64)
   kappa = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
 
@@ -440,6 +675,7 @@ if __name__ == "__main__":
   print("Initial f(z0) evaluation...")
   print("Initial sum weights:", np.sum(z0[N*D::]))
 
+
   z_opt, f_opt = optimize_quadrature(D,
                       N,      # N = number of nodes
                       m_basis,      # degree for basis Pi_m^D
@@ -450,10 +686,30 @@ if __name__ == "__main__":
                       tol_f=1e-12,
                       fd_step=1e-6,
                       verbose=True)
+  
+  #z_opt = np.loadtxt("tetquad.txt")
+  z_optn, f_optn, infon, V_opt = optimize_quadrature_gn(
+    D,
+    N,
+    m_basis,
+    kappa,
+    z_opt,
+    alpha=1,
+    maxiter=500,
+    fd_step=1e-6,
+    tol=1e-15,
+    tol_up=1e3,
+    verbose=True,
+  )
 
-
-
+  z_opt = z_optn
+  f_opt = f_optn
+  condV = cond_number(V_opt)
+  end_time = time.time()
+  elapsed_time = end_time - start_time  
   print("Final objective f(z_opt) =", f_opt)
+  print(f"Elapsed time: {elapsed_time:.4f} seconds")
+  print("Condition number of interp op on abscissa: ", condV)
 
   # 3) Unpack solution
   X_opt = z_opt[:N*D].reshape(N, D)
@@ -463,14 +719,18 @@ if __name__ == "__main__":
   if D == 3: 
     ax = fig.add_subplot(projection='3d')
     ax.scatter(X_opt[:,0], X_opt[:,1], X_opt[:,2])
-  else:
+    fname = "tetquad.txt"
+  elif D== 2:
     ax = fig.add_subplot()
     ax.scatter(X_opt[:,0], X_opt[:,1])
     x_coords = [0, 1, 0, 0]
     y_coords = [0, 0, 1, 0] 
-    ax.plot(x_coords, y_coords, marker='o') # 'o' adds markers to the vertices
+    ax.plot(x_coords, y_coords) # 'o' adds markers to the vertices
+    fname = "triquad.txt"
 
   plt.show()
+  np.savetxt(fname, z_opt, fmt='%.18e', delimiter=' ', newline='\n', header='', footer='', comments='# ', encoding=None)
+
 
   #D = 3
   #n = 10
