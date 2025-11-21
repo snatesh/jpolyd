@@ -1,8 +1,12 @@
 import numpy as np
 from jmat import jmat_build
 from jevd import jevd_serial
-from jbasis import jbasis_build_structures, jbasis_eval_all
-import omp_control
+from jbasis import (
+  jbasis_build_structures, 
+  jbasis_eval_all,
+  jbasis_eval_all_with_grad
+)
+import thread_control
 import nlopt
 import matplotlib.pyplot as plt
 import time
@@ -157,6 +161,22 @@ def build_initial_guess(D, n_basis, kappa, tol=1e-12, max_sweeps=10):
   z0 = np.concatenate([X0.reshape(-1), w0])
   return z0, alpha_table, tail_deg, inv_h, e1
 
+# Central finite-difference gradient (2nd order accurate)
+def finite_diff_grad(f, x, h):
+  x = np.asarray(x, dtype=np.float64).reshape(-1)
+  grad = np.empty_like(x)
+  # Could be expensive: O(nvar) function calls per gradient
+  fx = f(x)  # not strictly needed for central diff, but cached if desired
+  for i in range(x.size):
+    xp = x.copy()
+    xm = x.copy()
+    xp[i] += h
+    xm[i] -= h
+    fp = f(xp)
+    fm = f(xm)
+    grad[i] = (fp - fm) / (2.0 * h)
+  return grad
+
 def optimize_quadrature(D,
                         n_nodes,      # N = number of nodes
                         m_basis,      # degree for basis Pi_m^D
@@ -253,45 +273,83 @@ def optimize_quadrature(D,
     w = W_flat
     return X, w
 
-  # Pure scalar objective f(z) without gradient
-  def f_scalar(z):
+  # Vector residual F(z) = V^T w - e1
+  def F_vec(z):
     X, w = unpack_z(z)
     V = jbasis_eval_all(X, kappa, m_basis,
-                        alpha_table, tail_deg, inv_h, D)  # N x M
-    Ihat = V.T @ w        # M
-    F = Ihat - e1
+                        alpha_table, tail_deg, inv_h, D)
+    Ihat = V.T @ w
+    return Ihat - e1
+
+  # Pure scalar objective f(z) without gradient
+  def f_scalar(z):
+    F = F_vec(z)
     return 0.5 * float(F @ F)
 
-  # Central finite-difference gradient (2nd order accurate)
-  def finite_diff_grad(f, x, h):
-    x = np.asarray(x, dtype=np.float64).reshape(-1)
-    grad = np.empty_like(x)
-    # Could be expensive: O(nvar) function calls per gradient
-    fx = f(x)  # not strictly needed for central diff, but cached if desired
-    for i in range(x.size):
-      xp = x.copy()
-      xm = x.copy()
-      xp[i] += h
-      xm[i] -= h
-      fp = f(xp)
-      fm = f(xm)
-      grad[i] = (fp - fm) / (2.0 * h)
-    return grad
+
 
   # Simple eval counter for diagnostics
   eval_count = {"n": 0}
 
-  # Objective wrapper in NLopt style
+  """
+  # Objective wrapper in NLopt style with FD gradient
+    def objective(z, grad):
+      if grad.size > 0:
+        # Fill gradient via central finite differences
+        g = finite_diff_grad(f_scalar, z, fd_step)
+        grad[:] = g[:]
+      fval = f_scalar(z)
+      eval_count["n"] += 1
+      if verbose and eval_count["n"] % 50 == 0:
+        print(f"[objective] eval {eval_count['n']}, f(z) = {fval:.6e}")
+      return fval
+  """
+  # Objective wrapper in NLopt style with analytical gradient
   def objective(z, grad):
+    z = np.asarray(z, dtype=np.float64).reshape(-1)
+    X, w = unpack_z(z)
+
     if grad.size > 0:
-      # Fill gradient via central finite differences
-      g = finite_diff_grad(f_scalar, z, fd_step)
-      grad[:] = g[:]
-    fval = f_scalar(z)
+      # Evaluate basis and gradients
+      V, dV = jbasis_eval_all_with_grad(
+        X, kappa, m_basis,
+        alpha_table, tail_deg, inv_h, D
+      )  # V: (N,M), dV: (N,M,D)
+    else:
+      V = jbasis_eval_all(
+        X, kappa, m_basis,
+        alpha_table, tail_deg, inv_h, D
+      )
+      dV = None
+
+    Ihat = V.T @ w             # (M,)
+    F = Ihat - e1              # (M,)
+
+    fval = 0.5 * float(F @ F)
+
+    if grad.size > 0:
+      # Gradient ∇f = J^T F, where J is Jacobian of F.
+
+      # Node part: z[0 : N*D]
+      # For each p, the derivative wrt x_{p,:} is:
+      #   ∂f/∂x_{p,:} = w[p] * dV[p,:,:]^T @ F  ∈ R^D
+      grad_nodes = np.zeros((N, D), dtype=np.float64)
+      for p in range(N):
+        # dV[p,:,:]: (M,D), F: (M,) -> (D,)
+        grad_nodes[p, :] = w[p] * (dV[p, :, :].T @ F)
+
+      grad[:N*D] = grad_nodes.reshape(-1)
+
+      # Weight part: z[N*D : N*(D+1)]
+      # ∂F/∂w_p = P(x_p) = V[p,:], so:
+      #   ∂f/∂w_p = F · V[p,:]  => (V @ F)[p]
+      grad[N*D:] = V @ F
+
     eval_count["n"] += 1
     if verbose and eval_count["n"] % 50 == 0:
       print(f"[objective] eval {eval_count['n']}, f(z) = {fval:.6e}")
     return fval
+
 
   m_ineq = N * (D + 2)   # N*D (X>=0) + N (sum X <= 1) + N (w>=0)
   nvar   = (D + 1) * N   # variables: N*D coords + N weights
@@ -609,6 +667,42 @@ def optimize_quadrature_gn(D,
     F = Ihat - e1
     return F
 
+  # Analytic Jacobian via basis gradients
+  def J_a(z, data=None):
+    """
+    Analytic Jacobian J(z) of F_vec(z):
+
+      F(z) = V(X)^T w - e1,    F ∈ R^M,
+      z = [X_flat, w] ∈ R^{N*(D+1)}.
+
+    Structure:
+      dF/dx_{p,ell} = w[p] * dP(x_p)/dx_ell,
+      dF/dw_p       = P(x_p).
+    """
+    z = np.asarray(z, dtype=np.float64).reshape(-1)
+    X, w = unpack_z(z)               # X: (N,D), w: (N,)
+
+    # V: (N,M), dV: (N,M,D)
+    V, dV = jbasis_eval_all_with_grad(
+      X, kappa, m_basis,
+      alpha_table, tail_deg, inv_h, D
+    )
+
+    J = np.zeros((M, nvar), dtype=np.float64)
+
+    # Node part: columns 0 .. N*D-1
+    # For each node p, dF/dx_{p,:} is an M×D block: w[p] * dV[p,:,:]
+    for p in range(N):
+      # dV[p,:,:] has shape (M,D); we want J[:, p*D:(p+1)*D]
+      J[:, p*D:(p+1)*D] = w[p] * dV[p, :, :]
+
+    # Weight part: columns N*D .. N*(D+1)-1
+    # dF/dw_p = P(x_p) = V[p,:]
+    for p in range(N):
+      J[:, N*D + p] = V[p, :]
+
+    return J
+
   # Jacobian via finite differences
   def J_fd(z, data=None):
     return finite_diff_jacobian(F_vec, z, fd_step)
@@ -619,7 +713,7 @@ def optimize_quadrature_gn(D,
     print(f"[GN] initial ||F||_2 = {np.linalg.norm(F0):.6e}")
 
   # Run Gauss-Newton
-  z_opt, info = gauss_newton(F_vec, J_fd, z0,
+  z_opt, info = gauss_newton(F_vec, J_a, z0,
                              data=None,
                              alpha=alpha,
                              tol=tol,
@@ -657,12 +751,12 @@ def cond_number(V):
 if __name__ == "__main__":
 # Example settings
 
-  omp_control.set_omp_threads(10)  
+  thread_control.set_omp_threads(8)  
 
   start_time = time.time()
   
   D = 3
-  n_node_deg = 10
+  n_node_deg = 11
   m_basis = 16
   #kappa = np.array([0.5, 0.5, 0.5], dtype=np.float64)
   kappa = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
@@ -687,7 +781,7 @@ if __name__ == "__main__":
                       fd_step=1e-6,
                       verbose=True)
   
-  #z_opt = np.loadtxt("tetquad.txt")
+  #z_opt = np.loadtxt("tetquad_10_16_curr.txt")
   z_optn, f_optn, infon, V_opt = optimize_quadrature_gn(
     D,
     N,
@@ -695,7 +789,7 @@ if __name__ == "__main__":
     kappa,
     z_opt,
     alpha=1,
-    maxiter=500,
+    maxiter=4000,
     fd_step=1e-6,
     tol=1e-15,
     tol_up=1e3,

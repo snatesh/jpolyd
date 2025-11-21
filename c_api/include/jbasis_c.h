@@ -35,7 +35,8 @@ void jbasis_eval_all(const double* X,
                      const int* tail_deg,
                      const double* inv_h,
                      double* V,
-                     int ld_V);
+                     int ld_V,
+                     double* dV);
 
 /* Return M = dim Pi_n^D, the number of basis functions of total
    degree <= n in D variables.

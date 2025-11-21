@@ -113,6 +113,150 @@ struct LapackStevd<double> // double specialization
   }
 };
 
+template<class Real>
+struct LapackGelsd;
+
+template<>
+struct LapackGelsd<float>
+{
+  static inline lapack_int run(lapack_int m, lapack_int n, lapack_int nrhs,
+                               float* A, lapack_int lda,
+                               float* B, lapack_int ldb,
+                               float* S, float rcond, lapack_int* rank)
+  {
+    return LAPACKE_sgelsd(LAPACK_COL_MAJOR, m, n, nrhs,
+                          A, lda,
+                          B, ldb,
+                          S, rcond, rank);
+  }
+};
+
+template<>
+struct LapackGelsd<double>
+{
+  static inline lapack_int run(lapack_int m, lapack_int n, lapack_int nrhs,
+                               double* A, lapack_int lda,
+                               double* B, lapack_int ldb,
+                               double* S, double rcond, lapack_int* rank)
+  {
+    return LAPACKE_dgelsd(LAPACK_COL_MAJOR, m, n, nrhs,
+                          A, lda,
+                          B, ldb,
+                          S, rcond, rank);
+  }
+};
+
+template<class Real>
+struct LapackGesdd;
+
+template<>
+struct LapackGesdd<float>
+{
+  static inline lapack_int run(
+      char jobz,
+      lapack_int m, lapack_int n,
+      float* A, lapack_int lda,
+      float* S, float* U, lapack_int ldu,
+      float* VT, lapack_int ldvt )
+  {
+    return LAPACKE_sgesdd(LAPACK_COL_MAJOR, jobz,
+                          m, n, A, lda, S,
+                          U, ldu,
+                          VT, ldvt);
+  }
+};
+
+template<>
+struct LapackGesdd<double>
+{
+  static inline lapack_int run(
+      char jobz,
+      lapack_int m, lapack_int n,
+      double* A, lapack_int lda,
+      double* S, double* U, lapack_int ldu,
+      double* VT, lapack_int ldvt )
+  {
+    return LAPACKE_dgesdd(LAPACK_COL_MAJOR, jobz,
+                          m, n, A, lda, S,
+                          U, ldu,
+                          VT, ldvt);
+  }
+};
+
+// ------------------------------------------------------------
+// cond_2(V): 2-norm condition number via SVD.
+// Makes an internal copy of A because gesdd overwrites input.
+// ------------------------------------------------------------
+template<class Real>
+static Real cond_number(int m, int n, const Real* A)
+{
+  if (m <= 0 || n <= 0) return Real(0);
+
+  // Copy matrix so we don't overwrite V_opt
+  Real* Acopy = static_cast<Real*>(
+      std::calloc(static_cast<std::size_t>(m*n), sizeof(Real)));
+  if (!Acopy) return Real(0);
+
+  for (int i = 0; i < m*n; ++i)
+    Acopy[i] = A[i];
+
+  lapack_int M = m;
+  lapack_int N = n;
+  lapack_int Sdim = (M < N ? M : N);
+
+  Real* S = static_cast<Real*>(
+      std::calloc(static_cast<std::size_t>(Sdim), sizeof(Real)));
+  if (!S)
+  {
+    std::free(Acopy);
+    return Real(0);
+  }
+
+  // Dummy U, VT because LAPACK still checks arguments,
+  // even when jobz='N'.
+  Real* U_dummy  = static_cast<Real*>(std::calloc(1, sizeof(Real)));
+  Real* VT_dummy = static_cast<Real*>(std::calloc(1, sizeof(Real)));
+
+  lapack_int ldu  = 1;
+  lapack_int ldvt = 1;
+
+  lapack_int info = LapackGesdd<Real>::run(
+      'N',        // jobz: compute singular values only
+      M, N,
+      Acopy, M,   // A, lda
+      S,
+      U_dummy, ldu,
+      VT_dummy, ldvt
+  );
+
+  Real cond = Real(0);
+
+  if (info == 0)
+  {
+    Real smax = S[0];
+    Real smin = S[0];
+    for (int i = 1; i < Sdim; ++i)
+    {
+      if (S[i] > smax) smax = S[i];
+      if (S[i] < smin) smin = S[i];
+    }
+    if (smin > Real(0))
+      cond = smax / smin;
+    else
+      cond = Real(1e300);  // effectively infinite
+  }
+  else
+  {
+    cond = Real(0);
+  }
+
+  std::free(Acopy);
+  std::free(S);
+  std::free(U_dummy);
+  std::free(VT_dummy);
+
+  return cond;
+}
 
 /* Jacobi ON (orthonormal) tridiagonal for w(x)=(1-x)^a(1+x)^b on [-1,1].
    Fills:
@@ -179,7 +323,7 @@ inline void jacobi_tridiag_ON(int n, Real a, Real b, Real* d, Real* e)
      t[0..n-1] : nodes in [0,1]
      w[0..n-1] : weights */
 template<class Real>
-inline void gauss_jacobi_unit(unsigned int n, Real* kappa,
+inline void gauss_jacobi_unit(unsigned int n, const Real* kappa,
                               Real* t, Real* w)
 {
   if (n == 0) return;

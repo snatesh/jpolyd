@@ -15,7 +15,8 @@ static inline void jbasis_eval_all_D(const double* X,
                                      const int* tail_deg,
                                      const double* inv_h,
                                      double* V,
-                                     int ld_V)
+                                     int ld_V,
+                                     double* dV)
 {
   Basis<D,double>::eval_all(X,
                             ld_point,
@@ -27,7 +28,8 @@ static inline void jbasis_eval_all_D(const double* X,
                             tail_deg,
                             inv_h,
                             V,
-                            ld_V);
+                            ld_V,
+                            dV);
 }
 
 template<int D>
@@ -71,7 +73,8 @@ void jbasis_eval_all(const double* X,
                      const int* tail_deg,
                      const double* inv_h,
                      double* V,
-                     int ld_V)
+                     int ld_V,
+                     double* dV)
 {
   switch (D)
   {
@@ -79,31 +82,31 @@ void jbasis_eval_all(const double* X,
       jbasis_eval_all_D<1>(X, ld_point, ld_dim,
                            npts, kappa, n,
                            alpha_table, tail_deg,
-                           inv_h, V, ld_V);
+                           inv_h, V, ld_V, dV);
       break;
     case 2:
       jbasis_eval_all_D<2>(X, ld_point, ld_dim,
                            npts, kappa, n,
                            alpha_table, tail_deg,
-                           inv_h, V, ld_V);
+                           inv_h, V, ld_V, dV);
       break;
     case 3:
       jbasis_eval_all_D<3>(X, ld_point, ld_dim,
                            npts, kappa, n,
                            alpha_table, tail_deg,
-                           inv_h, V, ld_V);
+                           inv_h, V, ld_V, dV);
       break;
     case 4:
       jbasis_eval_all_D<4>(X, ld_point, ld_dim,
                            npts, kappa, n,
                            alpha_table, tail_deg,
-                           inv_h, V, ld_V);
+                           inv_h, V, ld_V, dV);
       break;
     case 5:
       jbasis_eval_all_D<5>(X, ld_point, ld_dim,
                            npts, kappa, n,
                            alpha_table, tail_deg,
-                           inv_h, V, ld_V);
+                           inv_h, V, ld_V, dV);
       break;
     default:
       // Unsupported D: no-op

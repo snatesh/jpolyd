@@ -17,3 +17,4 @@ def set_omp_threads(n: int):
   if n <= 0:
       raise ValueError("n must be a positive integer")
   libjpolyd.jpoly_set_omp_threads(int(n))
+

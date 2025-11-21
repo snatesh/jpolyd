@@ -16,6 +16,7 @@ extern "C" {
  * #pragma omp parallel for inside C++ code (e.g. eval_all).
  */
 void jpoly_set_omp_threads(int n);
+void jpoly_set_openblas_threads(int n);
 
 #ifdef __cplusplus
 }

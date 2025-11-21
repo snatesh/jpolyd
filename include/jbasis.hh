@@ -2,8 +2,10 @@
 #define JBASIS_H
 
 #include <cmath>
+#include <cassert>
 #include <jdetail.hh>
 #include <omp.h>
+
 
 /* Evaluators for the Jacobi basis on the D-simplex. */
 
@@ -192,7 +194,8 @@ struct Basis
       Real t6 = Real(2.0)
                 * (aj + kappa_j + static_cast<Real>(2 * alpha_j))
                 + Real(1.0);
-
+      assert(t5 > Real(0) && "jbasis.hh: inv_h_alpha: t5 must be > 0 (check kappa range)");
+      assert(t6 > Real(0) && "jbasis.hh: inv_h_alpha: t6 must be > 0 (check kappa range)");
       contrib += static_cast<Real>(
         std::log(static_cast<double>(t5))
         - std::log(static_cast<double>(t6))
@@ -234,15 +237,16 @@ struct Basis
                        const int* tail_deg,
                        const Real* inv_h,
                        Real* V,
-                       int ld_V)
+                       int ld_V,
+                       Real* dV = nullptr)  // <- NEW optional gradient buffer
   {
     if (!X || !kappa || !alpha_table || !tail_deg || !inv_h || !V)
     {
       return;
     }
-
+ 
     int M = dim_Pi(n);
-
+  
     Real Ktail[D];
     for (int j = 0; j < D; ++j)
     {
@@ -257,69 +261,316 @@ struct Basis
     #pragma omp parallel for schedule(static)
     for (int p = 0; p < npts; ++p)
     {
-      Real prefix_sum[D];
+      //Real prefix_sum[D];
       Real one_minus[D];
       Real t[D];
-
+      Real xloc[D];        // NEW: store coordinates for this point
+  
       Real s = Real(0.0);
       for (int j = 0; j < D; ++j)
       {
-        prefix_sum[j] = s;
-
+        //prefix_sum[j] = s;
+  
         Real xpj = X[p * ld_point + j * ld_dim];
+        xloc[j] = xpj;     // NEW
+  
         Real om = Real(1.0) - s;
         if (om <= Real(0.0))
         {
           om = Real(1.0e-30);
         }
-
+  
         one_minus[j] = om;
         t[j]         = (Real(2.0) * xpj / om) - Real(1.0);
         s           += xpj;
       }
-
+  
       for (int m = 0; m < M; ++m)
       {
-        Real val = inv_h[m];
-
         const int* arow = alpha_table + m * D;
         const int* trow = tail_deg    + m * D;
-
+  
+        // --- existing value computation, with a few cached arrays ---
+  
+        Real val = inv_h[m];
+  
+        Real F[D];          // factor per level j = omega^n_j * P_nj(t_j)
+        Real omega_pow[D];  // omega_j^{n_j}
+        Real Pnj[D];        // P_{n_j}^{(a_j,b_j)}(t_j)
+  
         for (int j = 0; j < D; ++j)
         {
           int n_j = arow[j];
-
+  
+          Real opow = Real(1.0);
           if (n_j > 0)
           {
-            val *= std::pow(one_minus[j], static_cast<Real>(n_j));
+            opow = std::pow(one_minus[j], static_cast<Real>(n_j));
+            val *= opow;
           }
-
+  
           int tail_j = trow[j];
-
+  
           Real a_j = Real(2.0) * static_cast<Real>(tail_j)
                    + Ktail[j]
                    + Real(0.5) * static_cast<Real>(D - j - 2);
-
+  
           Real b_j = kappa[j] - Real(0.5);
-
-          Real Pnj = Real(1.0);
+  
+          Real P = Real(1.0);
           if (n_j > 0)
           {
-            Pnj = detail::BasisClassic1D<Real>::eval_n(
-                    n_j,
-                    a_j,
-                    b_j,
-                    t[j]
-                  );
+            P = detail::BasisClassic1D<Real>::eval_n(
+                  n_j,
+                  a_j,
+                  b_j,
+                  t[j]
+                );
           }
-
-          val *= Pnj;
+  
+          val *= P;
+  
+          omega_pow[j] = opow;
+          Pnj[j]       = P;
+          F[j]         = opow * P;  // ok also if n_j = 0: opow=1, P=1
         }
-
+  
         V[p + m * ld_V] = val;
-      }
+  
+        // --- derivative computation only if requested ---
+  
+        if (!dV)
+        {
+          continue;
+        }
+  
+        // Build prefix/suffix products of F[j] so that
+        // prod_except_j = pre[j] * suf[j].
+        Real pre[D];
+        Real suf[D];
+  
+        pre[0] = Real(1.0);
+        for (int j = 1; j < D; ++j)
+        {
+          pre[j] = pre[j - 1] * F[j - 1];
+        }
+  
+        suf[D - 1] = Real(1.0);
+        for (int j = D - 2; j >= 0; --j)
+        {
+          suf[j] = suf[j + 1] * F[j + 1];
+        }
+  
+        Real grad[D];
+        for (int ell = 0; ell < D; ++ell)
+        {
+          grad[ell] = Real(0.0);
+        }
+  
+        // Product rule:
+        // d/dx_ell P = inv_h[m] * sum_j ( dF_j/dx_ell * prod_{r != j} F_r )
+        for (int j = 0; j < D; ++j)
+        {
+          int n_j = arow[j];
+          if (n_j <= 0)
+          {
+            continue; // F_j = 1, derivative is zero
+          }
+  
+          int tail_j = trow[j];
+  
+          Real omega = one_minus[j];
+          Real xj    = xloc[j];
+  
+          Real a_j = Real(2.0) * static_cast<Real>(tail_j)
+                   + Ktail[j]
+                   + Real(0.5) * static_cast<Real>(D - j - 2);
+  
+          Real b_j = kappa[j] - Real(0.5);
+  
+          // We already have Pnj[j] = P_nj(a_j,b_j,t_j)
+          Real P = Pnj[j];
+  
+          // Jacobi derivative w.r.t t: P_n'(t) = 0.5 (n + a + b + 1) P_{n-1}^{(a+1,b+1)}(t)
+          Real dPdt = Real(0.0);
+          if (n_j > 0)
+          {
+            Real Pn1 = detail::BasisClassic1D<Real>::eval_n(
+                         n_j - 1,
+                         a_j + Real(1.0),
+                         b_j + Real(1.0),
+                         t[j]
+                       );
+            Real factor = Real(0.5) *
+                          (static_cast<Real>(n_j) + a_j + b_j + Real(1.0));
+            dPdt = factor * Pn1;
+          }
+  
+          Real omega_p = omega_pow[j];  // omega^n_j
+          Real prod_except_j = pre[j] * suf[j];
+  
+          for (int ell = 0; ell < D; ++ell)
+          {
+            // d omega_j / d x_ell
+            Real domega = Real(0.0);
+            if (ell < j)
+            {
+              domega = Real(-1.0);
+            }
+  
+            // d(omega^n_j)/dx_ell = n_j * omega^{n_j-1} * domega
+            Real d_omega_p = Real(0.0);
+            if (domega != Real(0.0))
+            {
+              d_omega_p = static_cast<Real>(n_j) *
+                          (omega_p / omega) * domega;
+            }
+  
+            // dt_j / dx_ell
+            Real dt_dx = Real(0.0);
+            if (ell == j)
+            {
+              dt_dx = Real(2.0) / omega;
+            }
+            else if (ell < j)
+            {
+              dt_dx = Real(2.0) * xj / (omega * omega);
+            }
+  
+            Real dJdx = dPdt * dt_dx;
+  
+            // dF_j/dx_ell = d(omega^n_j)/dx_ell * P + omega^n_j * dJdx
+            Real dFdx = d_omega_p * P + omega_p * dJdx;
+  
+            grad[ell] += inv_h[m] * dFdx * prod_except_j;
+          } // ell
+        }   // j
+  
+        // store gradient for this (p,m)
+        Real* g_pm = dV + ((p + m * ld_V) * D);
+        for (int ell = 0; ell < D; ++ell)
+        {
+          g_pm[ell] = grad[ell];
+        }
+      } // m
+    }   // p
+  }
+
+
+  static inline void build_structures(const double* kappa,
+                                      int n,
+                                      int* alpha_table,
+                                      int* tail_deg,
+                                      double* inv_h)
+  {
+    int M = dim_Pi(n);
+  
+    build_alpha_table(n, alpha_table);
+    build_tail_deg(n, alpha_table, tail_deg);
+  
+    for (int m = 0; m < M; ++m)
+    {
+      const int* alpha = alpha_table + m * D;
+      inv_h[m] = inv_h_alpha(alpha, kappa);
     }
   }
+
+  //static void eval_all(const Real* X,
+  //                     int ld_point,
+  //                     int ld_dim,
+  //                     int npts,
+  //                     const Real* kappa,
+  //                     int n,
+  //                     const int* alpha_table,
+  //                     const int* tail_deg,
+  //                     const Real* inv_h,
+  //                     Real* V,
+  //                     int ld_V)
+  //{
+  //  if (!X || !kappa || !alpha_table || !tail_deg || !inv_h || !V)
+  //  {
+  //    return;
+  //  }
+
+  //  int M = dim_Pi(n);
+
+  //  Real Ktail[D];
+  //  for (int j = 0; j < D; ++j)
+  //  {
+  //    Real sum = Real(0.0);
+  //    for (int r = j + 1; r <= D; ++r)
+  //    {
+  //      sum += kappa[r];
+  //    }
+  //    Ktail[j] = sum;
+  //  }
+  //
+  //  #pragma omp parallel for schedule(static)
+  //  for (int p = 0; p < npts; ++p)
+  //  {
+  //    Real prefix_sum[D];
+  //    Real one_minus[D];
+  //    Real t[D];
+
+  //    Real s = Real(0.0);
+  //    for (int j = 0; j < D; ++j)
+  //    {
+  //      prefix_sum[j] = s;
+
+  //      Real xpj = X[p * ld_point + j * ld_dim];
+  //      Real om = Real(1.0) - s;
+  //      if (om <= Real(0.0))
+  //      {
+  //        om = Real(1.0e-30);
+  //      }
+
+  //      one_minus[j] = om;
+  //      t[j]         = (Real(2.0) * xpj / om) - Real(1.0);
+  //      s           += xpj;
+  //    }
+
+  //    for (int m = 0; m < M; ++m)
+  //    {
+  //      Real val = inv_h[m];
+
+  //      const int* arow = alpha_table + m * D;
+  //      const int* trow = tail_deg    + m * D;
+
+  //      for (int j = 0; j < D; ++j)
+  //      {
+  //        int n_j = arow[j];
+
+  //        if (n_j > 0)
+  //        {
+  //          val *= std::pow(one_minus[j], static_cast<Real>(n_j));
+  //        }
+
+  //        int tail_j = trow[j];
+
+  //        Real a_j = Real(2.0) * static_cast<Real>(tail_j)
+  //                 + Ktail[j]
+  //                 + Real(0.5) * static_cast<Real>(D - j - 2);
+
+  //        Real b_j = kappa[j] - Real(0.5);
+
+  //        Real Pnj = Real(1.0);
+  //        if (n_j > 0)
+  //        {
+  //          Pnj = detail::BasisClassic1D<Real>::eval_n(
+  //                  n_j,
+  //                  a_j,
+  //                  b_j,
+  //                  t[j]
+  //                );
+  //        }
+
+  //        val *= Pnj;
+  //      }
+
+  //      V[p + m * ld_V] = val;
+  //    }
+  //  }
+  //}
 
 private:
   // Recursive helper used only by build_alpha_table.

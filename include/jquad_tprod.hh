@@ -63,10 +63,6 @@ struct QuadMapped
     if (n == 0) { return 0; }
 
     // 1D Legendre rule on [0,1] corresponds to kappa = (1/2, 1/2). 
-    Real kappa_unit[2];
-    kappa_unit[0] = Real(0.5);
-    kappa_unit[1] = Real(0.5);
-
     Real* t1 = (Real*) std::malloc(n * sizeof(Real));
     Real* w1 = (Real*) std::malloc(n * sizeof(Real));
     if (!t1 || !w1)

@@ -11,9 +11,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(NOT debug)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -Iinclude -O3 -march=native")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Iinclude -O3 -march=native")
 elseif(debug)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Iinclude -O3 -g -DDEBUG -march=native")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Iinclude -g -DDEBUG -march=native")
 endif()
 
 
@@ -49,7 +49,8 @@ if(JPOLYD_BUILD_CAPI)
     c_api/src/jbasis_c.cpp
     c_api/src/jmat_c.cpp
     c_api/src/jevd_c.cpp
-    c_api/src/omp_control.cpp
+    c_api/src/thread_control.cpp
+    c_api/src/jquad_optim_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -61,6 +62,7 @@ if(JPOLYD_BUILD_CAPI)
       ${LAPACKE_LIB}
       openblas
       OpenMP::OpenMP_CXX
+      nlopt
   )
 
   # link libm for lgamma() if on UNIX
@@ -135,7 +137,8 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_tprod.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jbasis.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jmat.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jevd.py DESTINATION ${PY_SITE})
-install(FILES ${CMAKE_SOURCE_DIR}/python/omp_control.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/thread_control.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_optim.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)
