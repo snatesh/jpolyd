@@ -7,7 +7,9 @@
 #include <cstring>
 #include <cassert>
 #include <iostream>
+#include <iomanip>
 #include <vector>
+#include <fstream>
 #include <algorithm>
 #include <omp.h>
 
@@ -310,8 +312,10 @@ static void eval_f_and_grad(QuadProblemData<D,Real>& data,
   const int M    = data.M;
   const int nvar = data.nvar;
 
+  // unpack z into X_real (N x D) and w_real (N)
   unpack_z<D,Real>(z_real, N, data.X_real, data.w_real);
 
+  // basis + (optionally) ∂P/∂x
   Basis<D,Real>::eval_all(
     data.X_real,
     D, 1,         // ld_point, ld_dim
@@ -327,6 +331,12 @@ static void eval_f_and_grad(QuadProblemData<D,Real>& data,
   );
 
   Real* F = data.F;
+
+  // Compute F[m] = sum_p V[p + m*N] * w[p] - e1[m]
+  // and f = 0.5 * sum_m F[m]^2 in one parallel pass.
+  Real fval = static_cast<Real>(0);
+
+  //#pragma omp parallel for reduction(+:fval) schedule(static)
   for (int m = 0; m < M; ++m)
   {
     Real sum = static_cast<Real>(0);
@@ -334,14 +344,11 @@ static void eval_f_and_grad(QuadProblemData<D,Real>& data,
     {
       sum += data.V[p + m*N] * data.w_real[p];
     }
-    F[m] = sum - data.e1[m];
+    Real Fm = sum - data.e1[m];
+    F[m] = Fm;
+    fval += Fm * Fm;
   }
 
-  Real fval = static_cast<Real>(0);
-  for (int m = 0; m < M; ++m)
-  {
-    fval += F[m] * F[m];
-  }
   data.f_real = static_cast<Real>(0.5) * fval;
 
   if (!want_grad)
@@ -350,27 +357,36 @@ static void eval_f_and_grad(QuadProblemData<D,Real>& data,
   }
 
   Real* g = data.grad_real;
+
+  // Initialize gradient to zero
   for (int i = 0; i < nvar; ++i)
   {
     g[i] = static_cast<Real>(0);
   }
 
-  // Node part: ∂f/∂x_{p,ell} = w_p * sum_m F_m * (∂P_m/∂x_ell)(x_p)
+  // Node part:
+  // ∂f/∂x_{p,ell} = w_p * sum_m F_m * (∂P_m/∂x_ell)(x_p)
+  // Each (p,ell) writes to a unique g[p*D + ell] ⇒ parallel over p is safe.
+  //#pragma omp parallel for schedule(static)
   for (int p = 0; p < N; ++p)
   {
     for (int ell = 0; ell < D; ++ell)
     {
       Real sum = static_cast<Real>(0);
+      const Real wp = data.w_real[p];
       for (int m = 0; m < M; ++m)
       {
         Real dP = data.dV[((p + m*N) * D) + ell];
-        sum += data.F[m] * (data.w_real[p] * dP);
+        sum += data.F[m] * (wp * dP);
       }
       g[p*D + ell] = sum;
     }
   }
 
-  // Weight part: ∂f/∂w_p = sum_m F_m * P_m(x_p) = (V[p,:] · F)
+  // Weight part:
+  // ∂f/∂w_p = sum_m F_m * P_m(x_p) = (row p of V) · F
+  // Again, each p writes a unique index g[N*D + p] ⇒ parallel over p is safe.
+  //#pragma omp parallel for schedule(static)
   for (int p = 0; p < N; ++p)
   {
     Real sum = static_cast<Real>(0);
@@ -381,6 +397,86 @@ static void eval_f_and_grad(QuadProblemData<D,Real>& data,
     g[N*D + p] = sum;
   }
 }
+//template<int D, class Real>
+//static void eval_f_and_grad(QuadProblemData<D,Real>& data,
+//                            const Real* z_real,
+//                            bool want_grad)
+//{
+//  const int N    = data.N;
+//  const int M    = data.M;
+//  const int nvar = data.nvar;
+//
+//  unpack_z<D,Real>(z_real, N, data.X_real, data.w_real);
+//
+//  Basis<D,Real>::eval_all(
+//    data.X_real,
+//    D, 1,         // ld_point, ld_dim
+//    N,
+//    data.kappa,
+//    data.m_basis,
+//    data.alpha_table,
+//    data.tail_deg,
+//    data.inv_h,
+//    data.V,
+//    N,
+//    want_grad ? data.dV : nullptr
+//  );
+//
+//  Real* F = data.F;
+//  for (int m = 0; m < M; ++m)
+//  {
+//    Real sum = static_cast<Real>(0);
+//    for (int p = 0; p < N; ++p)
+//    {
+//      sum += data.V[p + m*N] * data.w_real[p];
+//    }
+//    F[m] = sum - data.e1[m];
+//  }
+//
+//  Real fval = static_cast<Real>(0);
+//  for (int m = 0; m < M; ++m)
+//  {
+//    fval += F[m] * F[m];
+//  }
+//  data.f_real = static_cast<Real>(0.5) * fval;
+//
+//  if (!want_grad)
+//  {
+//    return;
+//  }
+//
+//  Real* g = data.grad_real;
+//  for (int i = 0; i < nvar; ++i)
+//  {
+//    g[i] = static_cast<Real>(0);
+//  }
+//
+//  // Node part: ∂f/∂x_{p,ell} = w_p * sum_m F_m * (∂P_m/∂x_ell)(x_p)
+//  for (int p = 0; p < N; ++p)
+//  {
+//    for (int ell = 0; ell < D; ++ell)
+//    {
+//      Real sum = static_cast<Real>(0);
+//      for (int m = 0; m < M; ++m)
+//      {
+//        Real dP = data.dV[((p + m*N) * D) + ell];
+//        sum += data.F[m] * (data.w_real[p] * dP);
+//      }
+//      g[p*D + ell] = sum;
+//    }
+//  }
+//
+//  // Weight part: ∂f/∂w_p = sum_m F_m * P_m(x_p) = (V[p,:] · F)
+//  for (int p = 0; p < N; ++p)
+//  {
+//    Real sum = static_cast<Real>(0);
+//    for (int m = 0; m < M; ++m)
+//    {
+//      sum += data.F[m] * data.V[p + m*N];
+//    }
+//    g[N*D + p] = sum;
+//  }
+//}
 
 /* NLopt objective callback: double interface, Real internal */
 template<int D, class Real>
@@ -419,7 +515,62 @@ static double objective_cb(unsigned n,
         break;
       }
     }
-  
+    if (data->obj_eval_count == 1)
+    {
+      // ---- Dump z1 ----
+      {
+        std::ofstream out("dump_z1.txt");
+        out << std::setprecision(17) << std::scientific;
+
+        for (int i = 0; i < data->nvar; ++i) {
+          out << data->z_real[i] << "\n";
+        }
+        out.close();
+      }
+      std::cerr << "Wrote dump_z1.txt\n";
+
+      // ---- Dump V ----
+      {
+        std::ofstream out("dump_V.txt");
+        out << std::setprecision(17) << std::scientific;
+
+        int N = data->N;
+        int M = data->M;
+        Real* V = data->V;    // layout V[p + m*N]
+
+        for (int m = 0; m < M; ++m) {
+          for (int p = 0; p < N; ++p) {
+            out << V[p + m*N] << " ";
+          }
+          out << "\n";
+        }
+        out.close();
+      }
+      std::cerr << "Wrote dump_V.txt\n";
+
+      // ---- Dump dV ----
+      if (want_grad && data->dV != nullptr) {
+        std::ofstream out("dump_dV.txt");
+        out << std::setprecision(17) << std::scientific;
+
+        int N = data->N;
+        int M = data->M;
+        int Ddim = D;
+        Real* dV = data->dV;  // layout ((p + m*N)*D + ell)
+
+        for (int m = 0; m < M; ++m) {
+          for (int p = 0; p < N; ++p) {
+            for (int ell = 0; ell < Ddim; ++ell) {
+              Real dv = dV[(p + m*N)*Ddim + ell];
+              out << dv << " ";
+            }
+            out << "\n";
+          }
+        }
+        out.close();
+        std::cerr << "Wrote dump_dV.txt\n";
+      }
+    } 
     // optional: abort to capture a reproducible state
     // std::abort();
   }
@@ -546,6 +697,43 @@ static void ineq_mconstraint_cb([[maybe_unused]] unsigned m,
   double dt = data->constr_timer.toc();
   data->time_constr += dt;
   data->count_constr += 1;
+}
+
+// NLOPT equality constraint sum(w)=1
+// tends to prevent overflow in F
+template<int D, class Real>
+static void eq_constraint_cb([[maybe_unused]] unsigned m,
+                             double* result,
+                             unsigned n,
+                             const double* x,
+                             double* grad,
+                             void* f_data)
+{
+  QuadProblemData<D,Real>* data =
+    reinterpret_cast<QuadProblemData<D,Real>*>(f_data);
+  const int N    = data->N;
+  const int nvar = data->nvar;
+  (void)nvar;
+
+  assert(m == 1);
+  assert(static_cast<int>(n) == nvar);
+
+  // z = [X_flat, w], w starts at index N*D
+  const int offset_w = N * D;
+
+  // h(z) = sum_p w_p - 1
+  double sum = 0.0;
+  for (int p = 0; p < N; ++p)
+    sum += x[offset_w + p];
+
+  result[0] = sum - 1.0;
+
+  if (grad)
+  {
+    std::memset(grad, 0, sizeof(double)*n);
+    for (int p = 0; p < N; ++p)
+      grad[0*n + (offset_w + p)] = 1.0;  // row 0, col offset_w+p
+  }
 }
 
 template<class Real>
@@ -834,7 +1022,7 @@ struct QuadOptimizer
     }
     for (int i = 0; i < m_con; ++i)
     {
-      tol[i] = 1e-12;
+      tol[i] = 1e-14;
     }
 
     nlopt_add_inequality_mconstraint(
@@ -845,15 +1033,27 @@ struct QuadOptimizer
       tol
     );
 
+    unsigned meq = 1;
+    double eq_tol[1] = { 1e-14 };
+    
+    nlopt_add_equality_mconstraint(
+      opt,
+      meq,
+      eq_constraint_cb<D,Real>,
+      &data,
+      eq_tol
+    );
+
     for (int i = 0; i < nvar; ++i) {
       if (!std::isfinite(data.z_real[i])) {
         std::cerr << "NaN/Inf in z0 at i=" << i << "\n";
       }
     }
 
-    nlopt_set_xtol_rel(opt, 1e-7);
+    nlopt_set_xtol_rel(opt, 1e-9);
     nlopt_set_ftol_rel(opt, static_cast<double>(opts.tol));
     nlopt_set_maxeval(opt, opts.max_nlopt_eval);
+    std::vector<double> dx(nvar);  // nvar = (D+1)*N
 
     timer nl_timer;
     nl_timer.tic();

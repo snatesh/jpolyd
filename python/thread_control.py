@@ -18,3 +18,14 @@ def set_omp_threads(n: int):
       raise ValueError("n must be a positive integer")
   libjpolyd.jpoly_set_omp_threads(int(n))
 
+libjpolyd.jpoly_set_openblas_threads.argtypes = [ctypes.c_int]
+libjpolyd.jpoly_set_openblas_threads.restype  = None
+
+def set_openblas_threads(n: int):
+  """
+  Set the number of blas threads used by underlying openblas
+  
+  """
+  if n <= 0:
+      raise ValueError("n must be a positive integer")
+  libjpolyd.jpoly_set_openblas_threads(int(n))

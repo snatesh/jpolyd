@@ -435,6 +435,9 @@ def optimize_quadrature(D,
   opt.add_inequality_mconstraint(ineq_constraints, ineq_tol)
   opt.add_equality_mconstraint(eq_constraints, eq_tol)
 
+
+  print(opt.get_initial_step(z0))
+
   # === Run optimization ===
 
   try:

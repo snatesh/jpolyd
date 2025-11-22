@@ -127,7 +127,6 @@ def verify_derivatives(D=2, N=6, m_basis=4, seed=1):
   J_exact = J_a(z)
   g_exact = grad_a(z)
   
-  print("h\t\tRelErr(J)\tRelErr(grad f)")
   EJ = np.zeros(len(hs))
   Eg = np.zeros(len(hs))
   idx = 0
@@ -138,7 +137,6 @@ def verify_derivatives(D=2, N=6, m_basis=4, seed=1):
     EJ[idx] = np.linalg.norm(J_fd - J_exact) / np.linalg.norm(J_exact)
     Eg[idx] = np.linalg.norm(g_fd - g_exact) / np.linalg.norm(g_exact)
     idx += 1
-    #print(f"{h:1.0e}\t{EJ:1.3e}\t{Eg:1.3e}")
 
   return EJ, Eg, hs
 

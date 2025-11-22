@@ -27,11 +27,12 @@ def make_fname(D, node_deg, m_basis, kappa):
   )
   return fname
 
+#thread_control.set_openblas_threads(8)
 thread_control.set_omp_threads(8)  
 
 D = 3
-n_node_deg = 11
-m_basis = 16
+n_node_deg = 8
+m_basis = 14
 kappa = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
 #kappa = np.array([0.5, 2.5, 1.7, 3.2], dtype=np.float64)
 X, w, V_opt, status = optimize_quadrature(

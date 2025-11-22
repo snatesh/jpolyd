@@ -1,5 +1,4 @@
 #include <thread_control.h>
-#include <openblas_config.h>
 #include <cblas.h>
 #include <omp.h>
 
@@ -20,7 +19,7 @@ void jpoly_set_openblas_threads(int n)
   {
     // Declaration from OpenBLAS
     // (include <openblas_config.h> or declare it manually)
-    extern void openblas_set_num_threads(int);
+    //extern void openblas_set_num_threads(int);
     openblas_set_num_threads(n);
   }
 }
