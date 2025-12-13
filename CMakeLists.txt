@@ -24,8 +24,8 @@ find_package(BLAS   REQUIRED)
 find_package(LAPACK REQUIRED)
 find_library(LAPACKE_LIB lapacke REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(OpenCV REQUIRED)
 message(STATUS "Found LAPACKE: ${LAPACKE_LIB}")
-
 
 # -------- output directories (all local) --------
 set(JPOLYD_INSTALL_DIR ${CMAKE_SOURCE_DIR}/install)
@@ -41,6 +41,180 @@ target_include_directories(jpolyd INTERFACE
 )
 target_compile_features(jpolyd INTERFACE cxx_std_17)
 
+# -------- test: DCT vs Jacobi block transform --------
+add_executable(test_dct_vs_jacobi
+  ${CMAKE_SOURCE_DIR}/src/test_dct_vs_jacobi.cpp
+)
+
+target_include_directories(test_dct_vs_jacobi PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+add_executable(test_pixel_moment_ls
+    src/test_pixel_moment_ls.cpp
+)
+
+add_executable(test_pixel_gram_schmidt
+    src/test_pixel_gram_schmidt.cpp
+)
+
+add_executable(precompute_jacobi_Q_triangles
+    src/precompute_jacobi_Q_triangles.cpp
+)
+
+add_executable(precompute_jacobi_Q_tree
+    src/precompute_jacobi_Q_tree.cpp
+)
+
+add_executable(test_jacobi_block_codec
+    src/test_jacobi_block_codec.cpp
+)
+add_executable(test_jacobi_block_quant
+    src/test_jacobi_block_quant.cpp
+)
+
+add_executable(brick_tet_kernel 
+    src/brick_tet_kernel.cpp
+)
+add_executable(brick_tet_kernel_vid 
+    src/brick_tet_kernel_vid.cpp
+)
+add_executable(brick_tet_codec 
+    src/brick_tet_codec.cpp
+)
+add_executable(tet_video_codec_full 
+    src/tet_video_codec_full.cpp
+)
+add_executable(generate_glass_bowl_mesh
+  src/generate_glass_bowl_mesh.cpp)
+add_executable(assemble_cn_step 
+  src/assemble_cn_step.cpp)
+
+target_include_directories(assemble_cn_step PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  /usr/include/suitesparse
+)
+target_link_libraries(assemble_cn_step PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  spqr
+  cholmod
+  umfpack
+  amd
+  colamd
+  suitesparseconfig
+  blas
+  lapack
+)
+
+
+target_link_libraries(tet_video_codec_full PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  ${OpenCV_LIBS}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+
+target_link_libraries(brick_tet_codec PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  ${OpenCV_LIBS}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(brick_tet_kernel_vid PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  ${OpenCV_LIBS}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(brick_tet_kernel PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+
+
+
+target_link_libraries(test_jacobi_block_quant PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(test_jacobi_block_codec PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(precompute_jacobi_Q_triangles PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(precompute_jacobi_Q_tree PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+target_link_libraries(test_pixel_gram_schmidt PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+
+target_link_libraries(test_pixel_moment_ls PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+
+target_link_libraries(test_dct_vs_jacobi PRIVATE
+  jpolyd                        # your header-only target
+  OpenMP::OpenMP_CXX            # needed by basis code
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+)
+
+set_target_properties(test_dct_vs_jacobi PROPERTIES
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED ON
+)
+
 # -------- C API shared lib --------
 if(JPOLYD_BUILD_CAPI)
   add_library(jpolyd_c SHARED
@@ -51,6 +225,8 @@ if(JPOLYD_BUILD_CAPI)
     c_api/src/jevd_c.cpp
     c_api/src/thread_control.cpp
     c_api/src/jquad_optim_c.cpp
+    c_api/src/jkmat.cpp
+    c_api/src/jdmat.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -59,9 +235,9 @@ if(JPOLYD_BUILD_CAPI)
   target_link_libraries(jpolyd_c 
     PRIVATE 
       jpolyd 
-      ${LAPACKE_LIB}
-      openblas
       OpenMP::OpenMP_CXX
+      /usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+      ${LAPACKE_LIB}
       nlopt
   )
 
@@ -139,6 +315,8 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jmat.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jevd.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/thread_control.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_optim.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jkmat.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jdmat.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)
