@@ -234,6 +234,18 @@ def _AtA_block(A, Jrow, Jcol):
   Ac = A[:, Jcol]
   return Ar.T @ Ac
 
+def _dense_to_csc_pruned(A, rel=1e-14, abs_tol=0.0):
+  """
+  Convert dense A to CSC, pruning entries with |a_ij| <= max(abs_tol, rel*||A||_F).
+  """
+  A = np.asarray(A)
+  fro = float(np.linalg.norm(A))
+  thr = max(float(abs_tol), float(rel) * max(1.0, fro))
+  if thr > 0.0:
+    A = A.copy()
+    A[np.abs(A) <= thr] = 0.0
+  return sps.csc_matrix(A)
+
 def degree_block_norms_of_normal(A, deg_of_col, max_delta=4):
   
   A = A.tocsc() if sps.issparse(A) else np.asarray(A)
@@ -304,62 +316,96 @@ def build_degree_block_tridiag_M(A, deg_of_col, alpha_rel=1e-12, alpha_abs=1e-18
 
   return M, blocks
 
-def build_degree_block_pentadiag_M(A, deg_of_col, alpha_rel=1e-12, alpha_abs=1e-18):
+def build_degree_block_pentadiag_M_damped(
+  A,
+  deg_of_col,
+  alpha_rel=1e-12,
+  alpha_abs=1e-18,
+  gamma_init=1.0,
+  gamma_min=2.0**-20,
+  gamma_shrink=0.5,
+  eps_rel=1e-12,
+):
   """
-  Build dense block-*pentadiagonal* approximation M ~ A^T A in degree blocks:
+  Build a degree-band (|Δd|<=2) approximation M ~ A^T A that is SPD by construction.
 
-    keep couplings for |d - d'| <= 2:
-      M_dd     = (A^T A)_{dd}
-      M_d,d+1  = (A^T A)_{d,d+1}
-      M_d,d+2  = (A^T A)_{d,d+2}
+  Strategy:
+    - Build SPD block-diagonal D from exact normal blocks N_dd.
+    - Build off-diagonals E1 (Δ=1), E2 (Δ=2).
+    - Form M = D + gamma*(E1+E1^T + E2+E2^T).
+    - Decrease gamma until chol_spd_global needs no (or tiny) shift.
 
   Returns:
-    M      : (nvar,nvar) dense SPD-ish matrix (may require shift before Cholesky)
-    blocks : list of (deg, J) with J = column indices of that degree
+    M      : dense (n,n)
+    degs   : degrees present
+    J_of_d : dict
+    gamma  : final damping used
   """
   A = _as_csc(A)
 
-  # Optional debug: how much energy lives in each degree-coupling band
-  outdebug = degree_block_norms_of_normal(A, deg_of_col, max_delta=4)
-  print(outdebug)
-
-  blocks = _degree_blocks(deg_of_col)   # [(d0,J0),(d1,J1),...]
-  nb = len(blocks)
+  deg = np.asarray(deg_of_col, dtype=np.int64)
   nvar = A.shape[1]
 
-  M = np.zeros((nvar, nvar), dtype=np.float64)
+  # Degree -> indices (only keep nonempty)
+  J_of_d = {}
+  for d in range(int(deg.min()), int(deg.max()) + 1):
+    J = np.where(deg == d)[0]
+    if J.size:
+      J_of_d[int(d)] = J
+  degs = sorted(J_of_d.keys())
 
-  # Fill block diagonal and off-diagonals up to +/-2
-  for bi in range(nb):
-    d, Jd = blocks[bi]
+  # Build block-diagonal D (SPD) and store off-diagonals separately
+  D = np.zeros((nvar, nvar), dtype=np.float64)
+  E = np.zeros((nvar, nvar), dtype=np.float64)  # will hold upper band (Δ=1,2)
 
-    # Diagonal block H_d
+  for d in degs:
+    Jd = J_of_d[d]
+
+    # N_dd
     H = _AtA_block(A, Jd, Jd)
     H = 0.5 * (H + H.T)
 
-    # robust per-block regularization floor
     diag_scale = float(np.mean(np.diag(H))) if H.size else 1.0
     reg = max(alpha_abs, alpha_rel * max(1.0, abs(diag_scale)))
     H = H + reg * np.eye(H.shape[0])
 
-    M[np.ix_(Jd, Jd)] += H
+    D[np.ix_(Jd, Jd)] += H
 
-    # First off-diagonal (d, d+1)
-    if bi + 1 < nb:
-      _, Jp = blocks[bi + 1]
-      K1 = _AtA_block(A, Jd, Jp)
-      M[np.ix_(Jd, Jp)] += K1
-      M[np.ix_(Jp, Jd)] += K1.T
+    # Δ = 1 and 2 upper blocks into E
+    for delta in (1, 2):
+      dp = d + delta
+      if dp not in J_of_d:
+        continue
+      Jp = J_of_d[dp]
+      K = _AtA_block(A, Jd, Jp)
+      E[np.ix_(Jd, Jp)] += K
 
-    # Second off-diagonal (d, d+2)
-    if bi + 2 < nb:
-      _, Jpp = blocks[bi + 2]
-      K2 = _AtA_block(A, Jd, Jpp)
-      M[np.ix_(Jd, Jpp)] += K2
-      M[np.ix_(Jpp, Jd)] += K2.T
+  # Backtracking on gamma until Cholesky is happy without a big shift.
+  gamma = float(gamma_init)
+  last_shift = None
 
-  return M, blocks
+  while True:
+    M = D + gamma * (E + E.T)
 
+    # Try Cholesky with your global SPD helper
+    _, shift = chol_spd_global(M, eps_rel=eps_rel)
+    last_shift = shift
+
+    # Accept if no shift (or extremely tiny shift)
+    if shift == 0.0 or shift < 1e-10:
+      break
+
+    gamma *= float(gamma_shrink)
+    if gamma < gamma_min:
+      # Give up on off-diagonals; return block-diagonal (always SPD)
+      gamma = 0.0
+      M = D.copy()
+      break
+
+  if last_shift not in (0.0, None) and gamma == 0.0:
+    print("Warning: could not make banded M SPD without shift; using block-diagonal only.")
+
+  return M, degs, J_of_d, gamma
 
 
 def chol_spd_global(M, eps_rel=1e-12):
@@ -395,29 +441,76 @@ def chol_spd_global(M, eps_rel=1e-12):
 
   raise np.linalg.LinAlgError("Failed to make M SPD even after shifting.")
 
-
-def compute_all_singular_values_A_Minvhalf(A, deg_of_col, alpha_rel=1e-12, alpha_abs=1e-18, eps_rel=1e-12):
+def compute_all_singular_values_A_Minvhalf(
+  A,
+  deg_of_col,
+  alpha_rel=1e-12,
+  alpha_abs=1e-18,
+  eps_rel=1e-12,
+  band=2,
+):
   """
-  Compute all singular values of B = A * M^{-1/2},
-  with M being the degree-block tridiagonal approximation to A^T A.
+  Compute all singular values of B = A * M^{-1/2}, where M is a dense
+  degree-block banded approximation to A^T A.
+
+  Parameters
+  ----------
+  A : (m,n) sparse or dense
+    System matrix.
+  deg_of_col : (n,) int
+    Total degree per column (graded-lex ordering).
+  alpha_rel, alpha_abs : float
+    Per-block diagonal regularization used when assembling M.
+  eps_rel : float
+    Relative SPD shift target for Cholesky fallback.
+  band : int
+    Degree-bandwidth to keep in M:
+      band=1 -> tridiagonal in degree (|d-d'|<=1)
+      band=2 -> pentadiagonal in degree (|d-d'|<=2)
+
+  Returns
+  -------
+  s : (n,) float
+    All singular values of A * M^{-1/2}, sorted descending.
+  shift : float
+    Global diagonal shift applied (0 if no shift was needed).
   """
   A = _as_csc(A)
   m, n = A.shape
 
-  M, _ = build_degree_block_tridiag_M(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
+  if band == 1:
+    M, _ = build_degree_block_tridiag_M(
+      A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs
+    )
+  elif band == 2:
+    #M, _, _ = build_degree_block_pentadiag_M(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
+    #M, *_ = build_degree_block_pentadiag_M_coarse01(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
+    #M, _, _ = build_degree_block_pentadiag_M_additive_coarse01(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
+    M, _, _, gamma = build_degree_block_pentadiag_M_damped(
+      A, deg_of_col,
+      alpha_rel=alpha_rel,
+      alpha_abs=alpha_abs,
+      eps_rel=eps_rel,
+    )
+    print("gamma used =", gamma)
+
+  else:
+    raise ValueError(f"Unsupported band={band}. Use band=1 or band=2.")
+
   R, shift = chol_spd_global(M, eps_rel=eps_rel)
 
-  # Build dense B = A * R^{-1} by applying R^{-1} to identity columns
-  # X = R^{-1} (n,n) via triangular solve
+  # X = R^{-1} by triangular solves against I
   I = np.eye(n)
   X = scipy.linalg.solve_triangular(R, I, lower=False, check_finite=False)
-
+  #plt.spy(np.abs(R)>1e-10)
+  #plt.show()
   # Dense A
   Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
   B = Ad @ X
 
   s = np.linalg.svd(B, compute_uv=False)
   return s, shift
+
 
 
 def _chol_spd_with_shift(A, eps_rel=1e-12, max_tries=6):
@@ -526,7 +619,10 @@ class RefTetPrecomp:
     # faces
     self.face = []
     perms = all_S3_perms()
-
+    T_sigma_ref = {}         # dense (optional)
+    T_sigma_ref_csc = {}     # pruned sparse CSC (recommended)
+    F_sigma_ref = {}
+    F_sigma_ref_csc = {}
     for face_id in range(4):
       kappa_tri = kappa_face_from_kappa_src(self.kappa_src, face_id)
 
@@ -543,6 +639,10 @@ class RefTetPrecomp:
       Vv_sigma = {}
       dVv_hat_sigma = {}
       Xf_hat_sigma = {}
+      T_sigma_ref = {}
+      T_sigma_ref_csc = {}
+      F_sigma_ref = {}
+      F_sigma_ref_csc = {}
       for sigma in perms:
         u_loc, v_loc = tri_coords_perm(u, v, sigma)
         Xf_hat, _, _ = face_map_and_geom(face_id, u_loc, v_loc)
@@ -553,6 +653,28 @@ class RefTetPrecomp:
         Vv_sigma[sigma] = Vv
         dVv_hat_sigma[sigma] = dVv_hat
 
+        # -----------------------------
+        # Build the reference trace block for this face+sigma:
+        #   T = Vt^T * diag(wS_hat) * Vv
+        # where wS_hat already includes reference-face area_scale.
+        # -----------------------------
+
+        n_tilde = self.JinvT @ n_hat
+        n_tilde_norm = float(np.linalg.norm(n_tilde))
+        wS_phys = wS_hat * (self.detJabs * n_tilde_norm)
+        T = Vt.T @ (wS_phys[:, None] * Vv)
+        T_sigma_ref[sigma] = T
+        T_sigma_ref_csc[sigma] = _dense_to_csc_pruned(T, rel=1e-14, abs_tol=0.0)
+
+        wF_phys = wS_hat * self.detJabs
+        dVv_x = np.einsum("ab,qmb->qma", self.JinvT, dVv_hat)
+        ndot = (n_tilde[0] * dVv_x[:, :, 0] +
+                n_tilde[1] * dVv_x[:, :, 1] +
+                n_tilde[2] * dVv_x[:, :, 2])
+        F = Vt.T @ (wF_phys[:, None] * ndot)
+        F_sigma_ref[sigma] = F
+        F_sigma_ref_csc[sigma] = _dense_to_csc_pruned(F, rel=1e-14, abs_tol=0.0)
+        
       self.face.append({
         "face_id": face_id,
         "Xt": Xt,
@@ -563,14 +685,31 @@ class RefTetPrecomp:
         "Xf_hat_sigma": Xf_hat_sigma,
         "Vv_sigma": Vv_sigma,
         "dVv_hat_sigma": dVv_hat_sigma,
+        "T_sigma_ref": T_sigma_ref,
+        "T_sigma_ref_csc": T_sigma_ref_csc,
+        "F_sigma_ref": F_sigma_ref,
+        "F_sigma_ref_csc": F_sigma_ref_csc
       })
 
-    self.Lij = self._precompute_promoted_second_partials()
+
+    for f in range(4):
+      d = self.face[f]["T_sigma_ref_csc"]
+      nnz_list = [d[s].nnz for s in perms]
+      #print("face", f, "nnz min/max over sigma:", min(nnz_list), max(nnz_list))
+    
+      # also compare Frobenius norms (should vary mildly, not explode)
+      fn_list = [sps.linalg.norm(d[s]) for s in perms]
+      #print("face", f, "||T||_F min/max over sigma:", min(fn_list), max(fn_list))
+
+    self.Lij, self.Lij_csc = self._precompute_promoted_second_partials()
     # laplacian on ref
     self.L_ref = self.Lij[0][0] + self.Lij[1][1] + self.Lij[2][2]
+    self.L_ref_csc = self.Lij_csc[0][0] + self.Lij_csc[1][1] + self.Lij_csc[2][2]
     self.L_ref = self.detJabs * self.L_ref[:self.m, :]
+    self.L_ref_csc = self.detJabs * self.L_ref_csc[:self.m,:]
     self.T_ref, self.F_ref = self._assemble_TF_full_sigma()
     self.tau_ref = np.linalg.norm(self.L_ref, ord=2)**2 / np.linalg.norm(self.T_ref, ord=2)**2
+    self.R = self._precompute_precond()
 
   def _precompute_promoted_second_partials(self):
     D = 3
@@ -587,6 +726,7 @@ class RefTetPrecomp:
       k1.append(kappa_src + dk_natural(D, i))
 
     Lij = [[None for _ in range(D)] for __ in range(D)]
+    Lij_csc = [[None for _ in range(D)] for __ in range(D)]
     for i in range(D):
       for j in range(D):
         Dj = dmat_build_tprod_natural_pruned(D, n, q_vol, k1[i], j)
@@ -594,7 +734,8 @@ class RefTetPrecomp:
         D_ij_raw = Dj @ D1[i]
         K = kmat_build_tprod(D, n, q_vol, k2, kappa_lap)
         Lij[i][j] = K @ D_ij_raw
-    return Lij
+        Lij_csc[i][j] = _dense_to_csc_pruned(Lij[i][j], rel=1e-15, abs_tol=0.0)
+    return Lij, Lij_csc 
 
   def _assemble_TF_full_sigma(self):
     T_blocks = []
@@ -628,6 +769,28 @@ class RefTetPrecomp:
       F_blocks.append(Ff)
 
     return np.vstack(T_blocks), np.vstack(F_blocks)
+
+  def _precompute_precond(self):
+    alpha_rel=1e-12
+    alpha_abs=1e-18
+    eps_rel=1e-12
+    ## Stacked system
+    A = np.vstack([
+      np.sqrt(self.tau_ref) * self.T_ref,
+      self.L_ref,
+    ])
+    A = _as_csc(A)
+    m, n = A.shape
+    deg_of_col = self.alpha_src.sum(axis=1)
+    M, _, _, gamma = build_degree_block_pentadiag_M_damped(
+      A, deg_of_col,
+      alpha_rel=alpha_rel,
+      alpha_abs=alpha_abs,
+      eps_rel=eps_rel
+    )
+    R, shift = chol_spd_global(M, eps_rel=eps_rel)
+    return R
+
 
 class TetSteklovLeaf:
   def __init__(self, ref, V_phys, face_sigma,
@@ -667,53 +830,9 @@ class TetSteklovLeaf:
 
 
     fro, stats = nnz_stats(self.T_full)
-    print("[T_full] ||.||_F =", fro)
-    for thr, nnz, frac in stats:
-      print(f"[T_full] nnz(frac) for abs/||.||_F > {thr:g}: {nnz} ({frac:.6e})")
-
-  def compute_tau_geom(self, tau_ref=1.0):
-    """
-    Geometry-based tau scaling:
-
-      tau_e = tau_ref * ( S_L(e) / S_T(e) ) * ( S_T(ref) / S_L(ref) )
-
-    where
-      S_L(*) = ||J^{-1}||_F^2 = sum_{i,j} (JinvT[i,j])^2
-      S_T(*) = sum_faces ( |detJ| * ||J^{-T} n_hat|| * sum(wS_hat) )
-
-    This is intended as a drop-in replacement for
-      ||L||_2^2 / ||T||_2^2
-    without forming L or T.
-    """
-
-    # ---------- interior scaling: S_L(e)
-    # ||J^{-1}||_F^2 == ||J^{-T}||_F^2
-    SLe = float(np.sum(self.JinvT * self.JinvT))
-
-    # ---------- trace scaling: S_T(e)
-    detJabs = float(self.detJabs)
-    STe = 0.0
-    for fd in self.ref.face:
-      n_hat = fd["n_hat"]
-      wS_hat = fd["wS_hat"]
-      STe += detJabs * np.linalg.norm(self.JinvT @ n_hat) * np.sum(wS_hat)
-
-    # ---------- reference scalings
-    # For reference tet: J = I, detJ = 1
-    SLref = 3.0  # tr(I) in 3D
-    STref = 0.0
-    for fd in self.ref.face:
-      STref += np.sum(fd["wS_hat"]) * np.linalg.norm(fd["n_hat"])
-
-    # ---------- final tau
-    tiny = 1e-300
-    tau_e = (
-      tau_ref
-      * (SLe / max(STe, tiny))
-      * (STref / max(SLref, tiny))
-    )
-    return float(tau_e)
-
+    #print("[T_full] ||.||_F =", fro)
+    #for thr, nnz, frac in stats:
+    #  print(f"[T_full] nnz(frac) for abs/||.||_F > {thr:g}: {nnz} ({frac:.6e})")
 
   def face_moments_flux(self, face_id, grad_u_phys):
     """
@@ -783,40 +902,75 @@ class TetSteklovLeaf:
     # solve (SPD-ish, but use a general solve)
     c = scipy.linalg.solve(Mmat, b, assume_a="gen", check_finite=False)
     return c, Mmat
-
+  
   def _assemble_TF_full_sigma(self):
     ref = self.ref
     T_blocks = []
     F_blocks = []
+  
     for face_id in range(4):
       sigma = self.face_sigma[face_id]
       fd = ref.face[face_id]
-
-      wS_hat = fd["wS_hat"]
-      Vt = fd["Vt"]
+  
+      # reference precomputed sparse blocks for this face+sigma
+      Tf_ref = fd["T_sigma_ref"][sigma]  # (mt_face, Mvol)
+      Ff_ref = fd["F_sigma_ref"][sigma]  # (mt_face, Mvol)
+  
+      # geometry scalars
       n_hat = fd["n_hat"]
-
-      Vv = fd["Vv_sigma"][sigma]
-      dVv_hat = fd["dVv_hat_sigma"][sigma]
-
       n_tilde = self.JinvT @ n_hat
       n_tilde_norm = float(np.linalg.norm(n_tilde))
+  
+      # matches your original scaling:
+      # wS_phys = wS_hat * detJabs * ||n_tilde||
+      # wF_phys = wS_hat * detJabs
+      sT = float(self.detJabs * n_tilde_norm)
+      sF = float(self.detJabs)
+  
+      # sparse scaling (preserves sparsity)
+      T_blocks.append(sT * Tf_ref)
+      F_blocks.append(sF * Ff_ref)
+  
+    # sparse vstack
+    #T_full = sps.vstack(T_blocks, format="csc")
+    #F_full = sps.vstack(F_blocks, format="csc")
+    T_full = np.vstack(T_blocks)
+    F_full = np.vstack(F_blocks)
+    return T_full, F_full
 
-      wS_phys = wS_hat * (self.detJabs * n_tilde_norm)
-      wF_phys = wS_hat * self.detJabs
+  #def _assemble_TF_full_sigma(self):
+  #  ref = self.ref
+  #  T_blocks = []
+  #  F_blocks = []
+  #  for face_id in range(4):
+  #    sigma = self.face_sigma[face_id]
+  #    fd = ref.face[face_id]
 
-      Tf = Vt.T @ (wS_phys[:, None] * Vv)
+  #    wS_hat = fd["wS_hat"]
+  #    Vt = fd["Vt"]
+  #    n_hat = fd["n_hat"]
 
-      dVv_x = np.einsum("ab,qmb->qma", self.JinvT, dVv_hat)
-      ndot = (n_tilde[0] * dVv_x[:, :, 0] +
-              n_tilde[1] * dVv_x[:, :, 1] +
-              n_tilde[2] * dVv_x[:, :, 2])
-      Ff = Vt.T @ (wF_phys[:, None] * ndot)
+  #    Vv = fd["Vv_sigma"][sigma]
+  #    dVv_hat = fd["dVv_hat_sigma"][sigma]
 
-      T_blocks.append(Tf)
-      F_blocks.append(Ff)
+  #    n_tilde = self.JinvT @ n_hat
+  #    n_tilde_norm = float(np.linalg.norm(n_tilde))
 
-    return np.vstack(T_blocks), np.vstack(F_blocks)
+  #    wS_phys = wS_hat * (self.detJabs * n_tilde_norm)
+  #    wF_phys = wS_hat * self.detJabs
+
+  #    Tf = Vt.T @ (wS_phys[:, None] * Vv)
+
+  #    dVv_x = np.einsum("ab,qmb->qma", self.JinvT, dVv_hat)
+  #    ndot = (n_tilde[0] * dVv_x[:, :, 0] +
+  #            n_tilde[1] * dVv_x[:, :, 1] +
+  #            n_tilde[2] * dVv_x[:, :, 2])
+  #    Ff = Vt.T @ (wF_phys[:, None] * ndot)
+
+  #    T_blocks.append(Tf)
+  #    F_blocks.append(Ff)
+
+  #  return np.vstack(T_blocks), np.vstack(F_blocks)
 
   def project_f_int(self, f_rhs_phys):
     Xhat = self.ref.Xhat_vol_lap
@@ -1026,18 +1180,17 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   print("tau_ref =", tau, "tau_phys =", tau_phys, "ratio =", tau_phys/(tau + 1e-300))
  
 
-  s, shift = compute_all_singular_values_A_Minvhalf(A, deg_of_col)
-  print("chol_shift =", shift, "smax =", s[0], "smin =", s[-1])
+  s_pc, shift = compute_all_singular_values_A_Minvhalf(A, deg_of_col, band=2)
+  print("chol_shift =", shift, "smax =", s[0], "smin =", s[-1], "precond =" , s_pc[0]/s_pc[-1])
 
   deg = deg_of_col
   assert deg.shape[0] == A.shape[1]
   assert np.all(deg[:-1] <= deg[1:]) 
   Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
   assert np.isfinite(Ad).all()
-  plot_spectrum(s, title="svd(A @ M^{-1/2})")
+  plot_spectrum(s_pc, title="svd(A @ M^{-1/2})")
 
 
-  _, s, _ = np.linalg.svd(A)
   #plt.semilogy(np.abs(s))
   #plt.show()
   # Diagnostics
@@ -1080,14 +1233,14 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   u_exact, f_rhs, grad_u = make_manufactured_u_f_grad(m_max) #make_poly_u_f_and_grad(m_max)
 
   # One physical tet (same as tetA in the two-tet test)
-  #v0 = np.array([0.20, -0.10, 0.30])
-  #v1 = np.array([1.10,  0.05, 0.20])
-  #v2 = np.array([0.10,  1.00, 0.40])
-  #v3 = np.array([0.25,  0.20, 1.40])
-  v0 = np.array([0.0,0.0,0.0])
-  v1 = np.array([1.0,0.0,0.0])
-  v2 = np.array([0.0,1.0,0.0])
-  v3 = np.array([0.0,0.0,1.0])
+  v0 = np.array([0.20, -0.10, 0.30])
+  v1 = np.array([1.10,  0.05, 0.20])
+  v2 = np.array([0.10,  1.00, 0.40])
+  v3 = np.array([0.25,  0.20, 1.40])
+  #v0 = np.array([0.0,0.0,0.0])
+  #v1 = np.array([1.0,0.0,0.0])
+  #v2 = np.array([0.0,1.0,0.0])
+  #v3 = np.array([0.0,0.0,1.0])
   VA = np.stack([v0, v1, v2, v3], axis=0)
 
   tetA_g = (0, 1, 2, 3)
@@ -1099,7 +1252,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   dofs = []
   errs = []
 
-  for n in range(2, n_max + 1):
+  for n in range(12, n_max + 1):
     q_vol = n + q_pad
     q_face = n + q_pad
     ref = RefTetPrecomp(n=n, q_vol=q_vol, q_face=q_face, kappa_src=kappa_src)
