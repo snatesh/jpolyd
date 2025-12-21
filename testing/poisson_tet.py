@@ -5,8 +5,11 @@ import scipy
 import scipy.sparse as sps
 import scipy.sparse.linalg as spla
 import scipy.linalg
+import sparseqr
+
 import sympy as sp
 from math import comb
+import time
 
 from jdmat import dmat_build_tprod_natural_pruned
 from jkmat import kmat_build_tprod
@@ -709,7 +712,7 @@ class RefTetPrecomp:
     self.L_ref_csc = self.detJabs * self.L_ref_csc[:self.m,:]
     self.T_ref, self.F_ref = self._assemble_TF_full_sigma()
     self.tau_ref = np.linalg.norm(self.L_ref, ord=2)**2 / np.linalg.norm(self.T_ref, ord=2)**2
-    self.R = self._precompute_precond()
+    self.Mgam, self.R, self.Rinv, _ = self._precompute_precond()
 
   def _precompute_promoted_second_partials(self):
     D = 3
@@ -788,8 +791,17 @@ class RefTetPrecomp:
       alpha_abs=alpha_abs,
       eps_rel=eps_rel
     )
+    fro = np.linalg.norm(A, ord="fro")
+    s = fro if fro != 0.0 else 1.0 
+    nnz = int(np.count_nonzero((np.abs(A) / s) > 1e-15))
+    nnzA = int(np.count_nonzero((np.abs(A) / s) > 1e-15))
+    nnzM = int(np.count_nonzero((np.abs(M) / s) > 1e-15))
+    print(nnzA)
+    print(nnzM)
     R, shift = chol_spd_global(M, eps_rel=eps_rel)
-    return R
+    I = np.eye(n)
+    Rinv = scipy.linalg.solve_triangular(R, I, lower=False, check_finite=False)
+    return M, R, Rinv, gamma
 
 
 class TetSteklovLeaf:
@@ -825,8 +837,8 @@ class TetSteklovLeaf:
     self.L_int = self.detJabs * A_lap[:ref.m, :]
     self.T_full, self.F_full = self._assemble_TF_full_sigma()
 
-    self.int_fact = interior_qr_factor(self.L_int, rtol=rtol_int)
-    self.N = self.int_fact["N"]  # (M,k)
+    #self.int_fact = interior_qr_factor(self.L_int, rtol=rtol_int)
+    #self.N = self.int_fact["N"]  # (M,k)
 
 
     fro, stats = nnz_stats(self.T_full)
@@ -1091,13 +1103,13 @@ def make_manufactured_u_f_grad(m_max):
 
   # Example 1: a polynomial (degree controlled by m_max)
   # Feel free to replace this with ANY SymPy expression in x,y,z.
-  u_expr = 0
-  for a in range(m_max + 1):
-    for b in range(m_max + 1 - a):
-      for c in range(m_max + 1 - a - b):
-        coef = sp.Rational(1, 1 + a + b + c)
-        u_expr += coef * (x**a) * (y**b) * (z**c)
-  #u_expr = sp.exp(x**2 + y**2 + z**2)
+  #u_expr = 0
+  #for a in range(m_max + 1):
+  #  for b in range(m_max + 1 - a):
+  #    for c in range(m_max + 1 - a - b):
+  #      coef = sp.Rational(1, 1 + a + b + c)
+  #      u_expr += coef * (x**a) * (y**b) * (z**c)
+  u_expr = sp.exp(x**2 + y**2 + z**2)
 
   return make_sym_u_f_and_grad(u_expr, simplify=True)  
 
@@ -1123,13 +1135,13 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   f_int = leaf.project_f_int(f_rhs_phys)
   print("||lam||", np.linalg.norm(lam_full), "||f_int||", np.linalg.norm(f_int))
 
-  A_full = leaf.T_full @ leaf.N
-  U, s, _ = np.linalg.svd(A_full, full_matrices=False)
+  #A_full = leaf.T_full @ leaf.N
+  #U, s, _ = np.linalg.svd(A_full, full_matrices=False)
   
   # choose numerical rank (don’t use eps here; use something tied to your goals)
-  rtol = 1e-10
-  r = np.sum(s > rtol * s[0])
-  Ur = U[:, :r]
+  #rtol = 1e-10
+  #r = np.sum(s > rtol * s[0])
+  #Ur = U[:, :r]
   
   #Tproj = Ur.T @ leaf.T_full
   #lam_proj = Ur.T @ lam_full
@@ -1143,72 +1155,228 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   #  -w_pde * f_int,
   #])
 
-
-
   ## Stacked system
   T = leaf.T_full
   L = leaf.L_int
+
   A = np.vstack([
-    w_bc * T,
-    w_pde * L,
+    T,
+    L,
   ])
   b = np.concatenate([
-    w_bc * lam_full,
-    -w_pde * np.asarray(f_int, dtype=np.float64),
+    lam_full,
+    -np.asarray(f_int, dtype=np.float64),
   ])
-
-  # Minimum-norm LS (SVD-based driver).
-  # scipy.linalg.lstsq(..., lapack_driver='gelsd') returns the min-norm solution
-  # in rank-deficient cases.
-  A[np.abs(A)/np.linalg.norm(A,'fro') < 1e-14] = 0.0
-  #plt.spy(A)
-  #plt.show()
+  #A[np.abs(A)/np.linalg.norm(A,'fro') < 1e-14] = 0.0
+  start_time = time.perf_counter()
   c, resid, rnk, s = scipy.linalg.lstsq(A, b, lapack_driver="gelsd", check_finite=False)
-  deg_of_col = leaf.ref.alpha_src.sum(axis=1)
+  end_time = time.perf_counter()
+  t_lstsq = end_time-start_time
+  ### LSMR
+  Asp = _dense_to_csc_pruned(A, rel=1e-14, abs_tol=0.0)
+  m,n = Asp.shape
+  R = np.asarray(leaf.ref.R, dtype=np.float64)
+  # Define apply R^{-1} and R^{-T} via triangular solves
+  def apply_Rinv(v):
+    v = np.asarray(v, dtype=np.float64)
+    return scipy.linalg.solve_triangular(
+      R, v, lower=False, trans="N", check_finite=False
+    )
+  
+  def apply_RTinv(v):
+    v = np.asarray(v, dtype=np.float64)
+    return scipy.linalg.solve_triangular(
+      R, v, lower=False, trans="T", check_finite=False
+    )
+
+  def apply_Minv(v):
+    # Minv = (R^T R)^{-1} = R^{-1} R^{-T}
+    return apply_Rinv(apply_RTinv(v))
+
+  def K_matvec(x):
+    x = np.asarray(x, dtype=np.float64)
+    r = x[:m]
+    c = x[m:]
+    y0 = r + Asp @ c
+    y1 = Asp.T @ r
+    return np.concatenate([y0, y1])
+  
+  K = spla.LinearOperator(
+    shape=(m + n, m + n),
+    matvec=K_matvec,
+    dtype=np.float64,
+  )
+
+  # Block preconditioner inverse P^{-1}[u; v] = [u; Minv v]
+  def P_matvec(x):
+    x = np.asarray(x, dtype=np.float64)
+    u = x[:m]
+    v = x[m:]
+    return np.concatenate([u, apply_Minv(v)])
+  
+  P = spla.LinearOperator(
+    shape=(m + n, m + n),
+    matvec=P_matvec,
+    dtype=np.float64,
+  )
+
+  # Define the preconditioned operator B = A * R^{-1}
+  def matvec_B(x):
+    # x is y in the preconditioned coordinates
+    return Asp @ apply_Rinv(x)
+  
+  def rmatvec_B(z):
+    # z lives in measurement space; apply B^T z = R^{-T} (A^T z)
+    return apply_RTinv(Asp.T @ z)
+  
+  B = spla.LinearOperator(
+    shape=(m, n),
+    matvec=matvec_B,
+    rmatvec=rmatvec_B,
+    dtype=np.float64,
+  )
+ 
+  rng = np.random.default_rng(0)
+  x = rng.standard_normal(n)
+  z = rng.standard_normal(m)
+  
+  lhs = float(np.dot(B.matvec(x), z))
+  rhs = float(np.dot(x, B.rmatvec(z)))
+  
+  print("adjoint relerr =", abs(lhs - rhs) / (abs(lhs) + abs(rhs) + 1e-300))
+ 
+  # --- Solve with LSMR ---
+  # Pick tolerances; start modest, you can tighten later.
+  start_time = time.perf_counter()
+  y_lsmr, istop, itn, normr, normar, norma, conda, normx = spla.lsmr(
+    B, b,
+    atol=1e-14, btol=1e-14,
+    maxiter=10000,
+    conlim=1e12,
+    show=False,
+  )
+  
+  # Map back to coefficients
+  c_pc = apply_Rinv(y_lsmr)
+  end_time = time.perf_counter()
+  c = c_pc 
+
+  t_lsmr = end_time-start_time
+  print("[lsmr] istop =", istop, "itn =", itn)
+  print("[lsmr] ||A c - b||2 =", np.linalg.norm(Asp @ c_pc - b))
+  
+  # --- Solve with MINRES ---
+  rhs = np.concatenate([b, np.zeros(n, dtype=np.float64)])
+  
+  start_time = time.perf_counter()
+  # MINRES solve
+  x_minres, info = spla.minres(
+    K, rhs,
+    M=P,
+    rtol=1e-14,
+    maxiter=20000,
+    show=False,
+  )
+  end_time = time.perf_counter()
+  t_minres = end_time-start_time 
+  r_minres = x_minres[:m]
+  c_minres = x_minres[m:]
+
+  print("[minres] info =", info)
+  print("[minres] ||A c - b||2 =", np.linalg.norm(Asp @ c_minres - b))
+  print("[minres] ||A^T(Ac-b)||2 =", np.linalg.norm(Asp.T @ (Asp @ c_minres - b)))
+  c_pc = c_minres
+  c = c_pc
+  start_time = time.perf_counter()
+  c_spqr = sparseqr.solve(Asp, b, tolerance=0)
+  end_time = time.perf_counter()
+  t_spqr = end_time - start_time
+  c = c_spqr 
+  # c_spqr is returned as a dense numpy array (length n)
+  print("[spqr] ||A c - b||2 =", np.linalg.norm(Asp @ c_spqr - b))
+  print("time LSMR =", t_lsmr)
+  print("time MINRES =", t_minres) 
+  print("time LSTSQ =", t_lstsq) 
+  print("time SPQR =", t_spqr) 
+
+  #tau = leaf.ref.tau_ref
+  #R = leaf.ref.R
+  #Rinv = leaf.ref.Rinv
+  #B = A @ Rinv
+  ## Solve min_y ||B y - b||_2
+  #y, resid_pc, rnk_pc, s_pc = scipy.linalg.lstsq(
+  #  B, b, lapack_driver="gelsd", check_finite=False
+  #)
+  #
+  ## Map back: c_pc = R^{-1} y (triangular solve)
+  #c_pc = scipy.linalg.solve_triangular(
+  #  R,
+  #  y,
+  #  lower=False,
+  #  trans='N',
+  #  check_finite=False,
+  #  overwrite_b=False,
+  #)
+  # --- correctness checks ---
+  # 1) c_pc should be an LS minimizer of original problem: residual norms match
+  #r0 = A @ c - b
+  #r1 = A @ c_pc - b
+  #print("||A c - b||2      =", np.linalg.norm(r0))
+  #print("||A c_pc - b||2   =", np.linalg.norm(r1))
+  #
+  ## 2) if A has full column rank, solutions should match closely
+  #print("||c - c_pc||2 / ||c||2 =",
+  #      np.linalg.norm(c - c_pc) / (np.linalg.norm(c) + 1e-300))
+  #
+  ## 3) y is in preconditioned coordinates: check c_pc satisfies R c_pc = y
+  #print("||R c_pc - y|| / ||y|| =",
+  #      np.linalg.norm(R @ c_pc - y_lsmr) / (np.linalg.norm(y_lsmr) + 1e-300))
+
+  #deg_of_col = leaf.ref.alpha_src.sum(axis=1)
   #s = compute_all_preconditioned_singular_values_dense(
   #  A, deg_of_col,
   #  alpha=1e-14
   #)
   #tau = leaf.compute_tau_geom(tau_ref=leaf.ref.tau_ref)#
   #tau = np.linalg.norm(L, ord=2)**2 / np.linalg.norm(T, ord=2)**2
-  tau = leaf.ref.tau_ref
-  A = np.vstack([
-    np.sqrt(tau)*T,
-    L,
-  ])
-  tau_phys = (np.linalg.norm(L, ord=2) / (np.linalg.norm(T, ord=2) + 1e-300))**2
-  print("tau_ref =", tau, "tau_phys =", tau_phys, "ratio =", tau_phys/(tau + 1e-300))
+  #tau = leaf.ref.tau_ref
+  #A = np.vstack([
+  #  np.sqrt(tau)*T,
+  #  L,
+  #])
+  #tau_phys = (np.linalg.norm(L, ord=2) / (np.linalg.norm(T, ord=2) + 1e-300))**2
+  #print("tau_ref =", tau, "tau_phys =", tau_phys, "ratio =", tau_phys/(tau + 1e-300))
  
 
-  s_pc, shift = compute_all_singular_values_A_Minvhalf(A, deg_of_col, band=2)
-  print("chol_shift =", shift, "smax =", s[0], "smin =", s[-1], "precond =" , s_pc[0]/s_pc[-1])
+  #s_pc, shift = compute_all_singular_values_A_Minvhalf(A, deg_of_col, band=2)
+  #print("chol_shift =", shift, "smax =", s[0], "smin =", s[-1], "precond =" , s_pc[0]/s_pc[-1])
 
-  deg = deg_of_col
-  assert deg.shape[0] == A.shape[1]
-  assert np.all(deg[:-1] <= deg[1:]) 
-  Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
-  assert np.isfinite(Ad).all()
-  plot_spectrum(s_pc, title="svd(A @ M^{-1/2})")
+  #deg = deg_of_col
+  #assert deg.shape[0] == A.shape[1]
+  #assert np.all(deg[:-1] <= deg[1:]) 
+  #Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
+  #assert np.isfinite(Ad).all()
+  #plot_spectrum(s_pc, title="svd(A @ M^{-1/2})")
 
 
   #plt.semilogy(np.abs(s))
   #plt.show()
   # Diagnostics
-  bc_res = Ur.T @ (T @ c) - Ur.T @ lam_full#T @ c - lam_full
-  pde_res = L @ c + np.asarray(f_int, dtype=np.float64)
+  #bc_res = Ur.T @ (T @ c) - Ur.T @ lam_full#T @ c - lam_full
+  #pde_res = L @ c + np.asarray(f_int, dtype=np.float64)
 
-  rel_bc = float(np.linalg.norm(bc_res) / (np.linalg.norm(Ur.T @ lam_full) + 1e-300))
-  rel_pde = float(np.linalg.norm(pde_res) / (np.linalg.norm(f_int) + 1e-300))
-  # How much of lam_full is outside Range(T N)
-  lam_rep = Ur @ (Ur.T @ lam_full)
-  rel_unrep = float(np.linalg.norm(lam_full - lam_rep) / (np.linalg.norm(lam_full) + 1e-300))
+  #rel_bc = float(np.linalg.norm(bc_res) / (np.linalg.norm(Ur.T @ lam_full) + 1e-300))
+  #rel_pde = float(np.linalg.norm(pde_res) / (np.linalg.norm(f_int) + 1e-300))
+  ## How much of lam_full is outside Range(T N)
+  #lam_rep = Ur @ (Ur.T @ lam_full)
+  #rel_unrep = float(np.linalg.norm(lam_full - lam_rep) / (np.linalg.norm(lam_full) + 1e-300))
 
-  if do_print:
-    smin = float(s[-1]) if isinstance(s, np.ndarray) and s.size else 0.0
-    smax = float(s[0]) if isinstance(s, np.ndarray) and s.size else 0.0
-    cond = (smax / (smin + 1e-300)) if smax > 0 else 0.0
-    print(f"[minls] rank={int(rnk)}/{min(A.shape)} cond~{cond:.3e}  "
-          f"rel_bc={rel_bc:.3e} rel_pde={rel_pde:.3e} rel_unrep={rel_unrep:.3e}")
+  #if do_print:
+  #  smin = float(s[-1]) if isinstance(s, np.ndarray) and s.size else 0.0
+  #  smax = float(s[0]) if isinstance(s, np.ndarray) and s.size else 0.0
+  #  cond = (smax / (smin + 1e-300)) if smax > 0 else 0.0
+  #  print(f"[minls] rank={int(rnk)}/{min(A.shape)} cond~{cond:.3e}  "
+  #        f"rel_bc={rel_bc:.3e} rel_pde={rel_pde:.3e} rel_unrep={rel_unrep:.3e}")
 
   return c, lam_full
 
@@ -1233,14 +1401,14 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   u_exact, f_rhs, grad_u = make_manufactured_u_f_grad(m_max) #make_poly_u_f_and_grad(m_max)
 
   # One physical tet (same as tetA in the two-tet test)
-  v0 = np.array([0.20, -0.10, 0.30])
-  v1 = np.array([1.10,  0.05, 0.20])
-  v2 = np.array([0.10,  1.00, 0.40])
-  v3 = np.array([0.25,  0.20, 1.40])
-  #v0 = np.array([0.0,0.0,0.0])
-  #v1 = np.array([1.0,0.0,0.0])
-  #v2 = np.array([0.0,1.0,0.0])
-  #v3 = np.array([0.0,0.0,1.0])
+  #v0 = np.array([0.20, -0.10, 0.30])
+  #v1 = np.array([1.10,  0.05, 0.20])
+  #v2 = np.array([0.10,  1.00, 0.40])
+  #v3 = np.array([0.25,  0.20, 1.40])
+  v0 = np.array([0.0,0.0,0.0])
+  v1 = np.array([1.0,0.0,0.0])
+  v2 = np.array([0.0,1.0,0.0])
+  v3 = np.array([0.0,0.0,1.0])
   VA = np.stack([v0, v1, v2, v3], axis=0)
 
   tetA_g = (0, 1, 2, 3)
@@ -1252,7 +1420,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   dofs = []
   errs = []
 
-  for n in range(12, n_max + 1):
+  for n in range(2, n_max + 1):
     q_vol = n + q_pad
     q_face = n + q_pad
     ref = RefTetPrecomp(n=n, q_vol=q_vol, q_face=q_face, kappa_src=kappa_src)
@@ -1284,7 +1452,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
 
 
 if __name__ == "__main__":
-  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=14, q_pad=1, do_print=True, method="minls")
+  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=True, method="minls")
   s = np.zeros_like(errs)
   for j in range(len(errs)):
     if j == 0:
