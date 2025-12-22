@@ -20,8 +20,6 @@ from jbasis import (
   jbasis_eval_all_with_grad,
 )
 
-
-
 def dim_Pi(D, n):
   return comb(n + D, D)
 
@@ -40,6 +38,10 @@ def nnz_stats(A, thr_list=(1e-10, 1e-12, 1e-14, 1e-16)):
     nnz = int(np.count_nonzero((np.abs(A) / s) > thr))
     stats.append((thr, nnz, nnz / A.size))
   return fro, stats
+#fro, stats = nnz_stats(self.T_full)
+#print("[T_full] ||.||_F =", fro)
+#for thr, nnz, frac in stats:
+#  print(f"[T_full] nnz(frac) for abs/||.||_F > {thr:g}: {nnz} ({frac:.6e})")
 
 
 def tet_affine_from_verts(V):
@@ -99,7 +101,6 @@ def interior_qr_factor(L, rtol=1e-14):
     N[piv, :] = Nperm
 
   return {"Q": Q, "R11": R11, "piv": piv, "m": m, "M": M, "N": N}
-
 
 def all_S3_perms():
   return [
@@ -566,6 +567,27 @@ def plot_spectrum(s, title="Singular values of preconditioned operator"):
   plt.show()
 
 
+def spqr_solve_with_E(A_csc, b, E):
+  """
+  Solve min ||A c - b||_2 using SPQR but with a fixed column ordering E.
+
+  Convention: sparseqr.qr returns E such that Q R = A[:, E].
+  """
+  A_csc = A_csc.tocsc()
+  b = np.asarray(b, dtype=np.float64)
+  E = np.asarray(E, dtype=np.int64)
+
+  # 1) permute columns
+  A_perm = A_csc[:, E]
+
+  # 2) solve in permuted coordinates
+  x = sparseqr.solve(A_perm, b, tolerance=0)
+
+  # 3) unpermute: c[E[j]] = x[j]
+  c = np.empty(A_csc.shape[1], dtype=np.float64)
+  c[E] = np.asarray(x, dtype=np.float64)
+
+  return c
 
 class RefTetPrecomp:
   def __init__(self, n, q_vol, q_face, kappa_src):
@@ -711,8 +733,14 @@ class RefTetPrecomp:
     self.L_ref = self.detJabs * self.L_ref[:self.m, :]
     self.L_ref_csc = self.detJabs * self.L_ref_csc[:self.m,:]
     self.T_ref, self.F_ref = self._assemble_TF_full_sigma()
-    self.tau_ref = np.linalg.norm(self.L_ref, ord=2)**2 / np.linalg.norm(self.T_ref, ord=2)**2
-    self.Mgam, self.R, self.Rinv, _ = self._precompute_precond()
+    #self.tau_ref = np.linalg.norm(self.L_ref, ord=2)**2 / np.linalg.norm(self.T_ref, ord=2)**2
+    #self.Mgam, self.R, self.Rinv, _ = self._precompute_precond()
+    self.tau_ref = None
+    self.Mgam=None
+    self.R=None
+    self.Rinv=None
+    
+    #self.E_pat = self._compute_sys_pattern(verbose=True)
 
   def _precompute_promoted_second_partials(self):
     D = 3
@@ -791,17 +819,117 @@ class RefTetPrecomp:
       alpha_abs=alpha_abs,
       eps_rel=eps_rel
     )
-    fro = np.linalg.norm(A, ord="fro")
-    s = fro if fro != 0.0 else 1.0 
-    nnz = int(np.count_nonzero((np.abs(A) / s) > 1e-15))
-    nnzA = int(np.count_nonzero((np.abs(A) / s) > 1e-15))
-    nnzM = int(np.count_nonzero((np.abs(M) / s) > 1e-15))
-    print(nnzA)
-    print(nnzM)
     R, shift = chol_spd_global(M, eps_rel=eps_rel)
     I = np.eye(n)
     Rinv = scipy.linalg.solve_triangular(R, I, lower=False, check_finite=False)
     return M, R, Rinv, gamma
+
+  def _compute_sys_pattern(self, rel=0.0, abs_tol=0.0, economy=True, verbose=True):
+    """
+    Build a geometry-agnostic *pattern* matrix Apat for the stacked system
+      A = [T_full; L_int]
+    by taking unions over:
+      - interior blocks Lij (i,j=0..2) with "Gij = 1"
+      - trace blocks T_face_sigma over sigma in S3 for each face
+
+    Then run SuiteSparseQR once on Apat to obtain a reusable column ordering E.
+
+    Stores:
+      self.Apat_csc : CSC "pattern" matrix with all nonzeros == 1
+      self.E_pat    : permutation vector (length nvar)
+      self.rank_pat : rank reported by qr(Apat)
+      self.R_pat_nnz: nnz(R) from qr(Apat) (useful to estimate fill)
+    """
+    perms = all_S3_perms()
+
+    # -----------------------------
+    # 1) Interior pattern: union_{i,j} pattern(Lij_csc[i][j])
+    # -----------------------------
+    # Lij_csc entries should already be CSC and pruned numerically.
+    Lpat = None
+    for i in range(3):
+      for j in range(3):
+        Aij = self.Lij_csc[i][j]
+        # Boolean pattern
+        Bij = (Aij != 0)
+        Lpat = Bij if Lpat is None else (Lpat + Bij)
+
+    # Keep only interior constraint rows (first m rows), matching your system stacking.
+    # Lij_csc are full MxM (promoted full), but your L_int uses [:m, :].
+    if Lpat is None:
+      raise RuntimeError("Lpat is None; did Lij_csc get built?")
+    Lpat = Lpat[:self.m, :]
+
+    # Convert boolean pattern -> numeric 1's
+    Lpat = Lpat.astype(np.float64).tocsc()
+    if Lpat.nnz:
+      Lpat.data[:] = 1.0
+      Lpat.eliminate_zeros()
+
+    # -----------------------------
+    # 2) Trace pattern: for each face f, union_{sigma} pattern(T_face_sigma_ref_csc[sigma])
+    # -----------------------------
+    Tpat_blocks = []
+    for face_id in range(4):
+      d = self.face[face_id]["T_sigma_ref_csc"]
+
+      Tf_pat = None
+      for sigma in perms:
+        Ts = d[sigma]
+        Bs = (Ts != 0)
+        Tf_pat = Bs if Tf_pat is None else (Tf_pat + Bs)
+
+      if Tf_pat is None:
+        raise RuntimeError(f"Tf_pat is None for face {face_id}")
+
+      Tf_pat = Tf_pat.astype(np.float64).tocsc()
+      if Tf_pat.nnz:
+        Tf_pat.data[:] = 1.0
+        Tf_pat.eliminate_zeros()
+
+      Tpat_blocks.append(Tf_pat)
+
+    Tpat = sps.vstack(Tpat_blocks, format="csc")
+
+    # -----------------------------
+    # 3) Full stacked pattern
+    # -----------------------------
+    Apat = sps.vstack([Tpat, Lpat], format="csc")
+
+    # Optional pruning on the pattern (usually unnecessary; pattern is already exact nonzeros)
+    if rel > 0.0 or abs_tol > 0.0:
+      fro = float(sps.linalg.norm(Apat))
+      thr = max(float(abs_tol), float(rel) * max(1.0, fro))
+      if thr > 0.0 and Apat.nnz:
+        Apat = Apat.copy()
+        mask = np.abs(Apat.data) > thr
+        Apat.data = Apat.data[mask]
+        Apat.indices = Apat.indices[mask]
+        Apat.eliminate_zeros()
+
+    self.Apat_csc = Apat
+
+    if verbose:
+      print("[Apat] shape:", Apat.shape,
+            "nnz:", Apat.nnz,
+            "nnz/col:", Apat.nnz / max(1, Apat.shape[1]))
+
+    # -----------------------------
+    # 4) Run SPQR once on Apat to get a reusable ordering
+    # -----------------------------
+    # Qp, Rp, E, rank satisfy (Matlab convention):
+    #   Qp * Rp = Apat[:, E]
+    Qp, Rp, E, rank = sparseqr.qr(Apat, economy=economy)
+
+    # Save what we need
+    self.E_pat = np.asarray(E, dtype=np.int64)
+    self.rank_pat = int(rank)
+    self.R_pat_nnz = int(Rp.nnz) if hasattr(Rp, "nnz") else None
+
+    if verbose:
+      print("[Apat/spqr] rank:", self.rank_pat,
+            "R.nnz:", self.R_pat_nnz)
+    return self.E_pat
 
 
 class TetSteklovLeaf:
@@ -836,17 +964,154 @@ class TetSteklovLeaf:
     self.A_lap = A_lap
     self.L_int = self.detJabs * A_lap[:ref.m, :]
     self.T_full, self.F_full = self._assemble_TF_full_sigma()
+    self.A = np.vstack([self.T_full, self.L_int])
+    self.Asp = _dense_to_csc_pruned(self.A, rel=1e-14, abs_tol=0.0)
+    self.SPQR = self.spqr_factor(self.Asp)
+    # -----------------------------
+    # Cached sizes / layout helpers
+    # -----------------------------
+    self.M = int(self.ref.M)        # number of volume dofs
+    self.m_int = int(self.ref.m)    # number of interior constraint rows
+    self.kf = int(self.ref.kf)      # number of face dofs per face block
+    self.nface = 4
+    self.nrows = int(self.nface * self.kf + self.m_int)
 
-    #self.int_fact = interior_qr_factor(self.L_int, rtol=rtol_int)
-    #self.N = self.int_fact["N"]  # (M,k)
+    # Sanity checks (helpful while wiring merges)
+    if self.T_full.shape != (self.nface * self.kf, self.M):
+      raise ValueError(f"T_full has shape {self.T_full.shape}, expected {(self.nface*self.kf, self.M)}")
+    if self.F_full.shape != (self.nface * self.kf, self.M):
+      raise ValueError(f"F_full has shape {self.F_full.shape}, expected {(self.nface*self.kf, self.M)}")
+    if self.L_int.shape != (self.m_int, self.M):
+      raise ValueError(f"L_int has shape {self.L_int.shape}, expected {(self.m_int, self.M)}")
+    if self.Asp.shape != (self.nrows, self.M):
+      raise ValueError(f"Asp has shape {self.Asp.shape}, expected {(self.nrows, self.M)}")
 
+    # Cache for identity injection blocks per face (built on demand)
+    self._Bface_cache = {}
 
-    fro, stats = nnz_stats(self.T_full)
-    #print("[T_full] ||.||_F =", fro)
-    #for thr, nnz, frac in stats:
-    #  print(f"[T_full] nnz(frac) for abs/||.||_F > {thr:g}: {nnz} ({frac:.6e})")
+  def spqr_factor(self, Asp, economy=True):
+    """
+    Factor Asp (CSC) once:
+      Q R = Asp[:, E]    (Matlab convention used by sparseqr)
+    Returns a dict you can reuse for many RHS.
+    """
+    Asp = Asp.tocsc()
+    Q, R, E, rank = sparseqr.qr(Asp, economy=economy)
+  
+    # store in formats good for repeated solves
+    Q = Q.tocsc()
+    R = R.tocsr()
+    E = np.asarray(E, dtype=np.int64)
+    rank = int(rank)
+    #plt.spy(Q.toarray())
+    #plt.show() 
+    return {
+      "Asp": Asp,
+      "Q": Q,
+      "R": R,
+      "E": E,
+      "rank": rank,
+      "economy": bool(economy),
+    }
+  
+  #def solve(self, b):
+  #  """
+  #  Solve min ||Asp x - b||_2 using precomputed SPQR factorization F.
+  #  Returns x in the *original* column order of Asp.
+  #  """
+  #  F = self.SPQR
+  #  Asp = F["Asp"]
+  #  Q = F["Q"]
+  #  R = F["R"]
+  #  E = F["E"]
+  #  r = F["rank"]
+  #
+  #  b = np.asarray(b, dtype=np.float64).reshape(-1)
+  #  m, n = Asp.shape
+  #  if b.size != m:
+  #    raise ValueError(f"b has size {b.size}, expected {m}")
+  #
+  #  # y = Q^T b
+  #  y = np.asarray(Q.T @ b).reshape(-1)
+  #
+  #  # solve R11 z = y1
+  #  R11 = R[:r, :r]
+  #  z = spla.spsolve_triangular(R11, y[:r], lower=False)
+  #
+  #  # pad in the "R coordinate system"
+  #  x_pre = np.zeros(n, dtype=np.float64)
+  #  x_pre[:r] = z
+  #
+  #  # undo permutation: x_perm[E] = x_pre  (so x_perm is in original column order)
+  #  x = np.empty(n, dtype=np.float64)
+  #  x[E] = x_pre
+  #  return x
 
-  def face_moments_flux(self, face_id, grad_u_phys):
+  def solve(self, B):
+    """
+    Solve min ||A X - B||_F with minimum-norm solution.
+  
+    Parameters
+    ----------
+    B : array_like
+        Either
+          - shape (nrows,)          [single RHS]
+          - shape (nrows, p)        [multiple RHS]
+  
+    Returns
+    -------
+    X : ndarray
+        Either
+          - shape (nvars,)          if B was 1D
+          - shape (nvars, p)        if B was 2D
+    """
+    F = self.SPQR
+    Q = F["Q"]          # (nrows, q)
+    R = F["R"]          # (q, nvars), CSR
+    E = F["E"]
+    r = F["rank"]
+  
+    B = np.asarray(B, dtype=np.float64)
+  
+    # --- normalize RHS to 2D ---
+    is_vector = (B.ndim == 1)
+    if is_vector:
+      B = B.reshape(-1, 1)          # (nrows, 1)
+  
+    # ensure Fortran order for multi-RHS
+    if not B.flags.f_contiguous:
+      B = np.asfortranarray(B)
+  
+    nrows, p = B.shape
+    nvars = R.shape[1]
+  
+    # --- apply Q^T ---
+    Y = Q.T @ B                     # dense (q, p)
+  
+    # --- triangular solve on leading block ---
+    R11 = R[:r, :r]
+    Z = spla.spsolve_triangular(
+      R11,
+      Y[:r, :],
+      lower=False
+    )                               # (r, p)
+  
+    # --- pad in permuted coordinates ---
+    Xpre = np.zeros((nvars, p), dtype=np.float64, order="F")
+    Xpre[:r, :] = Z
+  
+    # --- unpermute back to original column order ---
+    X = np.empty_like(Xpre)
+    X[E, :] = Xpre
+  
+    # --- return shape consistent with input ---
+    if is_vector:
+      return X[:, 0]
+    return X
+
+  
+
+  def project_neumann_face(self, face_id, grad_u_phys):
     """
     Flux moment vector on a given face:
       mu_l = ∫_face psi_l * (∂u/∂n_out) dS
@@ -984,7 +1249,7 @@ class TetSteklovLeaf:
 
   #  return np.vstack(T_blocks), np.vstack(F_blocks)
 
-  def project_f_int(self, f_rhs_phys):
+  def project_source_int(self, f_rhs_phys):
     Xhat = self.ref.Xhat_vol_lap
     w = self.ref.w_vol_lap
     V = self.ref.V_vol_lap
@@ -994,7 +1259,7 @@ class TetSteklovLeaf:
     return self.detJabs * f_lap[:self.ref.m]
 
 
-  def face_moments_dirichlet(self, face_id, g_dirichlet_phys):
+  def project_dirichlet_face(self, face_id, g_dirichlet_phys):
     fd = self.ref.face[face_id]
     sigma = self.face_sigma[face_id]
 
@@ -1109,9 +1374,50 @@ def make_manufactured_u_f_grad(m_max):
   #    for c in range(m_max + 1 - a - b):
   #      coef = sp.Rational(1, 1 + a + b + c)
   #      u_expr += coef * (x**a) * (y**b) * (z**c)
-  u_expr = sp.exp(x**2 + y**2 + z**2)
+  u_expr = sp.exp(sp.cos(x**2 + y**2 + z**2))
 
   return make_sym_u_f_and_grad(u_expr, simplify=True)  
+
+#def make_manufactured_u_f_grad(m_max):
+#  x, y, z = sp.symbols("x y z", real=True)
+#
+#  # Put a narrow bump near the face x+y+z=1 and near an edge
+#  eps = sp.Rational(1, 200)  # try 1/200, 1/500, 1/1000
+#  x0, y0, z0 = sp.Rational(9, 10), sp.Rational(5, 100), sp.Rational(5, 100)
+#
+#  u_expr = sp.exp(-((x-x0)**2 + (y-y0)**2 + (z-z0)**2) / eps)
+#
+#  return make_sym_u_f_and_grad(u_expr, simplify=True)
+
+#def make_manufactured_u_f_grad(m_max):
+#  x, y, z = sp.symbols("x y z", real=True)
+#
+#  eps = sp.Rational(1, 15)  # smaller = harder
+#  s = 1 - x - y - z
+#  u_expr = sp.exp(-s/eps)   # boundary layer at s=0 (the top face)
+#
+#  return make_sym_u_f_and_grad(u_expr, simplify=True)
+
+#def make_manufactured_u_f_grad(m_max):
+#  x, y, z = sp.symbols("x y z", real=True)
+#
+#  # point near a vertex; choose delta small for nastiness
+#  x0, y0, z0 = sp.Rational(1, 100), sp.Rational(1, 100), sp.Rational(1, 100)
+#  delta = sp.Rational(1, 1000)  # smaller => more singular-like
+#
+#  r2 = (x-x0)**2 + (y-y0)**2 + (z-z0)**2 + delta**2
+#  u_expr = 1/sp.sqrt(r2)   # smooth due to +delta^2, but very steep
+#
+#  return make_sym_u_f_and_grad(u_expr, simplify=True)
+
+#def make_manufactured_u_f_grad(m_max):
+#  x, y, z = sp.symbols("x y z", real=True)
+#  u_expr = sp.Piecewise(
+#    (1, x + y + z < sp.Rational(1, 2)),
+#    (0, True)
+#  ) 
+#  return make_sym_u_f_and_grad(u_expr, simplify=True)
+
 
 def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
                                  w_bc=1.0, w_pde=1.0,
@@ -1127,177 +1433,35 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   include the interior Poisson equations in the same LS solve.
   """
   # Boundary data (all 4 faces) in the same face moment basis as T_full.
-  lam_blocks = [leaf.face_moments_dirichlet(f, u_exact_phys) for f in range(4)]
+  lam_blocks = [leaf.project_dirichlet_face(f, u_exact_phys) for f in range(4)]
   lam_full = np.concatenate(lam_blocks)
 
 
   # Interior RHS in the promoted Laplacian basis.
-  f_int = leaf.project_f_int(f_rhs_phys)
+  f_int = leaf.project_source_int(f_rhs_phys)
   print("||lam||", np.linalg.norm(lam_full), "||f_int||", np.linalg.norm(f_int))
 
-  #A_full = leaf.T_full @ leaf.N
-  #U, s, _ = np.linalg.svd(A_full, full_matrices=False)
-  
-  # choose numerical rank (don’t use eps here; use something tied to your goals)
-  #rtol = 1e-10
-  #r = np.sum(s > rtol * s[0])
-  #Ur = U[:, :r]
-  
-  #Tproj = Ur.T @ leaf.T_full
-  #lam_proj = Ur.T @ lam_full
-
-  #A = np.vstack([
-  #  w_bc * Tproj,
-  #  w_pde * leaf.L_int,
-  #])
-  #b = np.concatenate([
-  #  w_bc * lam_proj,
-  #  -w_pde * f_int,
-  #])
-
-  ## Stacked system
-  T = leaf.T_full
-  L = leaf.L_int
-
-  A = np.vstack([
-    T,
-    L,
-  ])
+  ## --- Solve with SPQR ---
   b = np.concatenate([
     lam_full,
-    -np.asarray(f_int, dtype=np.float64),
+    -f_int,
   ])
-  #A[np.abs(A)/np.linalg.norm(A,'fro') < 1e-14] = 0.0
   start_time = time.perf_counter()
-  c, resid, rnk, s = scipy.linalg.lstsq(A, b, lapack_driver="gelsd", check_finite=False)
+  c_spqr = leaf.solve(b)
   end_time = time.perf_counter()
-  t_lstsq = end_time-start_time
-  ### LSMR
-  Asp = _dense_to_csc_pruned(A, rel=1e-14, abs_tol=0.0)
-  m,n = Asp.shape
-  R = np.asarray(leaf.ref.R, dtype=np.float64)
-  # Define apply R^{-1} and R^{-T} via triangular solves
-  def apply_Rinv(v):
-    v = np.asarray(v, dtype=np.float64)
-    return scipy.linalg.solve_triangular(
-      R, v, lower=False, trans="N", check_finite=False
-    )
+  c = c_spqr
+  ##c_spqr, *_ = spqr_rz_solve_with_E(Asp, b, leaf.ref.E_pat)
+  #c_spqr = sparseqr.solve(Asp, b, tolerance=0)
   
-  def apply_RTinv(v):
-    v = np.asarray(v, dtype=np.float64)
-    return scipy.linalg.solve_triangular(
-      R, v, lower=False, trans="T", check_finite=False
-    )
-
-  def apply_Minv(v):
-    # Minv = (R^T R)^{-1} = R^{-1} R^{-T}
-    return apply_Rinv(apply_RTinv(v))
-
-  def K_matvec(x):
-    x = np.asarray(x, dtype=np.float64)
-    r = x[:m]
-    c = x[m:]
-    y0 = r + Asp @ c
-    y1 = Asp.T @ r
-    return np.concatenate([y0, y1])
-  
-  K = spla.LinearOperator(
-    shape=(m + n, m + n),
-    matvec=K_matvec,
-    dtype=np.float64,
-  )
-
-  # Block preconditioner inverse P^{-1}[u; v] = [u; Minv v]
-  def P_matvec(x):
-    x = np.asarray(x, dtype=np.float64)
-    u = x[:m]
-    v = x[m:]
-    return np.concatenate([u, apply_Minv(v)])
-  
-  P = spla.LinearOperator(
-    shape=(m + n, m + n),
-    matvec=P_matvec,
-    dtype=np.float64,
-  )
-
-  # Define the preconditioned operator B = A * R^{-1}
-  def matvec_B(x):
-    # x is y in the preconditioned coordinates
-    return Asp @ apply_Rinv(x)
-  
-  def rmatvec_B(z):
-    # z lives in measurement space; apply B^T z = R^{-T} (A^T z)
-    return apply_RTinv(Asp.T @ z)
-  
-  B = spla.LinearOperator(
-    shape=(m, n),
-    matvec=matvec_B,
-    rmatvec=rmatvec_B,
-    dtype=np.float64,
-  )
- 
-  rng = np.random.default_rng(0)
-  x = rng.standard_normal(n)
-  z = rng.standard_normal(m)
-  
-  lhs = float(np.dot(B.matvec(x), z))
-  rhs = float(np.dot(x, B.rmatvec(z)))
-  
-  print("adjoint relerr =", abs(lhs - rhs) / (abs(lhs) + abs(rhs) + 1e-300))
- 
-  # --- Solve with LSMR ---
-  # Pick tolerances; start modest, you can tighten later.
-  start_time = time.perf_counter()
-  y_lsmr, istop, itn, normr, normar, norma, conda, normx = spla.lsmr(
-    B, b,
-    atol=1e-14, btol=1e-14,
-    maxiter=10000,
-    conlim=1e12,
-    show=False,
-  )
-  
-  # Map back to coefficients
-  c_pc = apply_Rinv(y_lsmr)
-  end_time = time.perf_counter()
-  c = c_pc 
-
-  t_lsmr = end_time-start_time
-  print("[lsmr] istop =", istop, "itn =", itn)
-  print("[lsmr] ||A c - b||2 =", np.linalg.norm(Asp @ c_pc - b))
-  
-  # --- Solve with MINRES ---
-  rhs = np.concatenate([b, np.zeros(n, dtype=np.float64)])
-  
-  start_time = time.perf_counter()
-  # MINRES solve
-  x_minres, info = spla.minres(
-    K, rhs,
-    M=P,
-    rtol=1e-14,
-    maxiter=20000,
-    show=False,
-  )
-  end_time = time.perf_counter()
-  t_minres = end_time-start_time 
-  r_minres = x_minres[:m]
-  c_minres = x_minres[m:]
-
-  print("[minres] info =", info)
-  print("[minres] ||A c - b||2 =", np.linalg.norm(Asp @ c_minres - b))
-  print("[minres] ||A^T(Ac-b)||2 =", np.linalg.norm(Asp.T @ (Asp @ c_minres - b)))
-  c_pc = c_minres
-  c = c_pc
-  start_time = time.perf_counter()
-  c_spqr = sparseqr.solve(Asp, b, tolerance=0)
-  end_time = time.perf_counter()
   t_spqr = end_time - start_time
   c = c_spqr 
   # c_spqr is returned as a dense numpy array (length n)
-  print("[spqr] ||A c - b||2 =", np.linalg.norm(Asp @ c_spqr - b))
-  print("time LSMR =", t_lsmr)
-  print("time MINRES =", t_minres) 
-  print("time LSTSQ =", t_lstsq) 
+  print("[spqr] ||A c - b||2 =", np.linalg.norm(leaf.Asp @ c_spqr - b))
   print("time SPQR =", t_spqr) 
+  #print("time LSMR =", t_lsmr)
+  #print("time MINRES =", t_minres) 
+  #print("time LSTSQ =", t_lstsq) 
+
 
   #tau = leaf.ref.tau_ref
   #R = leaf.ref.R
@@ -1401,17 +1565,17 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   u_exact, f_rhs, grad_u = make_manufactured_u_f_grad(m_max) #make_poly_u_f_and_grad(m_max)
 
   # One physical tet (same as tetA in the two-tet test)
-  #v0 = np.array([0.20, -0.10, 0.30])
-  #v1 = np.array([1.10,  0.05, 0.20])
-  #v2 = np.array([0.10,  1.00, 0.40])
-  #v3 = np.array([0.25,  0.20, 1.40])
-  v0 = np.array([0.0,0.0,0.0])
-  v1 = np.array([1.0,0.0,0.0])
-  v2 = np.array([0.0,1.0,0.0])
-  v3 = np.array([0.0,0.0,1.0])
+  v0 = np.array([0.20, -0.10, 0.30])
+  v1 = np.array([1.10,  0.05, 0.20])
+  v2 = np.array([0.10,  1.00, 0.40])
+  v3 = np.array([0.25,  0.20, 1.40])
+  #v0 = np.array([0.0,0.0,0.0])
+  #v1 = np.array([1.0,0.0,0.0])
+  #v2 = np.array([0.0,1.0,0.0])
+  #v3 = np.array([0.0,0.0,1.0])
   VA = np.stack([v0, v1, v2, v3], axis=0)
 
-  tetA_g = (0, 1, 2, 3)
+  tetA_g = (2, 1, 3, 0)
   #tetA_g = (10, 3, 5, 57)
   sigA = build_face_sigma_list_for_tet(tetA_g)
 
@@ -1452,7 +1616,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
 
 
 if __name__ == "__main__":
-  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=True, method="minls")
+  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=False, method="minls")
   s = np.zeros_like(errs)
   for j in range(len(errs)):
     if j == 0:
