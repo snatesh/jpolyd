@@ -64,6 +64,32 @@ def tet_affine_from_verts(V):
 
   return J, b, detJ, detJabs, Jinv, JinvT, G
 
+def tet_face_outward_sign(V, face_id):
+  """
+  V: (4,3) tet vertices in leaf's local order.
+  face_id: 0..3, LOCAL_FACE_TRIS gives the face vertices.
+  Returns s in {+1,-1} such that s * n_face_local is outward.
+  """
+  tri = LOCAL_FACE_TRIS[int(face_id)]
+  i0, i1, i2 = tri
+  # opposite vertex index
+  opp = [0,1,2,3]
+  opp.remove(i0); opp.remove(i1); opp.remove(i2)
+  i3 = opp[0]
+
+  p0 = V[i0]; p1 = V[i1]; p2 = V[i2]; p3 = V[i3]
+
+  # local face normal (not unit), depends on (i0,i1,i2) ordering
+  n = np.cross(p1 - p0, p2 - p0)
+
+  # vector from face towards opposite vertex
+  v = p3 - p0
+
+  # If n points toward the opposite vertex, it's inward (needs flip).
+  # Outward means pointing away from interior, i.e. opposite sign.
+  # So outward if dot(n, v) < 0.
+  return 1.0 if float(np.dot(n, v)) < 0.0 else -1.0
+
 def map_ref_to_phys(Xhat, J, b):
   return (Xhat @ J.T) + b[None, :]
 
@@ -129,16 +155,6 @@ def tri_coords_perm(u, v, sigma):
   return l[sigma[1]], l[sigma[2]]
 
 
-def tet_local_face_from_global_triple(tet_gverts, face_gtriple_set):
-  tg = list(tet_gverts)
-  s = set(face_gtriple_set)
-  for face_id, tri in enumerate(LOCAL_FACE_TRIS):
-    gtri = {tg[tri[0]], tg[tri[1]], tg[tri[2]]}
-    if gtri == s:
-      return face_id
-  raise ValueError("face not found in tet")
-
-
 def face_sigma_local_to_canonical(local_gtriple_ordered, canonical_gtriple):
   canon = list(canonical_gtriple)
   loc = list(local_gtriple_ordered)
@@ -191,52 +207,16 @@ def face_map_and_geom(face_id, u, v):
     raise ValueError("bad face_id")
   return Xf, area_scale, n_hat
 
-def _as_csc(A):
-  if sps.issparse(A):
-    return A.tocsc()
-  return np.asarray(A)
-
-def _degree_blocks(deg_of_col):
-  deg_of_col = np.asarray(deg_of_col, dtype=np.int64)
-  degs = np.unique(deg_of_col)
-  blocks = []
-  for d in degs:
-    J = np.where(deg_of_col == d)[0]
-    if J.size:
-      blocks.append((int(d), J))
-  # assume graded ordering; still fine if not
-  blocks.sort(key=lambda t: t[0])
-  return blocks
-
-
-def _block_diag_from_A(A, Jd):
-  # Returns H = A[:,Jd]^T A[:,Jd] as dense
-  if sps.issparse(A):
-    Ad = A[:, Jd]
-    return (Ad.T @ Ad).toarray()
-  Ad = A[:, Jd]
-  return Ad.T @ Ad
-
-
-def _block_offdiag_from_A(A, Jd, Jdp1):
-  # Returns K = A[:,Jd]^T A[:,Jdp1] as dense
-  if sps.issparse(A):
-    Ad = A[:, Jd]
-    B = A[:, Jdp1]
-    return (Ad.T @ B).toarray()
-  Ad = A[:, Jd]
-  B = A[:, Jdp1]
-  return Ad.T @ B
-
-def _AtA_block(A, Jrow, Jcol):
-  # Return dense block (A[:,Jrow]^T A[:,Jcol])
-  if sps.issparse(A):
-    Ar = A[:, Jrow]
-    Ac = A[:, Jcol]
-    return (Ar.T @ Ac).toarray()
-  Ar = A[:, Jrow]
-  Ac = A[:, Jcol]
-  return Ar.T @ Ac
+def ref_face_normal_norm(face_id):
+  # reference tet vertices
+  V = np.array([[0.0,0.0,0.0],
+                [1.0,0.0,0.0],
+                [0.0,1.0,0.0],
+                [0.0,0.0,1.0]])
+  tri = LOCAL_FACE_TRIS[int(face_id)]
+  p0, p1, p2 = V[tri[0]], V[tri[1]], V[tri[2]]
+  n = np.cross(p1 - p0, p2 - p0)
+  return float(np.linalg.norm(n))
 
 def _dense_to_csc_pruned(A, rel=1e-14, abs_tol=0.0):
   """
@@ -250,345 +230,6 @@ def _dense_to_csc_pruned(A, rel=1e-14, abs_tol=0.0):
     A[np.abs(A) <= thr] = 0.0
   return sps.csc_matrix(A)
 
-def degree_block_norms_of_normal(A, deg_of_col, max_delta=4):
-  
-  A = A.tocsc() if sps.issparse(A) else np.asarray(A)
-  AtA = (A.T @ A).toarray() if sps.issparse(A) else (A.T @ A)
-
-  deg = np.asarray(deg_of_col, dtype=np.int64)
-  dmax = int(deg.max())
-
-  J = [np.where(deg == d)[0] for d in range(dmax + 1)]
-
-  out = {}
-  for delta in range(max_delta + 1):
-    s = 0.0
-    cnt = 0
-    for d in range(dmax + 1 - delta):
-      I = J[d]
-      K = J[d + delta]
-      if I.size == 0 or K.size == 0:
-        continue
-      blk = AtA[np.ix_(I, K)]
-      s += np.linalg.norm(blk, ord="fro")**2
-      cnt += 1
-    out[delta] = (s**0.5, cnt)
-  return out
-
-
-def build_degree_block_tridiag_M(A, deg_of_col, alpha_rel=1e-12, alpha_abs=1e-18):
-  """
-  Build dense block-tridiagonal approximation M ~ A^T A in degree blocks:
-    M_dd   = (A^T A)_{dd}
-    M_d,d+1 = (A^T A)_{d,d+1}
-
-  Returns:
-    M : (n,n) dense SPD-ish matrix (may require shift before Cholesky)
-    blocks : list of (deg, J)
-  """
-  A = _as_csc(A)
-  outdebug = degree_block_norms_of_normal(A, deg_of_col, max_delta=4)
-  print(outdebug)
-  blocks = _degree_blocks(deg_of_col)
-  nb = len(blocks)
-  n = A.shape[1]
-
-  # Global permutation is identity because your columns are already in graded order.
-  # We’ll assemble M in the original column order using index sets.
-  M = np.zeros((n, n), dtype=np.float64)
-
-  # Fill block diagonal and first off-diagonals
-  for bi in range(nb):
-    _, Jd = blocks[bi]
-    H = _AtA_block(A, Jd, Jd)
-    H = 0.5 * (H + H.T)
-
-    # robust per-block regularization floor
-    # scale by average diagonal magnitude
-    diag_scale = float(np.mean(np.diag(H))) if H.size else 1.0
-    reg = max(alpha_abs, alpha_rel * max(1.0, abs(diag_scale)))
-    H = H + reg * np.eye(H.shape[0])
-
-    M[np.ix_(Jd, Jd)] += H
-
-    if bi + 1 < nb:
-      _, Jp = blocks[bi + 1]
-      K = _AtA_block(A, Jd, Jp)
-      # symmetric placement
-      M[np.ix_(Jd, Jp)] += K
-      M[np.ix_(Jp, Jd)] += K.T
-
-  return M, blocks
-
-def build_degree_block_pentadiag_M_damped(
-  A,
-  deg_of_col,
-  alpha_rel=1e-12,
-  alpha_abs=1e-18,
-  gamma_init=1.0,
-  gamma_min=2.0**-20,
-  gamma_shrink=0.5,
-  eps_rel=1e-12,
-):
-  """
-  Build a degree-band (|Δd|<=2) approximation M ~ A^T A that is SPD by construction.
-
-  Strategy:
-    - Build SPD block-diagonal D from exact normal blocks N_dd.
-    - Build off-diagonals E1 (Δ=1), E2 (Δ=2).
-    - Form M = D + gamma*(E1+E1^T + E2+E2^T).
-    - Decrease gamma until chol_spd_global needs no (or tiny) shift.
-
-  Returns:
-    M      : dense (n,n)
-    degs   : degrees present
-    J_of_d : dict
-    gamma  : final damping used
-  """
-  A = _as_csc(A)
-
-  deg = np.asarray(deg_of_col, dtype=np.int64)
-  nvar = A.shape[1]
-
-  # Degree -> indices (only keep nonempty)
-  J_of_d = {}
-  for d in range(int(deg.min()), int(deg.max()) + 1):
-    J = np.where(deg == d)[0]
-    if J.size:
-      J_of_d[int(d)] = J
-  degs = sorted(J_of_d.keys())
-
-  # Build block-diagonal D (SPD) and store off-diagonals separately
-  D = np.zeros((nvar, nvar), dtype=np.float64)
-  E = np.zeros((nvar, nvar), dtype=np.float64)  # will hold upper band (Δ=1,2)
-
-  for d in degs:
-    Jd = J_of_d[d]
-
-    # N_dd
-    H = _AtA_block(A, Jd, Jd)
-    H = 0.5 * (H + H.T)
-
-    diag_scale = float(np.mean(np.diag(H))) if H.size else 1.0
-    reg = max(alpha_abs, alpha_rel * max(1.0, abs(diag_scale)))
-    H = H + reg * np.eye(H.shape[0])
-
-    D[np.ix_(Jd, Jd)] += H
-
-    # Δ = 1 and 2 upper blocks into E
-    for delta in (1, 2):
-      dp = d + delta
-      if dp not in J_of_d:
-        continue
-      Jp = J_of_d[dp]
-      K = _AtA_block(A, Jd, Jp)
-      E[np.ix_(Jd, Jp)] += K
-
-  # Backtracking on gamma until Cholesky is happy without a big shift.
-  gamma = float(gamma_init)
-  last_shift = None
-
-  while True:
-    M = D + gamma * (E + E.T)
-
-    # Try Cholesky with your global SPD helper
-    _, shift = chol_spd_global(M, eps_rel=eps_rel)
-    last_shift = shift
-
-    # Accept if no shift (or extremely tiny shift)
-    if shift == 0.0 or shift < 1e-10:
-      break
-
-    gamma *= float(gamma_shrink)
-    if gamma < gamma_min:
-      # Give up on off-diagonals; return block-diagonal (always SPD)
-      gamma = 0.0
-      M = D.copy()
-      break
-
-  if last_shift not in (0.0, None) and gamma == 0.0:
-    print("Warning: could not make banded M SPD without shift; using block-diagonal only.")
-
-  return M, degs, J_of_d, gamma
-
-
-def chol_spd_global(M, eps_rel=1e-12):
-  """
-  Robust Cholesky of SPD matrix by applying a global diagonal shift if needed.
-  Returns upper-triangular R such that M + shift*I = R^T R.
-  """
-  M = 0.5 * (M + M.T)
-
-  # First try
-  try:
-    R = np.linalg.cholesky(M).T  # return upper
-    return R, 0.0
-  except np.linalg.LinAlgError:
-    pass
-
-  # Compute spectral bounds (dense, but this is for single-tet diagnostics)
-  w = np.linalg.eigvalsh(M)
-  wmin = float(w[0])
-  wmax = float(w[-1])
-
-  # shift so that min eigenvalue becomes eps_rel*wmax
-  target = eps_rel * max(1.0, abs(wmax))
-  shift = max(0.0, target - wmin)
-
-  I = np.eye(M.shape[0])
-  for _ in range(8):
-    try:
-      R = np.linalg.cholesky(M + shift * I).T
-      return R, shift
-    except np.linalg.LinAlgError:
-      shift = max(1e-18, 10.0 * shift)
-
-  raise np.linalg.LinAlgError("Failed to make M SPD even after shifting.")
-
-def compute_all_singular_values_A_Minvhalf(
-  A,
-  deg_of_col,
-  alpha_rel=1e-12,
-  alpha_abs=1e-18,
-  eps_rel=1e-12,
-  band=2,
-):
-  """
-  Compute all singular values of B = A * M^{-1/2}, where M is a dense
-  degree-block banded approximation to A^T A.
-
-  Parameters
-  ----------
-  A : (m,n) sparse or dense
-    System matrix.
-  deg_of_col : (n,) int
-    Total degree per column (graded-lex ordering).
-  alpha_rel, alpha_abs : float
-    Per-block diagonal regularization used when assembling M.
-  eps_rel : float
-    Relative SPD shift target for Cholesky fallback.
-  band : int
-    Degree-bandwidth to keep in M:
-      band=1 -> tridiagonal in degree (|d-d'|<=1)
-      band=2 -> pentadiagonal in degree (|d-d'|<=2)
-
-  Returns
-  -------
-  s : (n,) float
-    All singular values of A * M^{-1/2}, sorted descending.
-  shift : float
-    Global diagonal shift applied (0 if no shift was needed).
-  """
-  A = _as_csc(A)
-  m, n = A.shape
-
-  if band == 1:
-    M, _ = build_degree_block_tridiag_M(
-      A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs
-    )
-  elif band == 2:
-    #M, _, _ = build_degree_block_pentadiag_M(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
-    #M, *_ = build_degree_block_pentadiag_M_coarse01(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
-    #M, _, _ = build_degree_block_pentadiag_M_additive_coarse01(A, deg_of_col, alpha_rel=alpha_rel, alpha_abs=alpha_abs)
-    M, _, _, gamma = build_degree_block_pentadiag_M_damped(
-      A, deg_of_col,
-      alpha_rel=alpha_rel,
-      alpha_abs=alpha_abs,
-      eps_rel=eps_rel,
-    )
-    print("gamma used =", gamma)
-
-  else:
-    raise ValueError(f"Unsupported band={band}. Use band=1 or band=2.")
-
-  R, shift = chol_spd_global(M, eps_rel=eps_rel)
-
-  # X = R^{-1} by triangular solves against I
-  I = np.eye(n)
-  X = scipy.linalg.solve_triangular(R, I, lower=False, check_finite=False)
-  #plt.spy(np.abs(R)>1e-10)
-  #plt.show()
-  # Dense A
-  Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
-  B = Ad @ X
-
-  s = np.linalg.svd(B, compute_uv=False)
-  return s, shift
-
-
-
-def _chol_spd_with_shift(A, eps_rel=1e-12, max_tries=6):
-  """
-  Return lower-triangular L such that (A + shift*I) = L L^T is SPD.
-  We symmetrize A and add the smallest shift needed based on min eigenvalue.
-  """
-  A = 0.5 * (A + A.T)
-
-  # Quick attempt first
-  try:
-    return np.linalg.cholesky(A)
-  except np.linalg.LinAlgError:
-    pass
-
-  # Compute minimum eigenvalue (block sizes are small enough)
-  wmin = float(np.min(np.linalg.eigvalsh(A)))
-  # Target: wmin + shift >= eps_rel * ||A||_2
-  # Use spectral radius approximation via max eigenvalue
-  wmax = float(np.max(np.linalg.eigvalsh(A)))
-  target = eps_rel * max(1.0, abs(wmax))
-  shift = max(0.0, target - wmin)
-
-  I = np.eye(A.shape[0])
-  for _ in range(max_tries):
-    try:
-      return np.linalg.cholesky(A + shift * I)
-    except np.linalg.LinAlgError:
-      shift *= 10.0 if shift > 0 else 1e-12
-
-  # If we get here, something is seriously indefinite / ill-scaled.
-  # Fall back to a larger shift.
-  shift = max(1e-8, 1e-6 * max(1.0, abs(wmax)))
-  return np.linalg.cholesky(A + shift * I)
-
-
-def plot_spectrum(s, title="Singular values of preconditioned operator"):
-  """
-  Plot singular values on log-log and semi-log.
-  """
-  s = np.asarray(s, dtype=np.float64)
-  idx = np.arange(1, s.size + 1)
-  plt.figure()
-  plt.semilogy(idx, s, marker=".", linewidth=1.0)
-  plt.xlabel("index")
-  plt.ylabel("singular value")
-  plt.title(title + " (semi-log)") 
-  plt.grid(True, which="both", ls="--", alpha=0.4)
-  
-  plt.show()
-
-
-def spqr_solve_with_E(A_csc, b, E):
-  """
-  Solve min ||A c - b||_2 using SPQR but with a fixed column ordering E.
-
-  Convention: sparseqr.qr returns E such that Q R = A[:, E].
-  """
-  A_csc = A_csc.tocsc()
-  b = np.asarray(b, dtype=np.float64)
-  E = np.asarray(E, dtype=np.int64)
-
-  # 1) permute columns
-  A_perm = A_csc[:, E]
-
-  # 2) solve in permuted coordinates
-  x = sparseqr.solve(A_perm, b, tolerance=0)
-
-  # 3) unpermute: c[E[j]] = x[j]
-  c = np.empty(A_csc.shape[1], dtype=np.float64)
-  c[E] = np.asarray(x, dtype=np.float64)
-
-  return c
-
 class RefTetPrecomp:
   def __init__(self, n, q_vol, q_face, kappa_src):
     self.D = 3
@@ -597,6 +238,7 @@ class RefTetPrecomp:
     self.q_face = int(q_face)
     self.kappa_src = np.asarray(kappa_src, dtype=np.float64)
     self.face_sigma = [(0,1,2), (0,1,2), (0,1,2), (0,1,2)] 
+    self.face_nref_norm = np.array([ref_face_normal_norm(f) for f in range(4)], dtype=np.float64)
     v0 = np.array([0.0,0.0,0.0])
     v1 = np.array([1.0,0.0,0.0])
     v2 = np.array([0.0,1.0,0.0])
@@ -742,6 +384,20 @@ class RefTetPrecomp:
     
     #self.E_pat = self._compute_sys_pattern(verbose=True)
 
+    # -----------------------------
+    # Face-to-face change-of-basis maps (moments) on the reference tet
+    # P_mom_ref[face_id][sigmaA][sigmaB] maps lam_B -> lam_A on that face
+    # -----------------------------
+    self.P_mom_ref, self.M_face_ref = self._precompute_face_P_maps(
+      rel_prune=0.0,
+      abs_prune=0.0,
+      verbose=False
+    )
+    #self.P_mom_ref_sparse = _dense_to_csc_pruned(self.P_mom_ref)
+    #self.M_face_ref_sparse = _dense_to_csc_pruned(self.M_face_ref)
+
+  
+
   def _precompute_promoted_second_partials(self):
     D = 3
     n = self.n
@@ -800,6 +456,127 @@ class RefTetPrecomp:
       F_blocks.append(Ff)
 
     return np.vstack(T_blocks), np.vstack(F_blocks)
+
+  def _precompute_face_P_maps(self, rel_prune=0.0, abs_prune=0.0, verbose=False):
+    """
+    Precompute face-to-face moment change-of-basis maps on the reference tet.
+
+    For each face_id and each (sigmaA, sigmaB) in S3 x S3, compute:
+      P_mom[face_id][sigmaA][sigmaB] = G(sigmaA,sigmaB) @ inv(M(sigmaB))
+
+    where:
+      V_sigma = face basis evaluated on triangle quad points with barycentric permutation sigma
+      W       = diag(wS_hat)  (reference surface weights including area_scale)
+      M(sigma)= V_sigma^T W V_sigma
+      G       = V_sigmaA^T W V_sigmaB
+
+    Interpretation (moments):
+      If lamB = ∫ psiB u, then lamA ≈ P_mom * lamB.
+
+    Returns:
+      P_mom_ref : dict face_id -> dict sigmaA -> dict sigmaB -> (kf,kf) ndarray
+      M_ref     : dict face_id -> dict sigma -> (kf,kf) ndarray   (mass matrices)
+    """
+    perms = all_S3_perms()
+
+    P_mom_ref = {}
+    M_ref = {}
+
+    for face_id in range(4):
+      fd = self.face[face_id]
+
+      # Face quad points on reference triangle (u,v)
+      Xt = fd["Xt"]           # (nq, 2)
+      u = Xt[:, 0]
+      v = Xt[:, 1]
+
+      # Reference surface weights (already includes reference face area_scale)
+      wS_hat = fd["wS_hat"]   # (nq,)
+      Wv = wS_hat[:, None]
+
+      # Face kappa and face-basis structures (same ones used to build fd["Vt"])
+      kappa_tri = kappa_face_from_kappa_src(self.kappa_src, face_id)
+      alpha_tri, tail_tri, invh_tri = jbasis_build_structures(2, self.n, kappa_tri)
+
+      # Evaluate face basis under each barycentric permutation sigma
+      V_sigma = {}
+      for sigma in perms:
+        u_loc, v_loc = tri_coords_perm(u, v, sigma)
+        Xt_sigma = np.stack([u_loc, v_loc], axis=1)
+        Vt_sigma = jbasis_eval_all(
+          Xt_sigma,
+          kappa_tri,
+          self.n,
+          alpha_tri,
+          tail_tri,
+          invh_tri,
+          2
+        )
+        V_sigma[sigma] = np.asarray(Vt_sigma, dtype=np.float64)
+
+      # Mass matrices M(sigma) and (optionally) their inverses
+      M_face = {}
+      Minv_face = {}
+      for sigma in perms:
+        Vt = V_sigma[sigma]                       # (nq, kf)
+        M = Vt.T @ (Wv * Vt)                      # (kf, kf)
+        M = 0.5 * (M + M.T)
+
+        # Optional pruning (usually keep off)
+        if rel_prune > 0.0 or abs_prune > 0.0:
+          fro = float(np.linalg.norm(M))
+          thr = max(float(abs_prune), float(rel_prune) * max(1.0, fro))
+          if thr > 0.0:
+            M = M.copy()
+            M[np.abs(M) <= thr] = 0.0
+
+        M_face[sigma] = M
+        # Invert with a robust solve (SPD-ish). Use general solve to match your style.
+        Minv = scipy.linalg.solve(M, np.eye(self.kf), assume_a="gen", check_finite=False)
+        Minv_face[sigma] = Minv
+
+      # Cross Gram and P maps
+      P_face = {}
+      for sigmaA in perms:
+        VA = V_sigma[sigmaA]
+        row = {}
+        for sigmaB in perms:
+          VB = V_sigma[sigmaB]
+          G = VA.T @ (Wv * VB)                    # (kf, kf)
+
+          if rel_prune > 0.0 or abs_prune > 0.0:
+            fro = float(np.linalg.norm(G))
+            thr = max(float(abs_prune), float(rel_prune) * max(1.0, fro))
+            if thr > 0.0:
+              G = G.copy()
+              G[np.abs(G) <= thr] = 0.0
+
+          P = G @ Minv_face[sigmaB]               # (kf, kf)
+
+          if rel_prune > 0.0 or abs_prune > 0.0:
+            fro = float(np.linalg.norm(P))
+            thr = max(float(abs_prune), float(rel_prune) * max(1.0, fro))
+            if thr > 0.0:
+              P = P.copy()
+              P[np.abs(P) <= thr] = 0.0
+
+          row[sigmaB] = P
+        P_face[sigmaA] = row
+
+      P_mom_ref[face_id] = P_face
+      M_ref[face_id] = M_face
+
+      if verbose:
+        # Quick diagnostics: how close are self-maps to identity?
+        # P(sigma <- sigma) should be ~I in exact integration.
+        for sigma in perms:
+          Pss = P_face[sigma][sigma]
+          err = float(np.linalg.norm(Pss - np.eye(self.kf)))
+          print(f"[P_mom_ref] face={face_id} sigma={sigma} ||P-I||_F={err:.3e}")
+
+    return P_mom_ref, M_ref
+
+
 
   def _precompute_precond(self):
     alpha_rel=1e-12
@@ -938,18 +715,50 @@ class TetSteklovLeaf:
                rtol_trace=1e-14):
     self.ref = ref
     self.V_phys = np.asarray(V_phys, dtype=np.float64)
+    self.face_out_sign = np.array(
+      [tet_face_outward_sign(self.V_phys, f) for f in range(4)],
+      dtype=np.float64
+    )
     self.face_sigma = list(face_sigma)
     if len(self.face_sigma) != 4:
       raise ValueError("face_sigma must have length 4")
+    
+    self.face_n_unit = np.zeros((4,3), dtype=np.float64)
+    self.face_scale  = np.zeros(4, dtype=np.float64)
+    
+    for f in range(4):
+      tri = LOCAL_FACE_TRIS[f]
+      i0, i1, i2 = tri
+      opp = [0,1,2,3]
+      opp.remove(i0); opp.remove(i1); opp.remove(i2)
+      i3 = opp[0]
+    
+      p0 = self.V_phys[i0]
+      p1 = self.V_phys[i1]
+      p2 = self.V_phys[i2]
+      p3 = self.V_phys[i3]
+    
+      n = np.cross(p1 - p0, p2 - p0)          # depends only on the face verts
+      # outward: normal should point away from opposite vertex
+      if float(np.dot(n, p3 - p0)) > 0.0:
+        n = -n
+    
+      nn = float(np.linalg.norm(n))
+      self.face_n_unit[f, :] = n / (nn + 1e-300)
+      self.face_scale[f] = nn / (self.ref.face_nref_norm[f] + 1e-300)
+
+    
+
 
     J, b, detJ, detJabs, Jinv, JinvT, G = tet_affine_from_verts(self.V_phys)
     self.J = J
     self.b = b
     self.detJ = detJ
+    self.detJsgn = 1.0 if self.detJ >= 0.0 else -1.0
     self.detJabs = detJabs
     self.JinvT = JinvT
     self.G = G
-
+    self.gverts = None
     # cache for measurement quad (q_err -> (Xhat,w,V))
     self._err_cache = {}
 
@@ -1013,39 +822,6 @@ class TetSteklovLeaf:
       "rank": rank,
       "economy": bool(economy),
     }
-  
-  #def solve(self, b):
-  #  """
-  #  Solve min ||Asp x - b||_2 using precomputed SPQR factorization F.
-  #  Returns x in the *original* column order of Asp.
-  #  """
-  #  F = self.SPQR
-  #  Asp = F["Asp"]
-  #  Q = F["Q"]
-  #  R = F["R"]
-  #  E = F["E"]
-  #  r = F["rank"]
-  #
-  #  b = np.asarray(b, dtype=np.float64).reshape(-1)
-  #  m, n = Asp.shape
-  #  if b.size != m:
-  #    raise ValueError(f"b has size {b.size}, expected {m}")
-  #
-  #  # y = Q^T b
-  #  y = np.asarray(Q.T @ b).reshape(-1)
-  #
-  #  # solve R11 z = y1
-  #  R11 = R[:r, :r]
-  #  z = spla.spsolve_triangular(R11, y[:r], lower=False)
-  #
-  #  # pad in the "R coordinate system"
-  #  x_pre = np.zeros(n, dtype=np.float64)
-  #  x_pre[:r] = z
-  #
-  #  # undo permutation: x_perm[E] = x_pre  (so x_perm is in original column order)
-  #  x = np.empty(n, dtype=np.float64)
-  #  x[E] = x_pre
-  #  return x
 
   def solve(self, B):
     """
@@ -1109,7 +885,112 @@ class TetSteklovLeaf:
       return X[:, 0]
     return X
 
+  def face_diameter(self, face_id):
+    """
+    Characteristic size h of a face: max edge length.
+    """
+    face_id = int(face_id)
+    tri = LOCAL_FACE_TRIS[face_id]
+    V = self.V_phys
   
+    p0 = V[tri[0]]
+    p1 = V[tri[1]]
+    p2 = V[tri[2]]
+  
+    h01 = np.linalg.norm(p1 - p0)
+    h12 = np.linalg.norm(p2 - p1)
+    h20 = np.linalg.norm(p0 - p2)
+  
+    return max(h01, h12, h20)
+
+  def face_mass_matrix(self, face_id, sparse=False):
+    """
+    Return the physical face mass matrix M_face (kf x kf) in this leaf's
+    face moment basis for the given face_id.
+  
+    Uses reference precompute:
+      ref.M_ref[face_id][sigma] = ∫_face ψ_i ψ_j dS_hat   (includes whatever your ref face measure is)
+    and scales by face_scale to get physical dS.
+    """
+    face_id = int(face_id)
+    sigma = self.face_sigma[face_id]
+  
+    Mref = self.ref.M_face_ref[face_id][sigma]  # dense or sparse depending on your storage
+    s = float(self.face_scale[face_id])
+  
+    if sparse:
+      # if Mref is already sparse, keep it sparse
+      if sps.issparse(Mref):
+        return s * Mref
+      return sps.csc_matrix(s * np.asarray(Mref, dtype=np.float64))
+    else:
+      if sps.issparse(Mref):
+        return (s * Mref).toarray()
+      return s * np.asarray(Mref, dtype=np.float64)
+
+  def build_face_maps(self, iface, lam_ext_blocks=None, f_int=None):
+    """
+    Build affine maps on a single face iface:
+      mu_iface  = S_F * lam_iface + g_F
+      tr_iface  = S_T * lam_iface + g_T
+  
+    where:
+      mu_iface = flux moments on iface
+      tr_iface = trace moments on iface (i.e. T_iface c)
+  
+    Returns:
+      S_F: (kf,kf)
+      g_F: (kf,)
+      S_T: (kf,kf)
+      g_T: (kf,)
+    """
+    iface = int(iface)
+    if lam_ext_blocks is None:
+      lam_ext_blocks = [None] * self.nface
+    if len(lam_ext_blocks) != self.nface:
+      raise ValueError("lam_ext_blocks must have length 4")
+  
+    # g terms: solve with iface Dirichlet = 0 (None treated as zero in your assemble_rhs)
+    lam0 = list(lam_ext_blocks)
+    lam0[iface] = None
+    c0 = self.solve_from_blocks(lam_blocks=lam0, f_int=f_int)
+  
+    g_F = np.asarray(self.flux_face(iface, c0), dtype=np.float64).reshape(-1)
+    g_T = np.asarray(self.trace_face(iface, c0), dtype=np.float64).reshape(-1)
+  
+    # response maps: solve for all columns of B_face
+    B = self.B_face(iface)             # (nrows, kf)
+    C = self.solve(B)                  # (Mvol, kf)
+  
+    Ff = self.F_face(iface)
+    Tf = self.T_face(iface)
+  
+    S_F = (Ff @ C)
+    S_T = (Tf @ C)
+  
+    return S_F, g_F, S_T, g_T
+
+  def build_face_augmented_map(self, iface, tau, lam_ext_blocks=None, f_int=None):
+    """
+    Build augmented numerical flux map:
+      mu_hat = mu + tau * M * (tr - lam)
+  
+    Returns:
+      K_face: (kf,kf)   such that mu_hat = K_face * lam + h_face
+      h_face: (kf,)
+    """
+    iface = int(iface)
+    tau = float(tau)
+  
+    S_F, g_F, S_T, g_T = self.build_face_maps(iface, lam_ext_blocks=lam_ext_blocks, f_int=f_int)
+  
+    M = self.face_mass_matrix(iface, sparse=False)
+    I = np.eye(self.kf)
+  
+    K_face = S_F + tau * (M @ (S_T - I))
+    h_face = g_F + tau * (M @ g_T)
+  
+    return K_face, h_face   
 
   def project_neumann_face(self, face_id, grad_u_phys):
     """
@@ -1146,6 +1027,8 @@ class TetSteklovLeaf:
     # moment vector in the face basis
     return Vt.T @ (wS_phys * ndot)
 
+  def map_hat_to_phys(self, Xf_hat):
+    return map_ref_to_phys(Xf_hat, self.J, self.b)
 
   def project_u_vol(self, u_phys):
     """
@@ -1189,65 +1072,78 @@ class TetSteklovLeaf:
       sigma = self.face_sigma[face_id]
       fd = ref.face[face_id]
   
-      # reference precomputed sparse blocks for this face+sigma
-      Tf_ref = fd["T_sigma_ref"][sigma]  # (mt_face, Mvol)
-      Ff_ref = fd["F_sigma_ref"][sigma]  # (mt_face, Mvol)
-  
-      # geometry scalars
-      n_hat = fd["n_hat"]
-      n_tilde = self.JinvT @ n_hat
-      n_tilde_norm = float(np.linalg.norm(n_tilde))
-  
-      # matches your original scaling:
-      # wS_phys = wS_hat * detJabs * ||n_tilde||
-      # wF_phys = wS_hat * detJabs
-      sT = float(self.detJabs * n_tilde_norm)
-      sF = float(self.detJabs)
-  
-      # sparse scaling (preserves sparsity)
+      # ---------- TRACE (reuse precomputed Tf_ref) ----------
+      Tf_ref = fd["T_sigma_ref"][sigma]  # sparse or dense
+      sT = float(self.face_scale[face_id])  # dS_phys = face_scale * dS_hat
       T_blocks.append(sT * Tf_ref)
-      F_blocks.append(sF * Ff_ref)
   
-    # sparse vstack
-    #T_full = sps.vstack(T_blocks, format="csc")
-    #F_full = sps.vstack(F_blocks, format="csc")
-    T_full = np.vstack(T_blocks)
+      # ---------- FLUX (MUST be built with leaf geometry) ----------
+      # Data on the reference face quadrature
+      Vt = fd["Vt"]                        # (nq, kf)
+      wS_hat = fd["wS_hat"]                # (nq,)
+      dVv_hat = fd["dVv_hat_sigma"][sigma] # (nq, Mvol, 3)  gradients in hat coords
+  
+      # Physical surface weights and outward unit normal (you already computed these)
+      wS_phys = wS_hat * self.face_scale[face_id]
+      n_unit = self.face_n_unit[face_id]   # (3,)
+  
+      # Transform gradients to physical coords: ∇_x φ = J^{-T} ∇_hat φ
+      dVv_x = np.einsum("ab,qmb->qma", self.JinvT, dVv_hat)  # (nq, Mvol, 3)
+  
+      # Normal derivative: n · ∇_x φ
+      ndot = (n_unit[0] * dVv_x[:, :, 0] +
+              n_unit[1] * dVv_x[:, :, 1] +
+              n_unit[2] * dVv_x[:, :, 2])  # (nq, Mvol)
+  
+      # Flux moments: ∫ ψ_i (n·∇φ_j) dS
+      Ff = Vt.T @ (wS_phys[:, None] * ndot)  # (kf, Mvol)
+      F_blocks.append(Ff)
+  
+    # Stack
+    if sps.issparse(T_blocks[0]):
+      T_full = sps.vstack(T_blocks, format="csc")
+    else:
+      T_full = np.vstack(T_blocks)
+  
+    # F is dense right now; you can prune/sparsify later if desired
     F_full = np.vstack(F_blocks)
+  
     return T_full, F_full
-
   #def _assemble_TF_full_sigma(self):
   #  ref = self.ref
   #  T_blocks = []
   #  F_blocks = []
+  #
   #  for face_id in range(4):
   #    sigma = self.face_sigma[face_id]
   #    fd = ref.face[face_id]
-
-  #    wS_hat = fd["wS_hat"]
-  #    Vt = fd["Vt"]
+  #
+  #    # reference precomputed sparse blocks for this face+sigma
+  #    Tf_ref = fd["T_sigma_ref"][sigma]  # (mt_face, Mvol)
+  #    Ff_ref = fd["F_sigma_ref"][sigma]  # (mt_face, Mvol)
+  #
+  #    # geometry scalars
   #    n_hat = fd["n_hat"]
-
-  #    Vv = fd["Vv_sigma"][sigma]
-  #    dVv_hat = fd["dVv_hat_sigma"][sigma]
-
   #    n_tilde = self.JinvT @ n_hat
   #    n_tilde_norm = float(np.linalg.norm(n_tilde))
-
-  #    wS_phys = wS_hat * (self.detJabs * n_tilde_norm)
-  #    wF_phys = wS_hat * self.detJabs
-
-  #    Tf = Vt.T @ (wS_phys[:, None] * Vv)
-
-  #    dVv_x = np.einsum("ab,qmb->qma", self.JinvT, dVv_hat)
-  #    ndot = (n_tilde[0] * dVv_x[:, :, 0] +
-  #            n_tilde[1] * dVv_x[:, :, 1] +
-  #            n_tilde[2] * dVv_x[:, :, 2])
-  #    Ff = Vt.T @ (wF_phys[:, None] * ndot)
-
-  #    T_blocks.append(Tf)
-  #    F_blocks.append(Ff)
-
-  #  return np.vstack(T_blocks), np.vstack(F_blocks)
+  #
+  #    # matches your original scaling:
+  #    # wS_phys = wS_hat * detJabs * ||n_tilde||
+  #    # wF_phys = wS_hat * detJabs
+  #    #sT = float(self.detJabs * n_tilde_norm)
+  #    #sF = float(self.detJabs)
+  #    sT = float(self.face_scale[face_id])
+  #    sF = float(self.face_scale[face_id]) 
+  #    # sparse scaling (preserves sparsity)
+  #    T_blocks.append(sT * Tf_ref)
+  #    F_blocks.append(sF * Ff_ref)
+  #
+  #  # sparse vstack
+  #  #T_full = sps.vstack(T_blocks, format="csc")
+  #  #F_full = sps.vstack(F_blocks, format="csc")
+  #  T_full = np.vstack(T_blocks)
+  #  F_full = np.vstack(F_blocks)
+  #  return T_full, F_full
 
   def project_source_int(self, f_rhs_phys):
     Xhat = self.ref.Xhat_vol_lap
@@ -1257,7 +1153,6 @@ class TetSteklovLeaf:
     fv = f_rhs_phys(X[:, 0], X[:, 1], X[:, 2])
     f_lap = V.T @ (w * fv)
     return self.detJabs * f_lap[:self.ref.m]
-
 
   def project_dirichlet_face(self, face_id, g_dirichlet_phys):
     fd = self.ref.face[face_id]
@@ -1318,8 +1213,347 @@ class TetSteklovLeaf:
     den2 = float(self.detJabs * np.sum(w * ue * ue))
     return num2, den2
 
+  # -----------------------------
+  # RHS layout: slices / offsets
+  # -----------------------------
+  def face_slice(self, face_id):
+    face_id = int(face_id)
+    if face_id < 0 or face_id >= self.nface:
+      raise ValueError("bad face_id")
+    i0 = face_id * self.kf
+    return slice(i0, i0 + self.kf)
 
+  def int_slice(self):
+    i0 = self.nface * self.kf
+    return slice(i0, i0 + self.m_int)
 
+  def rhs_zeros(self, p=None, dtype=np.float64, order="F"):
+    """
+    Return a zero RHS in stacked RHS layout.
+      p=None -> (nrows,)
+      p=int  -> (nrows, p)
+    """
+    if p is None:
+      return np.zeros(self.nrows, dtype=dtype)
+    return np.zeros((self.nrows, int(p)), dtype=dtype, order=order)
+
+  def _as_2d(self, X):
+    """
+    Normalize X to a 2D array (n, p). Return (X2d, is_vector).
+    """
+    X = np.asarray(X, dtype=np.float64)
+    is_vector = (X.ndim == 1)
+    if is_vector:
+      X = X.reshape(-1, 1)
+    if not X.flags.f_contiguous:
+      X = np.asfortranarray(X)
+    return X, is_vector
+
+  def _return_shape_like_input(self, Y2d, is_vector):
+    if is_vector:
+      return Y2d[:, 0]
+    return Y2d
+
+  # -----------------------------
+  # Access face operators
+  # -----------------------------
+  def T_face(self, face_id):
+    s = self.face_slice(face_id)
+    return self.T_full[s, :]
+
+  def F_face(self, face_id):
+    s = self.face_slice(face_id)
+    return self.F_full[s, :]
+
+  # -----------------------------
+  # Build stacked RHS b = [lam_full; -f_int]
+  # Supports vector or many RHS.
+  # -----------------------------
+  def assemble_rhs(self, lam_blocks=None, f_int=None):
+    """
+    Assemble stacked RHS b.
+
+    lam_blocks: list of length 4.
+      Each entry may be:
+        - None  -> treated as zero
+        - (kf,) -> vector face moments
+        - (kf,p)-> multi-RHS face moments
+    f_int:
+        - None   -> treated as zero
+        - (m,)   -> vector promoted RHS moments
+        - (m,p)  -> multi-RHS promoted RHS moments
+
+    Returns:
+      b with shape (nrows,) or (nrows,p) depending on inputs.
+    """
+    if lam_blocks is None:
+      lam_blocks = [None] * self.nface
+    if len(lam_blocks) != self.nface:
+      raise ValueError("lam_blocks must have length 4")
+
+    # Determine p and whether vector-mode
+    p = None
+    is_vector = True
+
+    # Check lam blocks
+    for lb in lam_blocks:
+      if lb is None:
+        continue
+      lb = np.asarray(lb, dtype=np.float64)
+      if lb.ndim == 1:
+        if lb.size != self.kf:
+          raise ValueError("bad lam block size")
+      elif lb.ndim == 2:
+        if lb.shape[0] != self.kf:
+          raise ValueError("bad lam block shape")
+        p = lb.shape[1] if p is None else p
+        if lb.shape[1] != p:
+          raise ValueError("inconsistent p across lam blocks")
+        is_vector = False
+      else:
+        raise ValueError("lam block must be 1D or 2D")
+
+    # Check f_int
+    if f_int is not None:
+      f_int = np.asarray(f_int, dtype=np.float64)
+      if f_int.ndim == 1:
+        if f_int.size != self.m_int:
+          raise ValueError("bad f_int size")
+      elif f_int.ndim == 2:
+        if f_int.shape[0] != self.m_int:
+          raise ValueError("bad f_int shape")
+        p = f_int.shape[1] if p is None else p
+        if f_int.shape[1] != p:
+          raise ValueError("inconsistent p across rhs")
+        is_vector = False
+      else:
+        raise ValueError("f_int must be 1D or 2D")
+
+    if is_vector:
+      b = self.rhs_zeros(p=None)
+      for face_id in range(self.nface):
+        lb = lam_blocks[face_id]
+        if lb is None:
+          continue
+        lb = np.asarray(lb, dtype=np.float64).reshape(-1)
+        b[self.face_slice(face_id)] = lb
+      if f_int is not None:
+        b[self.int_slice()] = -np.asarray(f_int, dtype=np.float64).reshape(-1)
+      return b
+
+    # multi-RHS case
+    if p is None:
+      # should not happen if is_vector is False, but keep safe
+      raise RuntimeError("multi-RHS detected but p is None")
+
+    b = self.rhs_zeros(p=p)
+    for face_id in range(self.nface):
+      lb = lam_blocks[face_id]
+      if lb is None:
+        continue
+      lb = np.asarray(lb, dtype=np.float64)
+      if lb.ndim == 1:
+        b[self.face_slice(face_id), :] = lb.reshape(-1, 1)
+      else:
+        b[self.face_slice(face_id), :] = lb
+    if f_int is not None:
+      f_int = np.asarray(f_int, dtype=np.float64)
+      if f_int.ndim == 1:
+        b[self.int_slice(), :] = -f_int.reshape(-1, 1)
+      else:
+        b[self.int_slice(), :] = -f_int
+    return b
+
+  # -----------------------------
+  # Simple injection matrices for interface work
+  # -----------------------------
+  def B_face(self, face_id):
+    """
+    Return dense injection matrix B such that:
+      b = B @ lam_face
+    where lam_face is (kf,) or (kf,p), and b is stacked RHS (nrows,) or (nrows,p)
+    with the chosen face block set and everything else zero.
+    """
+    face_id = int(face_id)
+    if face_id in self._Bface_cache:
+      return self._Bface_cache[face_id]
+    B = np.zeros((self.nrows, self.kf), dtype=np.float64, order="F")
+    s = self.face_slice(face_id)
+    B[s, :] = np.eye(self.kf, dtype=np.float64)
+    self._Bface_cache[face_id] = B
+    return B
+
+  # -----------------------------
+  # Evaluate trace/flux moments from coefficients
+  # -----------------------------
+  def trace_face(self, face_id, c):
+    """
+    Return lambda_face = T_face c
+    c: (M,) or (M,p)
+    """
+    c2d, is_vector = self._as_2d(c)
+    out = self.T_face(face_id) @ c2d
+    return self._return_shape_like_input(out, is_vector)
+
+  def flux_face(self, face_id, c):
+    """
+    Return mu_face = F_face c  (outward flux moments)
+    c: (M,) or (M,p)
+    """
+    c2d, is_vector = self._as_2d(c)
+    out = self.F_face(face_id) @ c2d
+    return self._return_shape_like_input(out, is_vector)
+
+  # -----------------------------
+  # Convenience solve wrappers
+  # -----------------------------
+  def solve_from_blocks(self, lam_blocks=None, f_int=None):
+    """
+    Assemble RHS from blocks then call solve.
+    """
+    b = self.assemble_rhs(lam_blocks=lam_blocks, f_int=f_int)
+    return self.solve(b)
+
+  def solve_with_face_dirichlet(self, iface, lam_iface, lam_ext_blocks=None, f_int=None):
+    """
+    Solve local problem with:
+      - interface face 'iface' Dirichlet moments set to lam_iface
+      - other faces set from lam_ext_blocks (len 4, None allowed; iface entry ignored)
+      - interior forcing from f_int
+
+    Returns volume coeffs c.
+    """
+    iface = int(iface)
+    if lam_ext_blocks is None:
+      lam_ext_blocks = [None] * self.nface
+    if len(lam_ext_blocks) != self.nface:
+      raise ValueError("lam_ext_blocks must have length 4")
+
+    lam_blocks = list(lam_ext_blocks)
+    lam_blocks[iface] = lam_iface
+    return self.solve_from_blocks(lam_blocks=lam_blocks, f_int=f_int)
+
+  # -----------------------------
+  # DtN construction on a chosen face
+  # -----------------------------
+  def build_dtn_face(self, iface, lam_ext_blocks=None, f_int=None):
+    """
+    Build discrete DtN on a single face iface:
+      mu_iface = S * lam_iface + g
+
+    lam_ext_blocks: list length 4, known Dirichlet moments on external faces.
+      iface entry is ignored / treated as zero for the g solve.
+
+    f_int: promoted interior RHS moments (m,) (or (m,p) if you want multi-RHS g)
+
+    Returns:
+      S: (kf,kf) dense
+      g: (kf,)  vector (or (kf,p) if f_int is multi-RHS)
+    """
+    iface = int(iface)
+    if lam_ext_blocks is None:
+      lam_ext_blocks = [None] * self.nface
+    if len(lam_ext_blocks) != self.nface:
+      raise ValueError("lam_ext_blocks must have length 4")
+
+    # 1) g contribution: solve with iface Dirichlet = 0
+    lam_blocks0 = list(lam_ext_blocks)
+    lam_blocks0[iface] = None
+    c0 = self.solve_from_blocks(lam_blocks=lam_blocks0, f_int=f_int)
+    g = self.flux_face(iface, c0)
+
+    # 2) S contribution: apply solver to injection matrix for iface
+    B = self.B_face(iface)              # (nrows, kf)
+    C = self.solve(B)                   # (M, kf)
+    S = self.F_face(iface) @ C          # (kf, kf)
+
+    return S, g
+
+  # -----------------------------
+  # Diagnostics (optional but recommended)
+  # -----------------------------
+  def residual_blocks(self, c, lam_blocks=None, f_int=None):
+    """
+    Return residual blocks:
+      r_face = T_full c - lam_full
+      r_int  = L_int c + f_int
+    """
+    c2d, is_vector = self._as_2d(c)
+
+    # lam_full
+    if lam_blocks is None:
+      lam_blocks = [None] * self.nface
+    lam_full = None
+    # assemble lam_full as 2D for consistency
+    lam_parts = []
+    for face_id in range(self.nface):
+      lb = lam_blocks[face_id]
+      if lb is None:
+        lb2d = np.zeros((self.kf, c2d.shape[1]), dtype=np.float64, order="F")
+      else:
+        lb2d, lb_isvec = self._as_2d(lb)
+        if lb2d.shape[0] != self.kf:
+          raise ValueError("bad lam block shape")
+        if lb2d.shape[1] != c2d.shape[1]:
+          # allow broadcasting from vector to p
+          if lb2d.shape[1] == 1:
+            lb2d = np.repeat(lb2d, c2d.shape[1], axis=1)
+          else:
+            raise ValueError("lam block p mismatch")
+      lam_parts.append(lb2d)
+    lam_full = np.vstack(lam_parts)  # (4kf, p)
+
+    r_face = (self.T_full @ c2d) - lam_full
+
+    if f_int is None:
+      f2d = np.zeros((self.m_int, c2d.shape[1]), dtype=np.float64, order="F")
+    else:
+      f2d, f_isvec = self._as_2d(f_int)
+      if f2d.shape[0] != self.m_int:
+        raise ValueError("bad f_int shape")
+      if f2d.shape[1] != c2d.shape[1]:
+        if f2d.shape[1] == 1:
+          f2d = np.repeat(f2d, c2d.shape[1], axis=1)
+        else:
+          raise ValueError("f_int p mismatch")
+
+    r_int = (self.L_int @ c2d) + f2d
+
+    return (self._return_shape_like_input(r_face, is_vector),
+            self._return_shape_like_input(r_int, is_vector))
+
+  def residual_norms(self, c, lam_blocks=None, f_int=None):
+    """
+    Return scalar norms (Frobenius if multi-RHS):
+      ||T c - lam||, ||L c + f||
+    """
+    r_face, r_int = self.residual_blocks(c, lam_blocks=lam_blocks, f_int=f_int)
+
+    r_face = np.asarray(r_face, dtype=np.float64)
+    r_int = np.asarray(r_int, dtype=np.float64)
+
+    n_face = float(np.linalg.norm(r_face))
+    n_int = float(np.linalg.norm(r_int))
+    return n_face, n_int
+
+  def interface_flux_jump_norm(self, iface, c_self, other_leaf, other_iface, c_other):
+    """
+    Compute || mu_self + mu_other ||_2 on the shared interface,
+    assuming both flux operators use each tet's outward normal.
+    """
+    mu0 = np.asarray(self.flux_face(iface, c_self), dtype=np.float64).reshape(-1)
+    mu1 = np.asarray(other_leaf.flux_face(other_iface, c_other), dtype=np.float64).reshape(-1)
+    return float(np.linalg.norm(mu0 + mu1))
+
+  def interface_trace_mismatch_norm(self, iface, c_self, other_leaf, other_iface, c_other):
+    """
+    Compute || lambda_self - lambda_other ||_2 on the shared interface
+    in the moment basis on each tet. (Assumes both use the same canonical ordering;
+    if not, you must align via sigma/permutation at merge level.)
+    """
+    lam0 = np.asarray(self.trace_face(iface, c_self), dtype=np.float64).reshape(-1)
+    lam1 = np.asarray(other_leaf.trace_face(other_iface, c_other), dtype=np.float64).reshape(-1)
+    return float(np.linalg.norm(lam0 - lam1))
 
 
 def make_sym_u_f_and_grad(u_expr, simplify=True):
@@ -1441,6 +1675,22 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   f_int = leaf.project_source_int(f_rhs_phys)
   print("||lam||", np.linalg.norm(lam_full), "||f_int||", np.linalg.norm(f_int))
 
+  iface = 0
+  lam_ext = [leaf.project_dirichlet_face(f, u_exact_phys) for f in range(4)]
+  f_int = leaf.project_source_int(f_rhs_phys)
+  
+  S, g = leaf.build_dtn_face(iface, lam_ext_blocks=lam_ext, f_int=f_int)
+  
+  # check linearity: mu(lam) = S lam + g
+  lam_test = np.random.randn(leaf.kf)
+  c = leaf.solve_with_face_dirichlet(iface, lam_test, lam_ext_blocks=lam_ext, f_int=f_int)
+  mu = leaf.flux_face(iface, c)
+  
+  print(np.linalg.norm(mu - (S @ lam_test + g)) / (np.linalg.norm(mu) + 1e-300))
+
+
+
+
   ## --- Solve with SPQR ---
   b = np.concatenate([
     lam_full,
@@ -1450,101 +1700,66 @@ def solve_single_tet_min_norm_ls(leaf, u_exact_phys, f_rhs_phys,
   c_spqr = leaf.solve(b)
   end_time = time.perf_counter()
   c = c_spqr
-  ##c_spqr, *_ = spqr_rz_solve_with_E(Asp, b, leaf.ref.E_pat)
-  #c_spqr = sparseqr.solve(Asp, b, tolerance=0)
-  
   t_spqr = end_time - start_time
-  c = c_spqr 
   # c_spqr is returned as a dense numpy array (length n)
   print("[spqr] ||A c - b||2 =", np.linalg.norm(leaf.Asp @ c_spqr - b))
   print("time SPQR =", t_spqr) 
-  #print("time LSMR =", t_lsmr)
-  #print("time MINRES =", t_minres) 
-  #print("time LSTSQ =", t_lstsq) 
-
-
-  #tau = leaf.ref.tau_ref
-  #R = leaf.ref.R
-  #Rinv = leaf.ref.Rinv
-  #B = A @ Rinv
-  ## Solve min_y ||B y - b||_2
-  #y, resid_pc, rnk_pc, s_pc = scipy.linalg.lstsq(
-  #  B, b, lapack_driver="gelsd", check_finite=False
-  #)
-  #
-  ## Map back: c_pc = R^{-1} y (triangular solve)
-  #c_pc = scipy.linalg.solve_triangular(
-  #  R,
-  #  y,
-  #  lower=False,
-  #  trans='N',
-  #  check_finite=False,
-  #  overwrite_b=False,
-  #)
-  # --- correctness checks ---
-  # 1) c_pc should be an LS minimizer of original problem: residual norms match
-  #r0 = A @ c - b
-  #r1 = A @ c_pc - b
-  #print("||A c - b||2      =", np.linalg.norm(r0))
-  #print("||A c_pc - b||2   =", np.linalg.norm(r1))
-  #
-  ## 2) if A has full column rank, solutions should match closely
-  #print("||c - c_pc||2 / ||c||2 =",
-  #      np.linalg.norm(c - c_pc) / (np.linalg.norm(c) + 1e-300))
-  #
-  ## 3) y is in preconditioned coordinates: check c_pc satisfies R c_pc = y
-  #print("||R c_pc - y|| / ||y|| =",
-  #      np.linalg.norm(R @ c_pc - y_lsmr) / (np.linalg.norm(y_lsmr) + 1e-300))
-
-  #deg_of_col = leaf.ref.alpha_src.sum(axis=1)
-  #s = compute_all_preconditioned_singular_values_dense(
-  #  A, deg_of_col,
-  #  alpha=1e-14
-  #)
-  #tau = leaf.compute_tau_geom(tau_ref=leaf.ref.tau_ref)#
-  #tau = np.linalg.norm(L, ord=2)**2 / np.linalg.norm(T, ord=2)**2
-  #tau = leaf.ref.tau_ref
-  #A = np.vstack([
-  #  np.sqrt(tau)*T,
-  #  L,
-  #])
-  #tau_phys = (np.linalg.norm(L, ord=2) / (np.linalg.norm(T, ord=2) + 1e-300))**2
-  #print("tau_ref =", tau, "tau_phys =", tau_phys, "ratio =", tau_phys/(tau + 1e-300))
- 
-
-  #s_pc, shift = compute_all_singular_values_A_Minvhalf(A, deg_of_col, band=2)
-  #print("chol_shift =", shift, "smax =", s[0], "smin =", s[-1], "precond =" , s_pc[0]/s_pc[-1])
-
-  #deg = deg_of_col
-  #assert deg.shape[0] == A.shape[1]
-  #assert np.all(deg[:-1] <= deg[1:]) 
-  #Ad = A.toarray() if sps.issparse(A) else np.asarray(A)
-  #assert np.isfinite(Ad).all()
-  #plot_spectrum(s_pc, title="svd(A @ M^{-1/2})")
-
-
-  #plt.semilogy(np.abs(s))
-  #plt.show()
-  # Diagnostics
-  #bc_res = Ur.T @ (T @ c) - Ur.T @ lam_full#T @ c - lam_full
-  #pde_res = L @ c + np.asarray(f_int, dtype=np.float64)
-
-  #rel_bc = float(np.linalg.norm(bc_res) / (np.linalg.norm(Ur.T @ lam_full) + 1e-300))
-  #rel_pde = float(np.linalg.norm(pde_res) / (np.linalg.norm(f_int) + 1e-300))
-  ## How much of lam_full is outside Range(T N)
-  #lam_rep = Ur @ (Ur.T @ lam_full)
-  #rel_unrep = float(np.linalg.norm(lam_full - lam_rep) / (np.linalg.norm(lam_full) + 1e-300))
-
-  #if do_print:
-  #  smin = float(s[-1]) if isinstance(s, np.ndarray) and s.size else 0.0
-  #  smax = float(s[0]) if isinstance(s, np.ndarray) and s.size else 0.0
-  #  cond = (smax / (smin + 1e-300)) if smax > 0 else 0.0
-  #  print(f"[minls] rank={int(rnk)}/{min(A.shape)} cond~{cond:.3e}  "
-  #        f"rel_bc={rel_bc:.3e} rel_pde={rel_pde:.3e} rel_unrep={rel_unrep:.3e}")
 
   return c, lam_full
 
 
+def spy_all_P_mom(ref,
+                  rel_prune=1e-14,
+                  abs_prune=0.0,
+                  pause=0.1):
+  """
+  Loop over all face_id, sigmaA, sigmaB and spy the sparsity
+  pattern of the moment change-of-basis matrices P_mom_ref.
+
+  Parameters
+  ----------
+  ref : RefTetPrecomp
+      Must have ref.P_mom_ref populated.
+  rel_prune : float
+      Relative pruning threshold passed to _dense_to_csc_pruned.
+  abs_prune : float
+      Absolute pruning threshold.
+  pause : float
+      Seconds to pause between plots (set to 0 for manual stepping).
+  """
+  perms = all_S3_perms()
+
+  for face_id in range(4):
+    for sigmaA in perms:
+      for sigmaB in perms:
+        mat = ref.P_mom_ref[face_id][sigmaA][sigmaB]
+        print("P==P^T? : ", np.linalg.norm(mat @ mat.T, ord=2))
+
+        # prune to sparse
+        matsp = _dense_to_csc_pruned(
+          mat,
+          rel=rel_prune,
+          abs_tol=abs_prune
+        )
+
+        plt.figure()
+        plt.spy(matsp.toarray())
+        plt.title(
+          f"P_mom_ref face={face_id}  "
+          f"sigmaA={sigmaA}  sigmaB={sigmaB}\n"
+          f"nnz={matsp.nnz}/{matsp.shape[0]**2}"
+        )
+        plt.xlabel("j (from sigmaB)")
+        plt.ylabel("i (to sigmaA)")
+        plt.tight_layout()
+        plt.close()
+        #plt.show(block=False)
+
+        #if pause > 0:
+          #plt.pause(1)
+          #plt.close()
+        #else:
+        #  input("Press Enter for next plot...")
 
 
 
@@ -1584,10 +1799,16 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   dofs = []
   errs = []
 
-  for n in range(2, n_max + 1):
+  for n in range(10, n_max + 1):
     q_vol = n + q_pad
     q_face = n + q_pad
     ref = RefTetPrecomp(n=n, q_vol=q_vol, q_face=q_face, kappa_src=kappa_src)
+    #spy_all_P_mom(
+    #  ref,
+    #  rel_prune=1e-14,
+    #  abs_prune=0.0,
+    #  pause=0.05
+    #)
     leaf = TetSteklovLeaf(ref, VA, face_sigma=sigA, rtol_int=rtol_int, rtol_trace=rtol_trace)
 
     if method == "minls":
@@ -1616,7 +1837,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
 
 
 if __name__ == "__main__":
-  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=False, method="minls")
+  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=True, method="minls")
   s = np.zeros_like(errs)
   for j in range(len(errs)):
     if j == 0:
