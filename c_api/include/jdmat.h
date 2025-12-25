@@ -35,6 +35,40 @@ int js_dmat_build_tprod_natural_pruned(int D,
                                        int axis,                 // 0..D-1
                                        double* D_out);
 
+// Build the "natural" differentiation operator in CSC format for SuiteSparse.
+// The operator maps Π_n -> Π_{n-1}, so:
+//   ncol = dim_Pi(D,n)
+//   nrow = dim_Pi(D,n-1)
+//
+// The function allocates colptr,rowind,x using malloc.
+// The caller owns these arrays and must free them using js_dmat_csc_free.
+//
+// Output:
+//   *nrow_out : number of rows (dim_Pi(D,n-1))
+//   *ncol_out : number of cols (dim_Pi(D,n))
+//   *nnz_out  : number of nonzeros
+//   *colptr_out : length ncol+1
+//   *rowind_out : length nnz
+//   *x_out      : length nnz
+//
+// Returns 0 on success, nonzero on error.
+int js_dmat_build_tprod_natural_pruned_csc(int D,
+                                           int n,
+                                           unsigned int q,
+                                           const double* kappa_src,  // length D+1
+                                           int axis,                 // 0..D-1
+                                           int* nrow_out,
+                                           int* ncol_out,
+                                           int* nnz_out,
+                                           int** colptr_out,
+                                           int** rowind_out,
+                                           double** x_out);
+
+// Free CSC arrays returned by js_dmat_build_tprod_natural_pruned_csc.
+// Safe to call with NULL pointers.
+void js_dmat_csc_free(int* colptr, int* rowind, double* x);
+
+
 
 #ifdef __cplusplus
 }

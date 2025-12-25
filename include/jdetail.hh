@@ -469,7 +469,6 @@ inline Real log_pochhammer(Real a, int n)
   return static_cast<Real>(val);
 }
 
-
 } // namespace detail
 
 } // namespace jsimplex

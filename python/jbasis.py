@@ -109,7 +109,7 @@ def jbasis_eval_all(X, kappa, n, alpha_table, tail_deg, inv_h, D):
   
   npts = X.shape[0]
   assert X.shape[1] == D
-  M = alpha_table.shape[0]
+  M = libjpolyd.jbasis_dim_Pi(D, n)#alpha_table.shape[0]
   
   # Leading dimensions: X is AoS, so ld_point = D? no:
   # We used X[p*ld_point + j*ld_dim] in C.
@@ -179,7 +179,7 @@ def jbasis_eval_all_with_grad(X, kappa, n, alpha_table, tail_deg, inv_h, D):
   
   npts = X.shape[0]
   assert X.shape[1] == D
-  M = alpha_table.shape[0]
+  M = libjpolyd.jbasis_dim_Pi(D, n)#alpha_table.shape[0]
   
   ld_point = D
   ld_dim = 1

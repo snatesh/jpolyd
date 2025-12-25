@@ -21,6 +21,7 @@ struct Basis
        dim Pi_n^D = Choose(n + D, D). */
   static inline int dim_Pi(int n)
   {
+    if (n < 0) { return 0; }
     long long numer = 1;
     long long denom = 1;
 
@@ -32,6 +33,13 @@ struct Basis
 
     long long val = numer / denom;
     return (int)val;
+  }
+  
+  /* Dimension of homogeneous space of polynomials of total degree 
+     exactly n in D variables */
+  static inline int dim_Hom(int n)
+  {
+    return dim_Pi(n) - dim_Pi(n-1);
   }
 
   /* Dimension of R_n^D, the homogeneous space of total degree
@@ -128,6 +136,14 @@ struct Basis
     if (!alpha || !kappa)
     {
       return Real(0.0);
+    }
+    for (int j = 0; j < D; ++j)
+    {
+      if (kappa[j] < -0.5)
+      {
+        throw std::runtime_error("Jacobi simplex params kappa must be > -1/2");
+        exit(1);
+      }
     }
 
     Real log_h2 = Real(0.0);
@@ -898,6 +914,7 @@ static void eval_all(const Real* X,
       inv_h[m] = inv_h_alpha(alpha, kappa);
     }
   }
+
 
   //static void eval_all(const Real* X,
   //                     int ld_point,

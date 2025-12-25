@@ -96,30 +96,6 @@ struct Weight
     }
   }
 
-  /** tolerance versions for the evaluators when point
-      is in violation of d-simplex def **/
-
-  static inline Real monomial_tolerant(const Real* x, const Real* kappa)
-  {
-    const Real eps = Real(64) * std::numeric_limits<Real>::epsilon(); // tiny, type-aware
-    Real v = Real(1);
-    for (int i = 0; i < D; ++i)
-    {
-      const Real base = x[i] < eps ? eps : x[i];
-      v *= std::pow(base, kappa[i] - Real(0.5));
-    }
-    Real xl = x_last(x);
-    xl = (xl < eps) ? eps : xl;
-    v *= std::pow(xl, kappa[D] - Real(0.5));
-    return v;
-  }
-
-  static inline Real eval_tolerant(const Real* x, const Real* kappa)
-  {
-    return w_kappa(kappa) * monomial_tolerant(x, kappa);
-  }
-
-
 };
 
 } // namespace jsimplex

@@ -136,7 +136,7 @@ struct KMat
     // K = Vtgt^T * diag(wq) * Vsrc
     // K[i,j] = sum_p Vtgt[p+i*npts] * wq[p] * Vsrc[p+j*npts]
     constexpr Real KMAT_PRUNE_TOL =
-      Real(100) * std::numeric_limits<Real>::epsilon();
+      Real(1000) * std::numeric_limits<Real>::epsilon();
     
     #pragma omp parallel for schedule(static)
     for (int i = 0; i < M; ++i)
