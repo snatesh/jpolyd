@@ -1,0 +1,880 @@
+\documentclass[11pt]{article}
+
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{bm}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{color}
+\geometry{margin=1in}
+
+\newtheorem{theorem}{Theorem}
+\newtheorem{remark}{Remark}
+
+\title{Variationally Consistent Steklov Merging for Modal Poisson Solves on Tetrahedra\\
+	\large (with HDG/Nitsche-type stabilization in moment space)}
+\author{Sachin Natesh}
+\date{}
+\setlength{\parindent}{0pt}
+
+\begin{document}
+	\maketitle
+	
+	\section{Overview and key principle}
+	
+	This note documents the discrete method implemented in two codes:
+	(i) a robust single-tetrahedron Poisson solver using a stacked overdetermined system solved by sparse QR,
+	and (ii) a two-tetrahedron merge constructed by eliminating volume coefficients and solving a face-only interface problem.
+	
+	The central insight is:
+	
+	\begin{quote}
+		\emph{The merge must be the Euler--Lagrange condition of the \underline{same discrete functional}
+			that defines the stable single-tetrahedron solve.}
+	\end{quote}
+	
+	A naive Steklov merge (imposing only ``flux continuity'' via an unstabilized DtN map) fails because it
+	does \emph{not} correspond to stationarity of the underlying stacked least-squares functional; it produces a rank-degenerate (or numerically rank-degenerate) interface operator with a large near-nullspace.
+	A variationally consistent stabilization fixes this by penalizing the mismatch between the \emph{induced} trace (produced by the local least-squares extension) and the \emph{skeleton} trace (the global interface unknown).
+	
+	\section{Geometry and bases}
+	
+	Let $\widehat{K}$, $K$ be the reference and physical tetrahedron, respectively. We have the standard affine map
+	\[
+	x = \Phi_K(\widehat{x}) = V_0 + J_K \widehat{x},
+	\qquad J_K \in \mathbb{R}^{3\times 3}.
+	\]
+	Faces are denoted $\widehat{F}$ and $F = \Phi_K(\widehat{F})$.
+	For a face $F$, let $n_F$ be the outward unit normal.
+	
+	\subsection{Volume basis}
+	Fix polynomial degree $n$.
+	Let
+	\[
+	V_n(K) = \mathbb{P}_n(K),\qquad M = \dim V_n(K),
+	\]
+	with modal basis $\{\phi_j\}_{j=1}^M$ (Jacobi-type on the tetrahedron).
+	We represent the discrete solution as
+	\[
+	u_h(x) = \sum_{j=1}^M c_j \phi_j(x),
+	\qquad c\in\mathbb{R}^M.
+	\]
+	
+	\subsection{Face test/trace basis (moment space)}
+	On a face $F$, define
+	\[
+	\Lambda_n(F) = \mathbb{P}_n(F),\qquad k_f = \dim\Lambda_n(F),
+	\]
+	with face test basis $\{\psi_i\}_{i=1}^{k_f}$ (Jacobi-type on the triangle).
+	
+	The \emph{face moment (trace) vector} associated with $u_h$ is
+	\[
+	\lambda_F(c)\in\mathbb{R}^{k_f},
+	\qquad
+	\bigl(\lambda_F(c)\bigr)_i = \int_F \psi_i\, u_h\, ds.
+	\]
+	This is linear in $c$, so there exists a matrix $T_F\in\mathbb{R}^{k_f\times M}$ such that
+	\[
+	\lambda_F(c) = T_F c,
+	\qquad
+	(T_F)_{ij} = \int_F \psi_i\,\phi_j\, ds.
+	\]
+	Stacking all four faces of a tetrahedron $K$,
+	\[
+	T_{\mathrm{full}} c = \lambda,
+	\qquad
+	T_{\mathrm{full}}\in\mathbb{R}^{(4k_f)\times M},
+	\quad
+	\lambda = (\lambda_{F_0},\ldots,\lambda_{F_3}).
+	\]
+	
+	\section{Promoted interior PDE constraints and their weights}
+	
+	Let $W_{n-2}(K)=\mathbb{P}_{n-2}(K)$ and choose an interior test basis $\{q_i\}_{i=1}^{m}$,
+	$m=\dim W_{n-2}(K)$.
+	The method uses \emph{promoted} constraints of the form
+	\begin{equation}
+		\label{eq:promoted_constraint_cont}
+		\int_K (\Delta u_h + f)\, q_i\, w_1(x)dx = 0,\qquad i=1,\ldots,m.
+	\end{equation}
+	
+	\paragraph{Discrete interior operator.}
+	Define $L_{\mathrm{int}}\in\mathbb{R}^{m\times M}$ and $f_{\mathrm{int}}\in\mathbb{R}^m$ by
+	\begin{equation}
+		\label{eq:Lint_def}
+		(L_{\mathrm{int}})_{ij} = \int_K (\Delta \phi_j)\, q_i\, w_1(x) dx,
+		\qquad
+		(f_{\mathrm{int}})_i = \int_K f\, q_i\, w_1(x)dx,
+	\end{equation}
+	where $w_1(x)$ is the weight function under which the promoted basis is orthonormal.
+	Then \eqref{eq:promoted_constraint_cont} becomes
+	\begin{equation}
+		\label{eq:Lint_system}
+		L_{\mathrm{int}} c = - f_{\mathrm{int}}.
+	\end{equation}
+	
+	\begin{remark}[Weights and quadrature]
+		In practice, the integrals in \eqref{eq:Lint_def} are computed by quadrature on $\widehat{K}$ and mapped to $K$.
+		The promoted operator is assembled in the \emph{same moment/test basis} as used to project the source $f$.
+		That is, $f_{\mathrm{int}}$ is \emph{not} arbitrary; it is the vector of moments of $f$ against $\{q_i\}$ with the physical volume measure $dx$.
+		This basis/weight consistency is crucial for polynomial exactness in the manufactured-solution tests.
+	\end{remark}
+	
+	\section{The single-tetrahedron solve as a variational problem}
+	
+	The stable single-tet method is defined by minimizing the stacked residual functional
+	\begin{equation}
+		\label{eq:J_single}
+		\mathcal{J}_K(c;\lambda,f) \;=\;
+		\frac{1}{2}\|T_{\mathrm{full}}c - \lambda\|_2^2
+		\;+\;
+		\frac{1}{2}\|L_{\mathrm{int}}c + f_{\mathrm{int}}\|_2^2.
+	\end{equation}
+	Equivalently,
+	\begin{equation}
+		\label{eq:stacked_A}
+		\mathcal{J}_K(c;\lambda,f) = \frac{1}{2}\|A c - b(\lambda,f)\|_2^2,
+		\qquad
+		A = \begin{bmatrix}T_{\mathrm{full}}\\ L_{\mathrm{int}}\end{bmatrix},
+		\quad
+		b = \begin{bmatrix}\lambda\\ -f_{\mathrm{int}}\end{bmatrix}.
+	\end{equation}
+	
+	The computed coefficients are
+	\begin{equation}
+		\label{eq:c_star}
+		c^*(\lambda,f) = \arg\min_{c\in\mathbb{R}^M}\mathcal{J}_K(c;\lambda,f).
+	\end{equation}
+	
+	\subsection{QR construction of the solution map}
+	The code computes $c^*$ using sparse QR (SuiteSparseQR) of the (sparse) stacked matrix $A$.
+	Let
+	\[
+	A E = Q R,
+	\]
+	where $E$ is a column permutation, $Q$ has orthonormal columns, and $R$ is upper triangular on the numerical rank.
+	Then the minimum-norm least-squares solution is obtained by
+	\begin{equation}
+		\label{eq:qr_solution}
+		c^* = E \begin{bmatrix} R_{11}^{-1}(Q^\top b)_{1:r} \\ 0 \end{bmatrix},
+	\end{equation}
+	with numerical rank $r$ (matching the code's SPQR bookkeeping).
+	
+	\paragraph{Linearity.}
+	Because $c^*$ is computed by a fixed linear pseudoinverse $A^+$,
+	\[
+	c^*(\lambda,f) = A^+ \begin{bmatrix}\lambda\\ -f_{\mathrm{int}}\end{bmatrix},
+	\]
+	hence $c^*$ is affine in the imposed boundary moments $\lambda$ and in the interior forcing moments $f_{\mathrm{int}}$.
+	
+	\section{Flux moments and trace moments on a chosen face}
+	
+	Fix a face $\Gamma \subset \partial K$.
+	Define
+	\[
+	T_\Gamma \in \mathbb{R}^{k_f\times M}
+	\quad \text{(trace moment map on $\Gamma$)},
+	\qquad
+	F_\Gamma \in \mathbb{R}^{k_f\times M}
+	\quad \text{(flux moment map on $\Gamma$)}.
+	\]
+	
+	The \emph{induced trace} (from volume coefficients) is
+	\[
+	\lambda_\Gamma^{\mathrm{ind}}(c) = T_\Gamma c,
+	\]
+	and the \emph{flux moments} are
+	\[
+	\mu_\Gamma(c) = F_\Gamma c,
+	\qquad
+	(F_\Gamma)_{ij} = \int_{\Gamma} \psi_i\,(\nabla \phi_j\cdot n_\Gamma)\,ds.
+	\]
+	(Importantly, $F_\Gamma$ must be built using the physical gradient transform $J_K^{-T}$ and the physical unit normal; this is why the final corrected implementation builds $F_\Gamma$ in each leaf, not by scaling a reference precompute.)
+	
+	\section{Local affine response operators (precise construction)}
+	
+	Consider one tetrahedron $K$ and one face $\Gamma$.
+	We split the boundary moments into:
+	\[
+	\lambda = (\lambda_{\Gamma}, \lambda_{\mathrm{ext}}),
+	\]
+	where $\lambda_{\mathrm{ext}}$ collects the remaining three face blocks.
+	
+	Fix $(\lambda_{\mathrm{ext}}, f_{\mathrm{int}})$ and view the solution as a function of $\lambda_\Gamma$ only.
+	
+	\subsection{Block injection and solve-many}
+	Let $B_\Gamma\in\mathbb{R}^{(4k_f+m)\times k_f}$ be the injection matrix that writes a $k_f$-vector into the $\Gamma$ rows of the stacked right-hand side (and zeros elsewhere). In code this is \verb|B_face(iface)|.
+	
+	Define the particular solve (interface set to zero):
+	\begin{equation}
+		\label{eq:c0_def}
+		c_0 = c^*(\lambda_\Gamma=0,\lambda_{\mathrm{ext}}, f_{\mathrm{int}}).
+	\end{equation}
+	
+	Define the homogeneous response matrix
+	\begin{equation}
+		\label{eq:C_def}
+		C_\Gamma = c^*(\lambda_\Gamma = I,\ \lambda_{\mathrm{ext}}=0,\ f_{\mathrm{int}}=0)
+		= A^+ B_\Gamma
+		\;\in\;\mathbb{R}^{M\times k_f},
+	\end{equation}
+	computed by applying the same QR solve to the multi-right-hand-side matrix $B_\Gamma$.
+	
+	Then the general solution is
+	\begin{equation}
+		\label{eq:c_affine}
+		c^*(\lambda_\Gamma,\lambda_{\mathrm{ext}},f_{\mathrm{int}})
+		=
+		C_\Gamma \lambda_\Gamma + c_0.
+	\end{equation}
+	
+	\subsection{Derived face operators}
+	From \eqref{eq:c_affine},
+	\begin{align}
+		\mu_\Gamma(\lambda_\Gamma) &= F_\Gamma c^* = (F_\Gamma C_\Gamma)\lambda_\Gamma + F_\Gamma c_0
+		=: S_F \lambda_\Gamma + g_F, \label{eq:mu_affine}\\
+		\lambda_\Gamma^{\mathrm{ind}}(\lambda_\Gamma) &= T_\Gamma c^* = (T_\Gamma C_\Gamma)\lambda_\Gamma + T_\Gamma c_0
+		=: S_T \lambda_\Gamma + g_T. \label{eq:tr_affine}
+	\end{align}
+	These are the \emph{local affine response operators}:
+	\[
+	S_F\in\mathbb{R}^{k_f\times k_f},\quad g_F\in\mathbb{R}^{k_f},\qquad
+	S_T\in\mathbb{R}^{k_f\times k_f},\quad g_T\in\mathbb{R}^{k_f}.
+	\]
+	
+	\begin{remark}[Interpretation of $S_T$]
+		In a classical Dirichlet solve one would have $\lambda_\Gamma^{\mathrm{ind}}(\lambda_\Gamma)=\lambda_\Gamma$,
+		i.e.\ $S_T=I$ and $g_T=0$.
+		In the present method, $c^*$ is a least-squares extension balancing interior and trace residuals, so in general
+		$S_T\neq I$.
+		This mismatch is precisely what must be accounted for in a variationally consistent merge.
+	\end{remark}
+	
+	\section{Two-tetrahedron setting and skeleton vs induced trace}
+	
+	Let $A$ and $B$ be two tetrahedra sharing an interface face $\Gamma$.
+	Let $\lambda\in\mathbb{R}^{k_f}$ denote the \emph{skeleton trace moments} on $\Gamma$, i.e.\ the global interface unknown.
+	
+	For each element, solving the local problem with skeleton input $\lambda$ produces a volume coefficient vector $c_A(\lambda)$ and $c_B(\lambda)$, hence an \emph{induced trace} on $\Gamma$:
+	\[
+	\lambda_A^{\mathrm{ind}}(\lambda) = T_\Gamma^A c_A(\lambda),
+	\qquad
+	\lambda_B^{\mathrm{ind}}(\lambda) = T_\Gamma^B c_B(\lambda).
+	\]
+	In a perfectly conforming method these would equal $\lambda$ identically; in the stacked LS method they do not unless $\lambda$ lies in a compatible subspace.
+	
+	\section{Why the naive Steklov merge is ill-conditioned / rank-degenerate}
+	
+	The naive merge enforces physical flux continuity using the (unstabilized) DtN maps:
+	\begin{equation}
+		\label{eq:naive_flux_cont}
+		\mu_A(\lambda) + \mu_B(\lambda) = 0
+		\quad \Longleftrightarrow \quad
+		(S_F^A + S_F^B)\lambda = -(g_F^A+g_F^B).
+	\end{equation}
+	
+	\subsection{Mechanism: near-nullspace from smoothing}
+	The local least-squares extension $c^*(\lambda)$ is a discrete harmonic extension operator in high-order face modes:
+	high-degree face moments can be extended into the volume with very small interior energy, producing very small normal flux.
+	Thus $S_F$ has many small singular values and may be numerically rank-deficient:
+	\[
+	S_F \approx 0 \quad \text{on a large subspace of face modes}.
+	\]
+	Consequently,
+	\[
+	K_{\mathrm{naive}} := S_F^A + S_F^B
+	\]
+	inherits a large near-nullspace and becomes severely ill-conditioned (or numerically rank-deficient).
+	This is exactly what the observed spectra show: a smooth decay followed by a cluster at machine precision.
+	
+	\subsection{Mismatch with the discrete variational structure}
+	More fundamentally, \eqref{eq:naive_flux_cont} is \emph{not} the stationarity condition of any reduced functional obtained by eliminating $c_A,c_B$ from the true discrete objective \eqref{eq:J_single}. As a result, it does not select the interface trace consistent with the local least-squares extension, leading to loss of accuracy (observed plateau).
+	
+	\section{Variationally consistent stabilization (HDG/Nitsche in moment space)}
+	
+	\subsection{Augmented numerical flux as a penalty on induced--skeleton mismatch}
+	We define the augmented (numerical) flux moments on $\Gamma$ for each element:
+	\begin{equation}
+		\label{eq:mu_hat_def}
+		\widehat{\mu}(\lambda)
+		=
+		\mu(\lambda)
+		+
+		\tau\, M_\Gamma\bigl(\lambda^{\mathrm{ind}}(\lambda) - \lambda\bigr),
+	\end{equation}
+	where $M_\Gamma$ is the face mass matrix in the same moment basis:
+	\[
+	(M_\Gamma)_{ij} = \int_\Gamma \psi_i\psi_j\,ds.
+	\]
+	Here $\tau>0$ penalizes the mismatch between the induced trace and the skeleton trace in the $L^2(\Gamma)$ moment metric.
+	
+	Using \eqref{eq:mu_affine}--\eqref{eq:tr_affine},
+	\begin{align}
+		\widehat{\mu}(\lambda)
+		&=
+		\bigl(S_F + \tau M_\Gamma(S_T-I)\bigr)\lambda
+		+
+		\bigl(g_F + \tau M_\Gamma g_T\bigr).
+		\label{eq:mu_hat_affine}
+	\end{align}
+	
+	\subsection{Stabilized merge equation}
+	Flux continuity is imposed on the augmented flux:
+	\begin{equation}
+		\label{eq:merge_hat_flux}
+		\widehat{\mu}_A(\lambda) + \widehat{\mu}_B(\lambda) = 0.
+	\end{equation}
+	This yields the stabilized interface system
+	\begin{equation}
+		\label{eq:K_stab}
+		K_{\mathrm{stab}}\lambda = -h_{\mathrm{stab}},
+	\end{equation}
+	with
+	\begin{align}
+		K_{\mathrm{stab}}
+		&=
+		\bigl(S_F^A + \tau M(S_T^A-I)\bigr)
+		+
+		\bigl(S_F^B + \tau M(S_T^B-I)\bigr), \\
+		h_{\mathrm{stab}}
+		&=
+		\bigl(g_F^A + \tau M g_T^A\bigr)
+		+
+		\bigl(g_F^B + \tau M g_T^B\bigr).
+	\end{align}
+	(When element face bases differ, moment vectors are mapped by an orthonormal face change-of-basis $P$; the above is written in a common coordinate convention.)
+	
+	\section{Discrete functional for two tetrahedra and Euler--Lagrange derivation}
+	
+	\subsection{Global discrete objective (skeleton-coupled)}
+	Define the global functional
+	\begin{align}
+		\label{eq:J_global}
+		\mathcal{J}(c_A,c_B,\lambda)
+		&=
+		\frac{1}{2}\|T_A c_A - \lambda_A^{\mathrm{data}}\|^2
+		+
+		\frac{1}{2}\|L_A c_A + f_A\|^2
+		+
+		\frac{1}{2}\|T_B c_B - \lambda_B^{\mathrm{data}}\|^2
+		+
+		\frac{1}{2}\|L_B c_B + f_B\|^2\\ \nonumber
+		&+
+		\frac{\tau}{2}\|\Pi_\Gamma T_\Gamma^A c_A - \lambda\|_{M}^2
+		+
+		\frac{\tau}{2}\|\Pi_\Gamma T_\Gamma^B c_B - \lambda\|_{M}^2.
+	\end{align}
+	
+	Here:
+	\begin{itemize}
+		\item $T_A,T_B$ are the full face-trace operators for each tet (all faces).
+		\item $\lambda_A^{\mathrm{data}},\lambda_B^{\mathrm{data}}$ encode the prescribed exterior Dirichlet moments (with zeros on the interface block).
+		\item $\Pi_\Gamma$ extracts the interface face block from the stacked face vector (equivalently, we can use $T_\Gamma$ directly).
+		\item $\|v\|_M^2 := v^\top M v$ is the face-mass norm on $\Gamma$.
+	\end{itemize}
+	
+	\paragraph{Meaning.}
+	The new terms enforce that the induced trace on the interface is close to the skeleton trace $\lambda$.
+	They are the \emph{only} modification required to make hybridization variationally consistent with the local least-squares solves.
+	
+	\subsection{Elimination of volume variables and reduced functional}
+	For a fixed $\lambda$, define
+	\[
+	(c_A(\lambda),c_B(\lambda)) = \arg\min_{c_A,c_B} \mathcal{J}(c_A,c_B,\lambda).
+	\]
+	The reduced functional is
+	\[
+	\mathcal{J}_{\mathrm{red}}(\lambda) = \mathcal{J}(c_A(\lambda),c_B(\lambda),\lambda).
+	\]
+	
+	\subsection{Euler--Lagrange equation for $\lambda$}
+	The Euler--Lagrange equation for $\lambda$ is the stationarity condition
+	\[
+	\nabla_\lambda \mathcal{J}_{\mathrm{red}}(\lambda)=0.
+	\]
+	Since $\lambda$ appears only in the two penalty terms in \eqref{eq:J_global}, and those terms are quadratic,
+	we can compute the derivative directly (envelope theorem: derivatives through $c_A(\lambda),c_B(\lambda)$ vanish at the minimizer for variations in $\lambda$).
+	
+	Let
+	\[
+	r_A(\lambda) = \Pi_\Gamma T_\Gamma^A c_A(\lambda) - \lambda,
+	\qquad
+	r_B(\lambda) = \Pi_\Gamma T_\Gamma^B c_B(\lambda) - \lambda.
+	\]
+	Then
+	\[
+	\mathcal{J}_{\mathrm{red}}(\lambda)
+	=
+	\text{(terms independent of $\lambda$)} + \frac{\tau}{2} r_A(\lambda)^\top M r_A(\lambda)
+	+ \frac{\tau}{2} r_B(\lambda)^\top M r_B(\lambda).
+	\]
+	Differentiating with respect to $\lambda$ gives
+	\[
+	\nabla_\lambda \mathcal{J}_{\mathrm{red}}(\lambda)
+	=
+	-\tau M r_A(\lambda) - \tau M r_B(\lambda).
+	\]
+	Setting this to zero yields
+	\begin{equation}
+		\label{eq:EL_trace_balance}
+		M\bigl(\Pi_\Gamma T_\Gamma^A c_A(\lambda) - \lambda\bigr)
+		+
+		M\bigl(\Pi_\Gamma T_\Gamma^B c_B(\lambda) - \lambda\bigr)
+		= 0.
+	\end{equation}
+	
+	\paragraph{From trace balance to augmented flux balance.}
+	The stabilized method implemented in code uses \emph{augmented flux continuity} \eqref{eq:merge_hat_flux}.
+	To see equivalence, note that each local minimizer $c_K(\lambda)$ satisfies the optimality condition for $c$:
+	\[
+	(T_{\mathrm{full}}^K)^\top(T_{\mathrm{full}}^K c_K - \lambda_K^{\mathrm{data}})
+	+
+	(L_{\mathrm{int}}^K)^\top(L_{\mathrm{int}}^K c_K + f_K)
+	+
+	\tau (T_\Gamma^K)^\top M (T_\Gamma^K c_K - \lambda)
+	= 0.
+	\]
+	This is the discrete analogue of a Nitsche/HDG formulation, and the term
+	\[
+	\tau (T_\Gamma^K)^\top M (T_\Gamma^K c_K - \lambda)
+	\]
+	is precisely the penalty contribution that, when interpreted on the face, produces the additional term
+	$\tau M(\lambda^{\mathrm{ind}}-\lambda)$ in the numerical flux \eqref{eq:mu_hat_def}. In other words, the interface condition
+	\eqref{eq:EL_trace_balance} is equivalent to continuity of the augmented flux, because the discrete weak form on each element
+	couples normal flux and trace mismatch in the same moment metric.
+	
+	Operationally, after elimination, the resulting reduced linear system for $\lambda$ is exactly \eqref{eq:K_stab} because
+	\[
+	\mu(\lambda)=S_F\lambda+g_F,\qquad \lambda^{\mathrm{ind}}(\lambda)=S_T\lambda+g_T,
+	\]
+	and substituting into \eqref{eq:mu_hat_def} yields \eqref{eq:mu_hat_affine}, hence \eqref{eq:K_stab}.
+	
+	\begin{theorem}[Variational-discrete consistency]
+		The stabilized interface equation \eqref{eq:K_stab} is the stationarity condition of the reduced functional
+		$\mathcal{J}_{\mathrm{red}}(\lambda)$ induced by the global discrete functional \eqref{eq:J_global}.
+		Equivalently, the merge respects the same discrete variational structure as the local least-squares solves.
+	\end{theorem}
+	
+	\section{Effect of stabilization: coercivity and conditioning}
+	
+	\subsection{Coercivity intuition}
+	The penalty term adds control of trace mismatch:
+	\[
+	\frac{\tau}{2}\| \lambda^{\mathrm{ind}}(\lambda) - \lambda\|_M^2.
+	\]
+	This removes directions in trace space for which the unstabilized DtN map has nearly zero flux response.
+	Those directions were responsible for the near-null singular spectrum of the naive $K$.
+	
+	\subsection{Spectral effect (why $K$ becomes well-conditioned)}
+	Write the stabilized operator (one element) as
+	\[
+	K_K(\tau) = S_F^K + \tau M(S_T^K-I).
+	\]
+	In the ideal conforming case, $S_T^K=I$ and the penalty vanishes, recovering the classical DtN merge.
+	In the stacked LS method, $S_T^K-I$ is nontrivial and supplies exactly the missing coercivity on the problematic trace modes.
+	
+	Empirically (and consistent with the observed SVD plots),
+	the naive operator has many small singular values because $S_F^K$ is compact/smoothing on high modes.
+	The penalty term contributes an $O(\tau)$ component in the $M$-metric on those modes, lifting the spectrum and eliminating numerical rank deficiency.
+	
+	\section{Choice of $\tau$}
+	A robust scaling is
+	\[
+	\tau = C \frac{(n+1)^2}{h_\Gamma},
+	\]
+	where $h_\Gamma$ is a characteristic face diameter (e.g.\ maximum edge length) and $C$ is a moderate constant.
+	
+	\section{Conclusion}
+	The method is a hybrid Steklov/HDG scheme in moment space:
+	local solves are defined by a stacked least-squares functional, and the interface unknown is obtained by enforcing continuity of an augmented numerical flux that penalizes induced--skeleton trace mismatch.
+	The decisive principle is variational-discrete consistency:
+	the merge must be the Euler--Lagrange equation of the same discrete functional that defines the stable single-tet solve.
+	
+	\subsection*{Block sparsity assumptions on Jacobi simplex operators}
+	
+	Let
+	\[
+	\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D
+	\]
+	denote the decomposition of total-degree polynomials into homogeneous subspaces
+	\(\mathcal{H}_j^D\) of degree exactly \(j\).
+	We fix, for each \(j\), a Jacobi simplex basis
+	\(\{\phi^{(\kappa)}_{\alpha} : |\alpha|=j\}\) of \(\mathcal{H}_j^D\),
+	ordered by a graded rule.
+	We assume the existence of a canonical bijection between multi-indices
+	\(\alpha\) with \(|\alpha|=j\) and local indices in \(\mathcal{H}_j^D\).
+	
+	All operators below are represented in this basis.
+	
+	\paragraph{(i) Degree-lowering operators (DMat).}
+	
+	Let
+	\[
+	\mathcal{D} : \Pi_n^D \to \Pi_{n-1}^D
+	\]
+	be a linear operator such that
+	\[
+	\mathcal{D}\,\mathcal{H}_j^D \subset \mathcal{H}_{j-1}^D,
+	\qquad j \ge 1 .
+	\]
+	
+	Then the matrix of \(\mathcal{D}\) has block structure
+	\[
+	\mathcal{D}
+	=
+	\begin{pmatrix}
+		0      & 0      & 0      & \cdots & 0 \\
+		D_1    & 0      & 0      & \cdots & 0 \\
+		0      & D_2    & 0      & \cdots & 0 \\
+		\vdots & \ddots & \ddots & \ddots & \vdots \\
+		0      & \cdots & 0      & D_n    & 0
+	\end{pmatrix},
+	\]
+	where \(D_j : \mathcal{H}_j^D \to \mathcal{H}_{j-1}^D\).
+	
+	\emph{Sparsity assumption.}
+	There exists a finite set
+	\[
+	\Delta_{\mathcal{D}} \subset \mathbb{Z}^D,
+	\qquad \sum_{d=1}^D \Delta_d = -1,
+	\]
+	independent of \(j\), such that
+	\[
+	\mathcal{D}\phi^{(\kappa)}_{\alpha}
+	\in
+	\operatorname{span}
+	\bigl\{
+	\phi^{(\kappa')}_{\alpha+\Delta} : \Delta \in \Delta_{\mathcal{D}}
+	\bigr\}.
+	\]
+	
+\paragraph{(ii) Degree-filtering operators (KMat).}
+
+Let
+\[
+\mathcal{K} : \Pi_n^D \to \Pi_n^D
+\]
+be a linear operator arising from a \emph{natural promotion} of Jacobi parameters,
+\[
+\kappa_{\mathrm{tgt}} = \kappa_{\mathrm{src}} + e_r,
+\qquad r \in \{0,\dots,D\},
+\]
+corresponding to multiplication of the orthogonality weight by a single barycentric factor.
+Although $\mathcal{K}$ preserves the total polynomial degree globally, it is \emph{not}
+degree-preserving at the level of homogeneous subspaces.
+
+More precisely, $\mathcal{K}$ satisfies the block filtering property
+\[
+\mathcal{K}\,\mathcal{H}_j^D
+\subset
+\mathcal{H}_j^D \;\oplus\; \mathcal{H}_{j-1}^D,
+\qquad j \ge 0,
+\]
+with the convention $\mathcal{H}_{-1}^D = \{0\}$.
+Equivalently, the matrix of $\mathcal{K}$ in the graded basis
+\[
+\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D
+\]
+has a two-band block structure:
+\[
+\mathcal{K}
+=
+\begin{pmatrix}
+	A_0 & B_0 & 0   & 0   & \cdots \\
+	0   & A_1 & B_1 & 0   & \cdots \\
+	0   & 0   & A_2 & B_2 & \cdots \\
+	\vdots & & \ddots & \ddots & \ddots
+\end{pmatrix},
+\]
+where
+\[
+A_j : \mathcal{H}_j^D \to \mathcal{H}_j^D,
+\qquad
+B_j : \mathcal{H}_{j+1}^D \to \mathcal{H}_j^D .
+\]
+That is, writing $u$ as a graded decomposition $$u = \sum_{j=0}^n u_j,\quad u_j \in \mathcal{H}_j^{\kappa{\text{src}}},$$ we define the operator $$\mathcal{K} : \Pi_n^{\kappa_{\text{src}}} \to \Pi_n^{\kappa_{\text{tgt}}},$$ so that $$\mathcal{K}u = \sum_{i=0}^n (\mathcal{K} u)_i,\quad (\mathcal{K}u)_i \in \mathcal{H}_i^{\text{tgt}}.$$ So, target block $i$ recieves contributions from source blocks $i$ and $i+1$. Now, if $u$ only has one homogeneous component, $u\equiv u_j \in \mathcal{H}_j^{\text{src}}$, then the only terms remaining from the formula
+\begin{align*}
+(\mathcal{K} u)_i = A_iu_i + B_iu_{i+1}
+\end{align*}
+are $i=j$ via $A_j u_j$ and $i=j-1$ via $B_{j-1}u_j$. Then, we see that $$\mathcal{K} u_j = (\mathcal{K}u)_j + (\mathcal{K}u)_{j-1} \Rightarrow \mathcal{K} \mathcal{H}_j \subset \mathcal{H}_j \oplus \mathcal{H}_{j-1}.$$
+
+\medskip
+\emph{Sparsity assumption.}
+There exist finite sets of multi-index offsets
+\[
+\Delta^{(0)}_{\mathcal{K}},\;
+\Delta^{(-1)}_{\mathcal{K}}
+\subset \mathbb{Z}^D,
+\]
+independent of $j$, such that for every basis function
+$\phi^{(\kappa_{\mathrm{src}})}_{\alpha}$ with $|\alpha| = j$,
+\[
+\mathcal{K}\phi^{(\kappa_{\mathrm{src}})}_{\alpha}
+\in
+\operatorname{span}
+\Bigl(
+\{\phi^{(\kappa_{\mathrm{tgt}})}_{\alpha+\Delta} : \Delta \in \Delta^{(0)}_{\mathcal{K}}\}
+\;\cup\;
+\{\phi^{(\kappa_{\mathrm{tgt}})}_{\alpha+\Delta} : \Delta \in \Delta^{(-1)}_{\mathcal{K}},\ |\alpha+\Delta|=j-1\}
+\Bigr).
+\]
+The sets $\Delta^{(0)}_{\mathcal{K}}$ and $\Delta^{(-1)}_{\mathcal{K}}$ encode,
+respectively, the intra-degree couplings ($A_j$ blocks) and the one-degree-down couplings
+($B_j$ blocks).
+
+\medskip
+\emph{Stencil discovery.}
+To determine these coupling patterns, we assemble a dense reference operator
+$\mathcal{K}^{(n_{\mathrm{test}})}$ at a small test degree $n_{\mathrm{test}}$
+and restrict it to the representative row block
+\[
+\mathcal{K}^{(n_{\mathrm{test}})}_{\mathrm{rep}}
+=
+\mathcal{K}^{(n_{\mathrm{test}})}
+\big|_{\mathcal{H}^D_{j_{\mathrm{rep}}}
+	\times
+	\left(\mathcal{H}^D_{j_{\mathrm{rep}}} \oplus \mathcal{H}^D_{j_{\mathrm{rep}}+1}\right)},
+\qquad j_{\mathrm{rep}} = n_{\mathrm{test}} - 1 .
+\]
+For each nonzero entry in this restricted block, we record the multi-index difference
+\[
+\Delta = \alpha_{\mathrm{row}} - \alpha_{\mathrm{col}},
+\]
+partitioning the resulting offsets according to whether they correspond to
+$\mathcal{H}_j \leftarrow \mathcal{H}_j$ or
+$\mathcal{H}_j \leftarrow \mathcal{H}_{j+1}$ couplings.
+Once these offset sets stabilize as $n_{\mathrm{test}}$ increases, they are reused
+to assemble $\mathcal{K}$ at arbitrary polynomial degree $n$ without further dense computation.
+
+	
+	\paragraph{(iii) Three-term recurrence operators (JMat).}
+	
+	Let
+	\[
+	\mathcal{J} : \Pi_n^D \to \Pi_{n+1}^D
+	\]
+	be a linear operator satisfying
+	\[
+	\mathcal{J}\,\mathcal{H}_j^D
+	\subset
+	\mathcal{H}_{j-1}^D \oplus \mathcal{H}_j^D \oplus \mathcal{H}_{j+1}^D .
+	\]
+	
+	Then the matrix of \(\mathcal{J}\) has block tridiagonal structure:
+	\[
+	\mathcal{J}
+	=
+	\begin{pmatrix}
+		B_0 & C_0 & 0   & \cdots & 0 \\
+		A_1 & B_1 & C_1 & \ddots & \vdots \\
+		0   & A_2 & B_2 & \ddots & 0 \\
+		\vdots & \ddots & \ddots & \ddots & C_{n-1} \\
+		0 & \cdots & 0 & A_n & B_n
+	\end{pmatrix},
+	\]
+	with
+	\[
+	A_j : \mathcal{H}_j^D \to \mathcal{H}_{j-1}^D,\quad
+	B_j : \mathcal{H}_j^D \to \mathcal{H}_j^D,\quad
+	C_j : \mathcal{H}_j^D \to \mathcal{H}_{j+1}^D .
+	\]
+	
+	\emph{Sparsity assumption.}
+	There exists a finite set
+	\[
+	\Delta_{\mathcal{J}} \subset \mathbb{Z}^D,
+	\qquad \sum_{d=1}^D \Delta_d \in \{-1,0,+1\},
+	\]
+	independent of \(j\), such that
+	\[
+	\mathcal{J}\phi^{(\kappa)}_{\alpha}
+	\in
+	\operatorname{span}
+	\bigl\{
+	\phi^{(\kappa')}_{\alpha+\Delta} : \Delta \in \Delta_{\mathcal{J}}
+	\bigr\}.
+	\]
+	\subsection*{Delta-based representation of operator couplings}
+	
+	Let $\mathcal{O}$ be a linear operator acting on the graded polynomial space
+	\[
+	\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D,
+	\]
+	where $\mathcal{H}_j^D$ denotes the subspace of homogeneous polynomials of total
+	degree $j$ in $D$ variables.
+	Fix a Jacobi simplex basis
+	$\{\phi^{(\kappa)}_{\alpha} : |\alpha| = j\}$ for each $\mathcal{H}_j^D$,
+	indexed by multi-indices $\alpha \in \mathbb{N}^D$ with $|\alpha|=j$.
+	
+	\paragraph{Coupling types.}
+	We assume that the action of $\mathcal{O}$ on a basis function
+	$\phi^{(\kappa)}_{\alpha}$ can be written in the form
+	\[
+	\mathcal{O}\phi^{(\kappa)}_{\alpha}
+	=
+	\sum_{\Delta \in \Delta_{\mathcal{O}}}
+	c_{\Delta}(\alpha)\,
+	\phi^{(\kappa')}_{\alpha+\Delta},
+	\]
+	where:
+	\begin{itemize}
+		\item $\Delta_{\mathcal{O}} \subset \mathbb{Z}^D$ is a finite set of
+		\emph{multi-index shifts} (``deltas''),
+		\item the coefficients $c_{\Delta}(\alpha)$ may depend on $\alpha$ and the
+		Jacobi parameters, but
+		\item the set $\Delta_{\mathcal{O}}$ itself is independent of the polynomial
+		degree $j$.
+	\end{itemize}
+	
+	Each $\Delta \in \Delta_{\mathcal{O}}$ represents a distinct \emph{coupling type}
+	between a source basis function indexed by $\alpha$ and a target basis function
+	indexed by $\alpha+\Delta$.
+	
+	\paragraph{Admissibility.}
+	For a fixed source multi-index $\alpha$, a shift $\Delta$ is said to be
+	\emph{admissible} if the target multi-index
+	\[
+	\beta = \alpha + \Delta
+	\]
+	satisfies:
+	\begin{enumerate}
+		\item componentwise nonnegativity, $\beta_i \ge 0$ for all $i$, and
+		\item the appropriate degree constraint
+		\[
+		|\beta| = |\alpha| + s,
+		\]
+		where $s$ is the degree shift associated with $\mathcal{O}$.
+	\end{enumerate}
+	Only admissible shifts contribute to the action of the operator at a given
+	$\alpha$.
+	
+	\paragraph{Stability of the delta set.}
+	For small degrees $j$, some coupling types may be absent due to boundary effects
+	in the index set $\{ \alpha : |\alpha| = j \}$.
+	However, there exists a degree $j_\ast$ such that for all $j \ge j_\ast$ the set
+	of observed admissible shifts coincides with a fixed finite set
+	$\Delta_{\mathcal{O}}$.
+	We refer to this property as \emph{stability} of the delta set.
+	
+	\paragraph{Assembly at arbitrary degree.}
+	Once a stable delta set $\Delta_{\mathcal{O}}$ has been identified, the matrix
+	representation of $\mathcal{O}$ on $\Pi_n^D$ for arbitrary $n$ may be constructed
+	as follows:
+	\begin{enumerate}
+		\item loop over all basis functions (columns) indexed by $\alpha$,
+		\item for each $\alpha$, loop over all $\Delta \in \Delta_{\mathcal{O}}$,
+		\item form the candidate target index $\beta = \alpha + \Delta$,
+		\item if $\beta$ is admissible, insert the corresponding matrix entry
+		coupling $\phi^{(\kappa)}_{\alpha}$ to $\phi^{(\kappa')}_{\beta}$.
+	\end{enumerate}
+	The mapping between multi-indices and linear matrix indices is provided by the
+	fixed ordering of the Jacobi basis within each homogeneous subspace and depends
+	on the total degree, but the set of admissible shifts $\Delta_{\mathcal{O}}$
+	is independent of $n$.
+	
+	\paragraph{Interpretation.}
+	In this formulation, the delta set $\Delta_{\mathcal{O}}$ encodes all possible
+	local coupling types induced by the operator in multi-index space.
+	The degree dependence of the matrix sparsity pattern arises solely from the
+	admissibility conditions and the enumeration of basis functions, not from changes in the underlying operator structure. The apparent spreading of nonzeros with increasing degree is a consequence of the growing number of basis functions between two fixed multi-index shifts in the graded ordering; the underlying multi-index coupling encoded by each delta remains unchanged.
+
+\subsection*{Data-driven discovery of the finite delta sets $\Delta_\ast$}
+
+For each operator family $\mathcal{O}$ (e.g.\ $\mathcal{D}$, $\mathcal{K}$, $\mathcal{J}$)
+we assume the existence of a finite multi-index shift set
+\[
+\Delta_{\mathcal{O}} \subset \mathbb{Z}^D
+\]
+such that, for every homogeneous degree $j$ and every basis index $\alpha$ with $|\alpha|=j$,
+the action of $\mathcal{O}$ on $\phi^{(\kappa)}_\alpha$ is supported only on shifts
+$\alpha+\Delta$ with $\Delta \in \Delta_{\mathcal{O}}$ (cf.\ the sparsity assumptions above).
+We describe a practical strategy to discover $\Delta_{\mathcal{O}}$.
+
+\paragraph{Step 0: choose a representative homogeneous block.}
+Fix a test degree $n_{\mathrm{test}}$ and select a representative block degree
+\[
+j_{\mathrm{rep}} = j_{\mathrm{rep}}(n_{\mathrm{test}})
+\]
+for extracting the stencil. In our implementation we take
+\[
+j_{\mathrm{rep}} = n_{\mathrm{test}}-1,
+\]
+i.e. the second highest-degree homogeneous block in $\Pi^D_{n_{\mathrm{test}}}$,
+which is the largest block and empirically exhibits the full interior coupling.
+
+\paragraph{Step 1: assemble a pruned dense test operator.}
+Assemble a dense matrix representation
+\[
+O^{(n_{\mathrm{test}})} \in \mathbb{R}^{M\times M},
+\qquad M=\dim \Pi_{n_{\mathrm{test}}}^D,
+\]
+for the operator $\mathcal{O}$ (with the desired parameters $\kappa$, shifts, and axis),
+and apply numerical pruning to remove entries below a relative tolerance
+(e.g.\ row-relative threshold proportional to machine epsilon). This produces
+a matrix whose remaining nonzeros reflect the algebraic sparsity pattern.
+
+\paragraph{Step 2: extract the set of observed deltas from the representative block.}
+Restrict $O^{(n_{\mathrm{test}})}$ to the representative homogeneous block
+\[
+O^{(n_{\mathrm{test}})}_{\mathrm{rep}}
+=
+O^{(n_{\mathrm{test}})}\big|_{\mathcal{H}^D_{j_{\mathrm{rep}}}\times \mathcal{H}^D_{j_{\mathrm{rep}}+s}},
+\]
+where the degree shift $s$ is determined by the operator:
+\[
+s=
+\begin{cases}
+	-1, & \mathcal{O}=\mathcal{D} \\
+	\in\{-1,0\},  & \mathcal{O}=\mathcal{K} \\
+	\in\{-1,0,+1\}, & \mathcal{O}=\mathcal{J}\ \text{(handled per block band)}
+\end{cases}
+\]
+and where $\mathcal{H}^D_{j_{\mathrm{rep}}+s}$ denotes the appropriate source block.
+For each nonzero entry
+\[
+\bigl(O^{(n_{\mathrm{test}})}_{\mathrm{rep}}\bigr)_{i,j} \neq 0,
+\]
+let $\alpha_i$ and $\alpha_j$ be the (unique) multi-indices associated with the
+row and column basis functions in the chosen ordering (existence assumed).
+Define the observed delta
+\[
+\Delta = \alpha_i - \alpha_j \in \mathbb{Z}^D.
+\]
+Collect all such deltas and retain the unique set:
+\[
+\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}
+=
+\Bigl\{
+\alpha_i - \alpha_j \,:\,
+\bigl(O^{(n_{\mathrm{test}})}_{\mathrm{rep}}\bigr)_{i,j} \neq 0
+\Bigr\}.
+\]
+
+\paragraph{Step 3: stabilization over increasing $n_{\mathrm{test}}$.}
+Starting from a minimal degree $n_{\min}$ (e.g.\ $n_{\min}=5$), repeat Steps 1--2
+for $n_{\mathrm{test}} = n_{\min}, n_{\min}+1, \dots, n_{\max}$, producing a sequence
+of candidate delta sets $\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}$.
+We declare the stencil to have stabilized when
+\[
+\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}
+=
+\Delta^{(n_{\mathrm{test}}-1)}_{\mathcal{O}}
+\]
+(as sets, e.g.\ after sorting a canonical encoding), and set
+\[
+\Delta_{\mathcal{O}} := \Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}.
+\]
+
+\paragraph{Usage at arbitrary degree.}
+Once $\Delta_{\mathcal{O}}$ is known, the operator at any target degree $n$
+can be assembled by looping over source basis functions (multi-indices $\alpha$)
+and applying the admissible shifts:
+\[
+\alpha \mapsto \alpha+\Delta, \qquad \Delta \in \Delta_{\mathcal{O}},
+\]
+discarding invalid targets (e.g.\ negative components or incorrect total degree),
+and placing the corresponding nonzero entry in the sparse matrix representation.
+The conversion between multi-indices and local indices within $\mathcal{H}_j^D$
+is performed by fixed, degree-consistent maps induced by the chosen ordering.
+	
+\end{document}

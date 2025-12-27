@@ -16,10 +16,11 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
-from jdmat import dmat_build_tprod
+from jdmat import dmat_build_tprod_natural_pruned, dmat_build_tprod_natural_pruned_csc
 from jquad_tprod import jquad_mapped_build_kappa
-
+from libjpolyd_loader import libjpolyd 
 # NOTE: we use the gradient-capable evaluator
 from jbasis import (
   jbasis_build_structures,
@@ -27,11 +28,53 @@ from jbasis import (
   jbasis_eval_all_with_grad,
 )
 
+def add_degree_block_boxes(D, n, ax=None, linewidth=1.0):
+  """
+  Overlay boxes for each total-degree block Hom(j) on a Pi_n-ordered matrix plot.
 
-def spy_mat(A, tol, title):
-  S = np.abs(A) > tol
+  Assumes global ordering is graded by total degree, so:
+    block_start(j) = dim_Pi(D, j-1)
+    block_end(j)   = dim_Pi(D, j)
+    block_size(j)  = dim_Pi(D, j) - dim_Pi(D, j-1)
+
+  Uses: libjpolyd.jbasis_dim_Pi(D, n)
+  """
+  if ax is None:
+    ax = plt.gca()
+
+  dim_Pi = libjpolyd.jbasis_dim_Pi
+
+  # Draw diagonal block boxes and boundary lines
+  for j in range(n + 1):
+    b0 = 0 if j == 0 else int(dim_Pi(int(D), int(j - 1)))
+    b1 = int(dim_Pi(int(D), int(j)))
+    size = b1 - b0
+
+    # diagonal block box (b0:b1, b0:b1)
+    rect = patches.Rectangle(
+      (b0 - 0.5, b0 - 0.5),
+      size,
+      size,
+      fill=False,
+      linewidth=linewidth,
+      edgecolor="k",
+    )
+    ax.add_patch(rect)
+
+  # Degree boundaries (vertical/horizontal lines)
+  for j in range(n):
+    b = int(dim_Pi(int(D), int(j)))
+    ax.axvline(b - 0.5, linewidth=linewidth * 0.6, color="k")
+    ax.axhline(b - 0.5, linewidth=linewidth * 0.6, color="k")
+
+def spy_mat(A, tol, title, D):
+  #S = np.abs(A) > tol
+  S = A; n = A.shape[1]
   plt.figure(figsize=(6, 6))
   plt.spy(S, markersize=1)
+  ax = plt.gca()
+  add_degree_block_boxes(D, n, ax=ax, linewidth=1.0)
+  
   plt.title(title)
   plt.xlabel("source index j")
   plt.ylabel("range index i")
@@ -88,15 +131,15 @@ def run_one(D, n, q, seed=0, tol_spy=1e-14):
     kappa_rng = kappa_src + dk
 
     # Build Dmat with hard-coded natural shift
-    Dmat = dmat_build_tprod(D, n, q, kappa_src, kappa_rng, axis)
-
+    Dmat = dmat_build_tprod_natural_pruned_csc(D, n, q, kappa_src, axis)
+    print(Dmat.shape)
     # Quadrature for range weight (must match how dmat is built)
     X, w = jquad_mapped_build_kappa(D, q, kappa_rng)
     w = normalize_w(w)
 
     # Range basis values at X
     alpha_rng, tail_rng, invh_rng = jbasis_build_structures(D, n, kappa_rng)
-    Vrng = jbasis_eval_all(X, kappa_rng, n, alpha_rng, tail_rng, invh_rng, D)
+    Vrng = jbasis_eval_all(X, kappa_rng, n-1, alpha_rng, tail_rng, invh_rng, D)
 
     # Source basis values + analytic gradients at X
     Vsrc, dVsrc = jbasis_eval_all_with_grad(X, kappa_src, n, alpha_src, tail_src, invh_src, D)
@@ -111,8 +154,6 @@ def run_one(D, n, q, seed=0, tol_spy=1e-14):
 
     # Coeffs from operator
     c_from = Dmat @ c_src
-
-
     # Errors: coeff space + L2(w_rng)
     err_c = rel_coeff_err(c_from, c_proj)
     err_l2 = rel_l2_err_from_coeffs(Vrng, w, c_from, c_proj)
@@ -121,26 +162,28 @@ def run_one(D, n, q, seed=0, tol_spy=1e-14):
     print(f"  d/d{axname}: dk={dk.tolist()}  rel_coeff={err_c:.3e}  rel_L2={err_l2:.3e}")
     
     # ---- Pruned operator test ----
-    tol_prune = 1e-10
-    Dmat_p = prune_matrix(Dmat, tol_prune)
+    # (since we use tprod_natural_pruned, op should
+    #  already be pruned )
+    #tol_prune = 1e-10
+    #Dmat_p = prune_matrix(Dmat, tol_prune)
 
-    c_from_p = Dmat_p @ c_src
+    #c_from_p = Dmat_p @ c_src
 
-    err_c_pruned = rel_coeff_err(c_from_p, c_proj)
-    err_l2_pruned = rel_l2_err_from_coeffs(Vrng, w, c_from_p, c_proj)
+    #err_c_pruned = rel_coeff_err(c_from_p, c_proj)
+    #err_l2_pruned = rel_l2_err_from_coeffs(Vrng, w, c_from_p, c_proj)
 
-    print(
-      f"    pruned(tol={tol_prune:g}): "
-      f"rel_coeff={err_c_pruned:.3e}  rel_L2={err_l2_pruned:.3e}"
-    )
-
+    #print(
+    #  f"    pruned(tol={tol_prune:g}): "
+    #  f"rel_coeff={err_c_pruned:.3e}  rel_L2={err_l2_pruned:.3e}"
+    #)
+    print(Dmat)
     spy_mat(
-      Dmat,
-      tol_spy,
+      Dmat.toarray(),
+      0,
       f"D={D} d/d{axname}  dk={dk.tolist()}  |D|>{tol_spy:g}\n"
-      f"n={n}, q={q}, rel_coeff={err_c:.2e}, rel_L2={err_l2:.2e}"
+      f"n={n}, q={q}, rel_coeff={err_c:.2e}, rel_L2={err_l2:.2e}",
+      D
     )
-
 
 def main():
   # Keep these modest; increase once everything is stable.
@@ -149,7 +192,7 @@ def main():
     1: (18, 24),
     2: (10, 16),
     3: (10,  12),
-    4: (5,  11),
+    4: (6,  11),
   }
 
   for D in (1, 2, 3, 4):

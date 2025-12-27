@@ -18,7 +18,6 @@ namespace jsimplex
    in sparse differrentiation operators */
 struct DMatStencil
 {
-  int Ddim;        // = D (redundant but nice for debugging)
   int axis;        // derivative axis
   int ndelta;      // number of unique delta keys
   uint64_t* keys;  // length ndelta, sorted unique packed deltas
@@ -26,7 +25,6 @@ struct DMatStencil
   void clear()
   {
     if (keys) { std::free(keys); keys = nullptr; }
-    Ddim = 0;
     axis = -1;
     ndelta = 0;
   }
@@ -487,13 +485,6 @@ struct DMat
     if (A.ndelta == 0) return true;
     return std::memcmp(A.keys, B.keys, (std::size_t)A.ndelta * sizeof(uint64_t)) == 0;
   }
-  
-  static inline bool stencil_equal(const DMatStencil& A, const DMatStencil& B)
-  {
-    if (A.axis != B.axis) return false;
-    if (A.Ddim != B.Ddim) return false;
-    return deltas_equal(A, B);
-  }
 
   static int cmp_u64(const void* a, const void* b)
   {
@@ -570,7 +561,6 @@ struct DMat
     }
   
     S->clear();
-    S->Ddim = D;
     S->axis = axis;
     S->ndelta = nu;
     if (nu == 0)
@@ -643,7 +633,6 @@ struct DMat
         S_out->clear();
         *S_out = S_cur;                // shallow move
         std::memset(&S_cur, 0, sizeof(S_cur));
-        std::cout << "n_test = " << n_test << std::endl;
         return;
       }
   
@@ -1221,28 +1210,13 @@ struct DMat
           {
             s += vi[p] * wq[p] * dVj[p];
           }
-  
-          // (Optional) prune here? Usually you prune after building the full operator.
-          // For now, store raw; you can apply row-relative prune later if desired.
+
           const int pos = wpos[jg]++;
           rowind[pos] = ig;
           x[pos] = s;
         }
       }
     }
-  
-    // sanity: wpos[j] should end at colptr[j+1]
-    #ifdef JPOLY_DEBUG
-    for (int j = 0; j < ncol; ++j)
-    {
-      if (wpos[j] != colptr[j + 1])
-      {
-        std::cerr << "CSC fill mismatch at col " << j << "\n";
-        std::exit(1);
-      }
-    }
-    #endif
-  
   
     std::free(wpos);
     std::free(colnnz);
