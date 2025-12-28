@@ -68,11 +68,13 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
 
   # Build K using internal κ-aware mapped quadrature
   K = kmat_build_tprod_pruned_csc(D, n, q, kappa_src, kappa_tgt)
+  #K = kmat_build_tprod(D, n, q, kappa_src, kappa_tgt)
   
   # --- Sparsity plot ---
   S = K#np.abs(K) > tol_spy
   plt.figure(figsize=(6, 6))
-  plt.spy(S.toarray(), markersize=1)
+  #plt.spy(S.toarray(), markersize=1)
+  plt.spy(S, markersize=1)
   ax = plt.gca()
   add_degree_block_boxes(D, n, ax=ax, linewidth=1.0)
 
@@ -120,7 +122,7 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
 
 if __name__ == "__main__":
   # D=2 test
-  n = 5
+  n = 3
   q = n + 1
   test_kmat(D=1, n=n, a=0.5, tol_spy=1e-14, seed=1, q=q)
   test_kmat(D=2, n=n, a=0.5, tol_spy=1e-14, seed=1, q=q)

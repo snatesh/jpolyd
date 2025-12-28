@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <lapacke.h>
 #include <cblas.h>
-
+#include <iostream> 
 namespace jsimplex
 {
 
@@ -468,6 +468,90 @@ inline Real log_pochhammer(Real a, int n)
 
   return static_cast<Real>(val);
 }
+
+/* convert dense to CSC */
+template<class Real>
+static inline std::size_t compress_dense_to_csc(int M,
+                                                const Real* A,     // row-major MxM
+                                                int** colptr_out,
+                                                int** rowind_out,
+                                                Real** x_out)
+{
+  int* colnnz = (int*) std::malloc((std::size_t)M * sizeof(int));
+  if (!colnnz)
+  {
+    std::cerr << "compress_dense_to_csc: alloc colnnz failed\n";
+    std::exit(1);
+  }
+  for (int j = 0; j < M; ++j) colnnz[j] = 0;
+
+  // count nnz per column
+  for (int j = 0; j < M; ++j)
+  {
+    int cnt = 0;
+    for (int i = 0; i < M; ++i)
+    {
+      const Real v = A[(std::size_t)i * (std::size_t)M + (std::size_t)j];
+      if (v != Real(0)) ++cnt;
+    }
+    colnnz[j] = cnt;
+  }
+
+  int* colptr = (int*) std::malloc((std::size_t)(M + 1) * sizeof(int));
+  if (!colptr)
+  {
+    std::cerr << "compress_dense_to_csc: alloc colptr failed\n";
+    std::exit(1);
+  }
+
+  colptr[0] = 0;
+  for (int j = 0; j < M; ++j)
+  {
+    colptr[j + 1] = colptr[j] + colnnz[j];
+  }
+
+  const int nnz = colptr[M];
+
+  int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
+  Real* x     = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
+  if ((!rowind && nnz) || (!x && nnz))
+  {
+    std::cerr << "compress_dense_to_csc: alloc nnz arrays failed\n";
+    std::exit(1);
+  }
+
+  int* wpos = (int*) std::malloc((std::size_t)M * sizeof(int));
+  if (!wpos)
+  {
+    std::cerr << "compress_dense_to_csc: alloc wpos failed\n";
+    std::exit(1);
+  }
+  for (int j = 0; j < M; ++j) wpos[j] = colptr[j];
+
+  // fill (unsorted rows per column, but deterministic)
+  for (int j = 0; j < M; ++j)
+  {
+    for (int i = 0; i < M; ++i)
+    {
+      const Real v = A[(std::size_t)i * (std::size_t)M + (std::size_t)j];
+      if (v == Real(0)) continue;
+
+      const int pos = wpos[j]++;
+      rowind[pos] = i;
+      x[pos] = v;
+    }
+  }
+
+  std::free(colnnz);
+  std::free(wpos);
+
+  *colptr_out = colptr;
+  *rowind_out = rowind;
+  *x_out      = x;
+
+  return (std::size_t)nnz;
+}
+
 
 } // namespace detail
 

@@ -3,7 +3,7 @@ from jmat import *
 from jbasis import *
 from jquad_tprod import *
 
-
+use_csc = True
 def comb(n, k):
     # simple integer n choose k
     if k < 0 or k > n:
@@ -48,8 +48,10 @@ def test_jacobi_operator(D=3, n=5, kappa=None, nquad_test=None):
     Rn = dim_R(D, n)  # size of last block
 
     # Build Jacobi matrices J_i (D, M, M)
-    J_all = jmat_build(D, n, kappa)
-
+    if not use_csc:
+      J_all = jmat_build(D, n, kappa)
+    else:
+      J_all = jmat_build_csc(D, n, kappa)
     # Build test quadrature for the kappa-weighted measure
     X_test, W_test = jquad_mapped_build_kappa(D, nquad_test, kappa)
     npts = X_test.shape[0]
@@ -98,15 +100,18 @@ def test_jacobi_operator(D=3, n=5, kappa=None, nquad_test=None):
 
 
 if __name__ == "__main__":
-    # a few quick runs
+    print("=== nontrivial kappa, D=1, n=5 ===")
+    test_jacobi_operator(D=1, n=5, kappa=np.array([0.8, 1.7]))
+    print("=== nontrivial kappa, D=2, n=5 ===")
+    test_jacobi_operator(D=2, n=5, kappa=np.array([0.8, 1.7, 2.3]))
     print("=== unit-ish weight, D=3, n=5 ===")
     test_jacobi_operator(D=3, n=5, kappa=np.array([0.5, 0.5, 0.5, 0.5]))
 
-    print("\n=== nontrivial kappa, D=3, n=5 ===")
-    test_jacobi_operator(D=3, n=5,
+    print("\n=== nontrivial kappa, D=3")#, n=5 ===")
+    test_jacobi_operator(D=3, n=8,
                          kappa=np.array([1.7, 3.3, 2.8, 0.9]))
     print("\n=== higher D annd n, D=4, n=8 ===")
-    test_jacobi_operator(D=4, n=8,
+    test_jacobi_operator(D=4, n=14,
                          kappa=np.array([1.7, 3.3, 2.8, 0.9, 2.2]))
 
 

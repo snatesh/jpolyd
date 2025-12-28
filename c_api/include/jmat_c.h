@@ -23,6 +23,44 @@ int jmat_dim_Pi(int D, int n);
    Returns 0 on failure (bad D, n < 0, null pointers, etc.). */
 int jmat_build(const double* kappa, int D, int n, double* J_all);
 
+/* Build ONE Jacobi coordinate multiplication matrix J_coord in CSC format.
+
+   This builds the pruned (sparse) matrix for multiplication by x_coord in the
+   same kappa space:
+     (J_coord)_{row,col} = < phi_row, x_coord * phi_col >_{w_kappa}
+
+   Inputs:
+     kappa      length D+1
+     D          dimension
+     n          max total degree
+     nquad      1D points per axis for mapped quadrature (you’ve used n+1)
+     coord      which coordinate (0..D-1)
+
+   Outputs (allocated with malloc; caller must free):
+     colptr_out length N+1
+     rowind_out length nnz
+     x_out      length nnz
+     N_out      N = dim_Pi(D,n)
+     nnz_out    number of nonzeros
+
+   Returns:
+     0 on success, nonzero on error.
+*/
+int jmat_build_coord_pruned_csc(const double* kappa,
+                                int D,
+                                int n,
+                                unsigned int nquad,
+                                int coord,
+                                int** colptr_out,
+                                int** rowind_out,
+                                double** x_out,
+                                int* N_out,
+                                int* nnz_out);
+
+
+/* Free memory allocated by CSC builders (colptr/rowind/x). */
+void jmat_free(void* p);
+
 #ifdef __cplusplus
 } // extern "C"
 #endif

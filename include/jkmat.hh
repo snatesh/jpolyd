@@ -491,7 +491,7 @@ struct KMat
       Real* Kdense = (Real*) std::malloc((std::size_t)M * (std::size_t)M * sizeof(Real));
       if (!Kdense) { std::cerr << "alloc failed\n"; std::exit(1); }
       build_tprod_natural_pruned_dense(n, q, kappa_src, kappa_tgt, Kdense);
-      const std::size_t nnz = compress_dense_to_csc(M, Kdense, colptr_out, rowind_out, x_out);
+      const std::size_t nnz = detail::compress_dense_to_csc(M, Kdense, colptr_out, rowind_out, x_out);
       free(Kdense);
       return nnz;
     } 
@@ -831,7 +831,7 @@ struct KMat
 
 
   /* convert dense to CSC */
-  static inline std::size_t compress_dense_to_csc(int M,
+  /*static inline std::size_t compress_dense_to_csc(int M,
                                                   const Real* A,     // row-major MxM
                                                   int** colptr_out,
                                                   int** rowind_out,
@@ -910,7 +910,7 @@ struct KMat
     *x_out      = x;
   
     return (std::size_t)nnz;
-  }
+  }*/
 
 
   /* Given total degree j and local index k in Hom(j)
@@ -1212,7 +1212,7 @@ struct KMat
       // Build alpha_table for this n_test
       Basis<D,Real>::build_alpha_table(n_test, alpha_table);
   
-      // Extract delta set from block (j_rep -> j_rep-1)
+      // Extract delta set from block 
       extract_deltas_from_block(n_test, Kdense, alpha_table, &S_cur);
   
       std::free(Kdense);
