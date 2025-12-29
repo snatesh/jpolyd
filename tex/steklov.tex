@@ -876,5 +876,673 @@ discarding invalid targets (e.g.\ negative components or incorrect total degree)
 and placing the corresponding nonzero entry in the sparse matrix representation.
 The conversion between multi-indices and local indices within $\mathcal{H}_j^D$
 is performed by fixed, degree-consistent maps induced by the chosen ordering.
+	% ============================================================
+	% Multiplication-by-function operator on the simplex via Jacobi
+	% matrices and operator-valued (aliased) evaluation.
+	% Sparse application (matvec) using only CSC matvecs with J_i.
+	% ============================================================
+	
+	\subsection{Aliased multiplication operators on $\Pi_n^D$ via Jacobi matrices}
+	
+	Fix a simplex dimension $D\ge 1$, Jacobi parameters $\kappa\in\mathbb{R}^{D+1}$ with
+	$\kappa_i>-1/2$, and maximum total degree $n\ge 0$. Let
+	\[
+	\Pi_n^D := \{ \text{polynomials in }D\text{ variables of total degree }\le n\},
+	\qquad
+	M := \dim \Pi_n^D.
+	\]
+	Let $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$ be the orthonormal Jacobi simplex basis on
+	$\Pi_n^D$, ordered in graded lexicographic order (by total degree, then within each homogeneous
+	block). Define the basis column vector
+	\[
+	\Phi^{(\kappa)}(x) :=
+	\begin{bmatrix}
+		\phi_{\alpha_1}^{(\kappa)}(x)\\
+		\vdots\\
+		\phi_{\alpha_M}^{(\kappa)}(x)
+	\end{bmatrix}\in\mathbb{R}^M,
+	\qquad x\in \Delta^D.
+	\]
+	Then any $f\in \Pi_n^D$ has coefficient vector $c_f\in\mathbb{R}^M$ such that
+	\[
+	f(x)=\big(\Phi^{(\kappa)}(x)\big)^{\!T}c_f.
+	\]
+	
+	\subsubsection{Jacobi matrices as projected coordinate multipliers}
+	For each coordinate $x_i$ ($i=1,\dots,D$) define the multiplication-by-coordinate operator
+	on $\Pi_n^D$ (with projection back to $\Pi_n^D$) by
+	\[
+	\mathcal{J}_i^{(n)} := \Pi_n \circ (x_i\cdot) \circ \Pi_n,
+	\qquad
+	\mathcal{J}_i^{(n)}:\Pi_n^D\to \Pi_n^D,
+	\]
+	where $\Pi_n$ denotes $L^2(w_\kappa)$-orthogonal projection onto $\Pi_n^D$.
+	The corresponding matrix $J_i\in\mathbb{R}^{M\times M}$ in the basis $\Phi^{(\kappa)}$ is
+	defined by
+	\[
+	(J_i)_{\ell k} := \left\langle \phi_{\alpha_\ell}^{(\kappa)},\, x_i\,\phi_{\alpha_k}^{(\kappa)}\right\rangle_{w_\kappa},
+	\qquad
+	\langle u,v\rangle_{w_\kappa}:=\int_{\Delta^D} u(x)v(x)w_\kappa(x)\,dx.
+	\]
+	Equivalently, for any coefficient vector $c\in\mathbb{R}^M$,
+	\[
+	x_i\,\big(\Phi^{(\kappa)}(x)\big)^{\!T}c
+	\;\;\overset{\Pi_n}{\longmapsto}\;\;
+	\big(\Phi^{(\kappa)}(x)\big)^{\!T}(J_i c).
+	\]
+	Since $x_i$ is real-valued and the basis is orthonormal, each $J_i$ is symmetric.
+	
+	\subsubsection{Aliased multiplication-by-$q$ as a polynomial in $(J_1,\dots,J_D)$}
+	Let $q$ be a (possibly high-degree) polynomial (or a function approximated by a polynomial)
+	with Jacobi simplex expansion
+	\[
+	q(x)\approx \sum_{|\beta|\le p} q_\beta\,\phi_\beta^{(\kappa)}(x),
+	\qquad p\ge 0,
+	\]
+	and denote by $c_q\in\mathbb{R}^{\dim\Pi_p^D}$ the coefficient vector $(q_\beta)$.
+	We define the \emph{aliased multiplication operator on $\Pi_n^D$} associated with $q$ by
+	\[
+	\mathcal{M}_q^{(n)} := \Pi_n\circ(q\cdot)\circ \Pi_n:\Pi_n^D\to \Pi_n^D.
+	\]
+	In coefficient form, $\mathcal{M}_q^{(n)}$ is represented by a matrix
+	$M_q\in\mathbb{R}^{M\times M}$ such that for all $f\in\Pi_n^D$,
+	\[
+	c_{qf} = M_q\,c_f,
+	\qquad
+	qf \text{ understood as aliased back into }\Pi_n^D.
+	\]
+	
+	A fundamental representation is obtained by \emph{functional calculus} on the Jacobi matrices:
+	\[
+	\boxed{
+		M_q \;=\; q(J_1,\dots,J_D),
+	}
+	\]
+	meaning: write $q$ in any polynomial coordinate representation and substitute $x_i\mapsto J_i$.
+	Because $J_i$ act on $\Pi_n^D$ and map $\mathbb{R}^M\to\mathbb{R}^M$, the matrix $q(J_1,\dots,J_D)$
+	is defined for any polynomial degree, and the resulting operator is automatically aliased to $\Pi_n^D$.
+	
+	\paragraph{Remark (degree of $q$).}
+	No restriction $\deg(q)\le n$ is required to \emph{define} $q(J_1,\dots,J_D)$.
+	Increasing the approximation degree $p$ improves the accuracy of the polynomial surrogate for $q$,
+	but does not alter the definition that the output lives in $\Pi_n^D$.
+	
+	\subsubsection{Why monomial substitution is unstable and why we need operator Clenshaw}
+	If we expand $q$ in monomials,
+	\[
+	q(x)=\sum_{|\gamma|\le p} a_\gamma\,x^\gamma,
+	\qquad x^\gamma:=\prod_{i=1}^D x_i^{\gamma_i},
+	\]
+	then
+	\[
+	q(J_1,\dots,J_D)=\sum_{|\gamma|\le p} a_\gamma\,\prod_{i=1}^D J_i^{\gamma_i},
+	\]
+	which inherits the ill-conditioning of the monomial basis. This motivates evaluating
+	$q(J_1,\dots,J_D)$ using a stable recurrence in an orthogonal basis, i.e.\ an operator-valued
+	Clenshaw-type algorithm.
+	
+	\subsection{Sparse \emph{application} $v\mapsto q(J)v$ using only sparse matvecs}
+	
+	In our implementation we do not form $M_q$ explicitly during assembly-heavy workflows.
+	Instead we implement a routine that applies $M_q$ to a vector using only:
+	\begin{itemize}
+		\item sparse matrix--vector products with the CSC Jacobi matrices $J_i$, and
+		\item scalar (or small block) recurrences in total degree.
+	\end{itemize}
+	This provides the aliased product $c_{qf}=q(J)c_f$ at cost comparable to applying a small number of
+	sparse operators.
+	
+	\subsubsection{Total-degree block structure}
+	Let $\mathcal{H}_j^D$ denote the homogeneous subspace of degree exactly $j$, with dimension
+	$m_j:=\dim\mathcal{H}_j^D$. Under graded ordering,
+	\[
+	\mathbb{R}^M \cong \bigoplus_{j=0}^n \mathbb{R}^{m_j},
+	\qquad
+	c=\begin{bmatrix} c_0\\ \vdots\\ c_n\end{bmatrix},\quad c_j\in\mathbb{R}^{m_j}.
+	\]
+	Each $J_i$ is block tridiagonal in this decomposition:
+	\[
+	(J_i)_{j\ell}=0 \quad \text{unless}\quad \ell\in\{j-1,j,j+1\}.
+	\]
+	Thus one sparse matvec with $J_i$ has cost $\Theta(\mathrm{nnz}(J_i))=\Theta(M)$, since $\mathrm{nnz}(J_i)$
+	scales linearly with $M$ for our stencil-built CSC structure.
+	
+	\subsubsection{Operator-valued Clenshaw (apply-only form)}
+	Let $q$ be represented by Jacobi simplex coefficients grouped by total degree,
+	\[
+	q(x)\approx \sum_{k=0}^{p} \big(\Phi_k^{(\kappa)}(x)\big)^{\!T} q_k,
+	\qquad q_k\in\mathbb{R}^{m_k}.
+	\]
+	We seek a stable procedure to compute $y=q(J_1,\dots,J_D)v$ for a given $v\in\mathbb{R}^M$.
+	
+	\paragraph{Algorithm (apply-only operator Clenshaw).}
+	The algorithm maintains two auxiliary vectors $b_{k+1},b_{k+2}\in\mathbb{R}^M$
+	and performs a backward recurrence in $k$:
+	\begin{align*}
+		b_{p+2} &:= 0,\\
+		b_{p+1} &:= 0,\\
+		\text{for }k=p,p-1,\dots,0:\qquad
+		b_k &:= \mathrm{embed}(q_k)
+		\;+\;
+		\mathcal{A}_k\big(J_1,\dots,J_D\big)\,b_{k+1}
+		\;-\;
+		\mathcal{C}_k\,b_{k+2},
+	\end{align*}
+	and returns
+	\[
+	y := b_0.
+	\]
+	Here:
+	\begin{itemize}
+		\item $\mathrm{embed}(q_k)\in\mathbb{R}^M$ inserts the degree-$k$ coefficient block $q_k$
+		into the graded coefficient vector (zeros elsewhere);
+		\item $\mathcal{A}_k(J_1,\dots,J_D)$ denotes a fixed linear combination of the coordinate operators
+		(and possibly degree-dependent shifts) determined by the orthogonal recurrence satisfied by
+		the Jacobi simplex basis; and
+		\item $\mathcal{C}_k$ is a degree-dependent scalar (or block-diagonal-by-degree) coefficient
+		analogous to the univariate $c_{k+1}$ term in Clenshaw.
+	\end{itemize}
+	Crucially, $\mathcal{A}_k(J_1,\dots,J_D)\,b_{k+1}$ is computed using only sparse matvecs:
+	\[
+	\mathcal{A}_k(J_1,\dots,J_D)\,b_{k+1}
+	\;=\;
+	\sum_{i=1}^D \gamma_{i,k}\,(J_i b_{k+1}) \;+\; \delta_k\,b_{k+1},
+	\]
+	for scalar weights $\gamma_{i,k},\delta_k$ provided by the chosen Jacobi simplex recurrence.
+	Thus each recurrence step requires $D$ sparse matvecs and a small number of axpy operations.
+	
+	\paragraph{Complexity.}
+	Let $M=\dim\Pi_n^D=\Theta(n^D)$. Each sparse matvec $J_i w$ costs $\Theta(\mathrm{nnz}(J_i))=\Theta(M)$.
+	If the recurrence uses $D$ matvecs per stage and $p$ stages (degree-$p$ truncation for $q$), then
+	\[
+	\mathrm{cost}\bigl(v\mapsto q(J)v\bigr)
+	\;=\;
+	\Theta\!\bigl(p\,D\,M\bigr)
+	\quad \text{(plus lower-order vector operations)}.
+	\]
+	This matches the intended scaling of sparse operator-valued evaluation schemes: the dominant work is a
+	small number of sparse matvecs per recurrence stage, with no sparse factorization and no fill-in.
+	
+	\paragraph{Implementation note.}
+	In the present development phase, we store each $J_i$ as a CSC matrix and implement $J_i v$ via a
+	standard CSC SpMV routine. The recurrence coefficients $(\gamma_{i,k},\delta_k,\mathcal{C}_k)$ are
+	determined by the simplex Jacobi recurrence used to define the basis. In later sections, we will
+	specialize this construction to the specific $D$-simplex Jacobi basis used in our code and provide the
+	explicit coefficient formulas needed to implement the recurrence exactly.
+	
+	% ============================================================
+	% Multiplication-by-q operator: implementation-level view
+	% ============================================================
+	
+	\subsection{Multiplication-by-$q$ on $\Pi_n^D$: implementation-level construction}
+	
+	We work throughout in coefficient space on the Jacobi simplex basis
+	$\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$, ordered by total degree.
+	Let
+	\[
+	M := \dim \Pi_n^D, \qquad
+	c \in \mathbb{R}^M
+	\]
+	denote the coefficient vector of a function
+	\[
+	f(x) = \sum_{|\alpha|\le n} c_\alpha\,\phi_\alpha^{(\kappa)}(x).
+	\]
+	
+	\subsubsection{Coordinate multiplication operators}
+	
+	For each coordinate $x_i$ ($i=1,\dots,D$) we have already constructed the
+	\emph{Jacobi coordinate matrix}
+	\[
+	J_i \in \mathbb{R}^{M\times M}, \qquad
+	(J_i)_{\ell k} = \langle \phi_\ell^{(\kappa)}, x_i\,\phi_k^{(\kappa)} \rangle_{w_\kappa},
+	\]
+	stored in compressed sparse column (CSC) format.
+	
+	These matrices implement \emph{aliased coordinate multiplication}:
+	\[
+	\Pi_n(x_i f) \quad \longleftrightarrow \quad J_i\,c.
+	\]
+	
+	Key structural facts (exploited in code):
+	\begin{itemize}
+		\item $J_i$ is sparse with $\mathrm{nnz}(J_i)=\mathcal{O}(M)$.
+		\item In total-degree block form,
+		\[
+		\mathbb{R}^M = \bigoplus_{j=0}^n \mathcal{H}_j^D,
+		\]
+		each $J_i$ couples only blocks $j-1$, $j$, and $j+1$.
+		\item Sparse matrix--vector products $v \mapsto J_i v$ are implemented
+		directly using CSC SpMV.
+	\end{itemize}
+	
+	\subsubsection{Formal tensor contraction for multiplication by $q$}
+	
+	Let $q$ be a scalar function with Jacobi simplex expansion
+	\[
+	q(x) = \sum_{|\beta|\le p} q_\beta\,\phi_\beta^{(\kappa)}(x).
+	\]
+	
+	The \emph{exact} (aliased) multiplication operator
+	$\mathcal{M}_q^{(n)} = \Pi_n(q\cdot)\Pi_n$ has matrix representation
+	\[
+	(M_q)_{\ell k}
+	= \sum_{|\beta|\le p} q_\beta
+	\int_{\Delta^D}
+	\phi_\ell^{(\kappa)}(x)\,
+	\phi_\beta^{(\kappa)}(x)\,
+	\phi_k^{(\kappa)}(x)\,
+	w_\kappa(x)\,dx.
+	\]
+	
+	Equivalently, if we define the third-order tensor
+	\[
+	T_{\ell k \beta}
+	=
+	\int_{\Delta^D}
+	\phi_\ell^{(\kappa)}(x)\,
+	\phi_\beta^{(\kappa)}(x)\,
+	\phi_k^{(\kappa)}(x)\,
+	w_\kappa(x)\,dx,
+	\]
+	then
+	\[
+	M_q = \sum_{|\beta|\le p} q_\beta\, T_{::\beta}.
+	\]
+	
+	\paragraph{Why we do \emph{not} use this directly.}
+	Although $T_{\ell k \beta}$ is sparse in structured ways, explicitly forming
+	or storing it has the following drawbacks:
+	\begin{itemize}
+		\item Storage is $\mathcal{O}(M^2)$ even after pruning.
+		\item Assembling $M_q$ costs $\mathcal{O}(p M^2)$ per coefficient update.
+		\item This is prohibitive in model-discovery or repeated-assembly settings.
+	\end{itemize}
+	
+	We therefore do \emph{not} assemble $M_q$ explicitly.
+	
+	\subsubsection{Equivalent operator formulation using Jacobi matrices}
+	
+	The key observation is that $J_i$ already encode multiplication by $x_i$ on
+	$\Pi_n^D$. Since any polynomial $q$ can be written as a polynomial in the
+	coordinates,
+	\[
+	q(x) = Q(x_1,\dots,x_D),
+	\]
+	we define the aliased multiplication operator by substitution:
+	\[
+	\boxed{
+		M_q \;=\; Q(J_1,\dots,J_D).
+	}
+	\]
+	
+	This definition:
+	\begin{itemize}
+		\item Is algebraically equivalent to the tensor contraction above,
+		\item Automatically includes aliasing to $\Pi_n^D$,
+		\item Requires only the precomputed sparse matrices $J_i$.
+	\end{itemize}
+	
+	\subsubsection{How multiplication by $q$ is \emph{applied} in code}
+	
+	We never form $M_q$ explicitly. Instead, given a coefficient vector $c$, we compute
+	\[
+	y = M_q c = Q(J_1,\dots,J_D)\,c
+	\]
+	using only sparse matrix--vector products.
+	
+	Algorithmically:
+	\begin{enumerate}
+		\item Represent $q$ by its Jacobi coefficients $\{q_\beta\}_{|\beta|\le p}$.
+		\item Evaluate the matrix polynomial $Q(J_1,\dots,J_D)$ acting on $c$ using
+		a stable operator-valued recurrence (Clenshaw-type).
+		\item Each recurrence step consists only of:
+		\begin{itemize}
+			\item sparse SpMV calls $v \mapsto J_i v$,
+			\item vector additions and scalings.
+		\end{itemize}
+	\end{enumerate}
+	
+	No dense matrices are formed, and no sparse factorization is performed.
+	
+	\subsubsection{Complexity and advantages}
+	
+	Let $M=\dim\Pi_n^D=\mathcal{O}(n^D)$. Each sparse multiplication
+	$v \mapsto J_i v$ costs $\mathcal{O}(M)$.
+	
+	If evaluating $Q(J_1,\dots,J_D)c$ requires $\mathcal{O}(pD)$ sparse matvecs
+	(as in operator-valued Clenshaw), then
+	\[
+	\mathrm{cost}(c \mapsto q(J)c) = \mathcal{O}(pD\,M).
+	\]
+	
+	This has several decisive advantages:
+	\begin{itemize}
+		\item Linear scaling in the number of coefficients.
+		\item No fill-in (no sparse elimination).
+		\item Ideal for repeated operator application in PDE solves and model discovery.
+		\item Fully compatible with CSC storage and existing SpMV kernels.
+	\end{itemize}
+	
+	\paragraph{Summary.}
+	Although multiplication by $q$ can be written as a three-index tensor contraction,
+	we implement it in practice as a sequence of sparse matrix--vector products with
+	the Jacobi coordinate matrices $J_i$. This matches both the algebraic structure
+	of Jacobi polynomials on the simplex and the performance requirements of
+	assembly-heavy and data-driven PDE solvers.
+	
+	% ============================================================
+	% Full derivation: multiplication-by-q via J_i and operator Clenshaw
+	% (implementation-facing; recurrence coefficients extracted from J_i blocks)
+	% ============================================================
+	
+	\subsection{Multiplication-by-$q$ on $\Pi_n^D$ and an operator-valued Clenshaw recurrence}
+	
+	\paragraph{Spaces and ordering.}
+	Fix $D\ge 1$, parameters $\kappa\in\mathbb{R}^{D+1}$ with $\kappa_i>-1/2$, and degree cutoff $n\ge 0$.
+	Let $\Pi_n^D$ be the space of polynomials of total degree $\le n$ on the simplex $\Delta^D$ with the
+	orthonormal Jacobi simplex basis $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$ ordered by total degree.
+	Write
+	\[
+	M := \dim \Pi_n^D,\qquad
+	\mathbb{R}^M \cong \bigoplus_{j=0}^n \mathbb{R}^{m_j},\quad m_j := \dim \mathcal{H}_j^D,
+	\]
+	where $\mathcal{H}_j^D$ denotes the homogeneous subspace of degree exactly $j$.
+	We write any coefficient vector $c\in\mathbb{R}^M$ in blocks:
+	\[
+	c = \begin{bmatrix} c_0 \\ c_1 \\ \vdots \\ c_n \end{bmatrix},
+	\qquad c_j \in \mathbb{R}^{m_j}.
+	\]
+	
+	\subsubsection{Coordinate Jacobi matrices and their degree-block extraction}
+	
+	For each coordinate $x_i$ ($i=1,\dots,D$) we have the Jacobi (coordinate-multiplication) matrix
+	\[
+	J_i \in \mathbb{R}^{M\times M},\qquad
+	(J_i)_{\ell k} = \left\langle \phi_{\ell}^{(\kappa)},\, x_i\, \phi_{k}^{(\kappa)}\right\rangle_{w_\kappa},
+	\]
+	stored in CSC format. These implement aliased multiplication by $x_i$ on $\Pi_n^D$:
+	\[
+	\Pi_n(x_i f)\quad \longleftrightarrow\quad J_i c_f.
+	\]
+	
+	Let $E_j\in\mathbb{R}^{M\times m_j}$ denote the block embedding that inserts a degree-$j$ block into
+	the global vector (zeros elsewhere), and $E_j^T$ the corresponding extraction:
+	\[
+	c_j = E_j^T c,\qquad c = \sum_{j=0}^n E_j c_j.
+	\]
+	From the full CSC matrix $J_i$ we extract the three degree-coupling blocks:
+	\begin{align*}
+		U_{i,j} &:= E_{j+1}^T J_i E_j \in \mathbb{R}^{m_{j+1}\times m_j} \qquad \text{(up block)},\\
+		B_{i,j} &:= E_{j}^T   J_i E_j \in \mathbb{R}^{m_{j}\times m_j} \qquad \text{(same-degree block)},\\
+		L_{i,j} &:= E_{j-1}^T J_i E_j \in \mathbb{R}^{m_{j-1}\times m_j} \qquad \text{(down block)}.
+	\end{align*}
+	In code, $E_j^T J_i E_j$ means: restrict to rows/cols belonging to the degree-$j$ index range.
+	
+	\paragraph{Degree-tridiagonal structure.}
+	Because multiplication by a coordinate changes total degree by at most $1$,
+	\[
+	(J_i)_{j\ell}=0\quad \text{unless}\quad \ell\in\{j-1,j,j+1\},
+	\]
+	so each $J_i$ is block tridiagonal in total degree, and $U_{i,j},B_{i,j},L_{i,j}$ are the only
+	nonzero block bands.
+	
+	\subsubsection{A vector three-term recurrence in total degree (constructed from the $J_i$)}
+	
+	Let $\Phi_j(x)\in\mathbb{R}^{m_j}$ denote the vector of degree-$j$ basis functions
+	(the homogeneous block of $\Phi^{(\kappa)}$). Then the definition of $J_i$ implies the operator identity
+	on $\Pi_n^D$:
+	\[
+	x_i\,\Phi_j(x)
+	=
+	\Phi_{j+1}(x)\,U_{i,j}^{T}
+	+
+	\Phi_{j}(x)\,B_{i,j}^{T}
+	+
+	\Phi_{j-1}(x)\,L_{i,j}^{T},
+	\qquad j\ge 0,
+	\]
+	with the convention $\Phi_{-1}\equiv 0$.
+	
+	This is the multivariate analogue of the univariate three-term recurrence, and importantly:
+	\emph{we do not derive closed-form coefficients}; we \emph{extract} these blocks directly from the
+	precomputed Jacobi matrices $J_i$.
+	
+	\subsubsection{Multiplication-by-$q$ as an operator polynomial in $\{J_i\}$}
+	
+	Let $q$ be represented in the same simplex basis (possibly at degree $p\ge n$):
+	\[
+	q(x) \approx \sum_{j=0}^{p} \Phi_j(x)^T\,q_j,
+	\qquad q_j\in\mathbb{R}^{m_j}.
+	\]
+	We define the aliased multiplication operator on $\Pi_n^D$ by
+	\[
+	\mathcal{M}_q^{(n)} := \Pi_n\circ (q\cdot)\circ \Pi_n,
+	\]
+	whose coefficient action is
+	\[
+	y = M_q c,\qquad y,c\in\mathbb{R}^M.
+	\]
+	Because $J_i$ represent coordinate multiplication on $\Pi_n^D$, we may equivalently define
+	\[
+	\boxed{
+		M_q := q(J_1,\dots,J_D),
+	}
+	\]
+	which is an $M\times M$ linear operator acting on coefficient vectors.
+	This definition automatically aliases to $\Pi_n^D$ since each $J_i$ maps $\mathbb{R}^M\to\mathbb{R}^M$.
+	
+	\paragraph{Why we do not assemble $M_q$.}
+	The triple-product tensor contraction
+	\[
+	(M_q)_{\ell k}=\sum_\beta q_\beta\int \phi_\ell\phi_\beta\phi_k\,w_\kappa
+	\]
+	is correct but assembling/storing $M_q$ for each new $q$ costs $\mathcal{O}(M^2)$ and is unsuitable
+	for repeated-assembly workflows (e.g.\ model discovery).
+	Instead we implement the \emph{apply-only} map $c\mapsto M_q c$.
+	
+	\subsection{Operator-valued Clenshaw: apply $y=q(J)c$ using only sparse SpMV with $J_i$}
+	
+	\subsubsection{Stacked raising operator and its left-inverse (OTV-style)}
+	Define the \emph{stacked raising operator} at degree $j$ by
+	\[
+	\mathcal{U}_j
+	:=
+	\begin{bmatrix}
+		U_{1,j}\\
+		\vdots\\
+		U_{D,j}
+	\end{bmatrix}
+	\in \mathbb{R}^{(D\,m_{j+1})\times m_j}.
+	\]
+	This is the $D$-dimensional analogue of the stacked $[B_n^x;B_n^y]$ operator in OTV.
+	We assume $\mathcal{U}_j$ has full column rank (true in the Jacobi simplex setting away from
+	low-degree degeneracies), so we can define a left-inverse (minimum-norm) map
+	\[
+	\mathcal{U}_j^{+} \in \mathbb{R}^{m_j\times (D\,m_{j+1})},
+	\qquad
+	\mathcal{U}_j^{+}\mathcal{U}_j = I_{m_j}.
+	\]
+	\emph{Implementation:} we precompute a SuiteSparseQR factorization of $\mathcal{U}_j$ once per $(D,n,\kappa)$,
+	and apply $\mathcal{U}_j^+$ via the cached factors.
+	
+	\subsubsection{A degree-recursion that replaces explicit recurrence derivation}
+	From the block identity
+	\[
+	x_i\,\Phi_j
+	=
+	\Phi_{j+1}\,U_{i,j}^{T}
+	+\Phi_j\,B_{i,j}^{T}
+	+\Phi_{j-1}\,L_{i,j}^{T},
+	\]
+	stack over $i=1,\dots,D$ and rearrange to isolate $\Phi_{j+1}$:
+	\[
+	\begin{bmatrix}
+		x_1\Phi_j\\ \vdots\\ x_D\Phi_j
+	\end{bmatrix}
+	-
+	\begin{bmatrix}
+		\Phi_j B_{1,j}^T + \Phi_{j-1}L_{1,j}^T\\
+		\vdots\\
+		\Phi_j B_{D,j}^T + \Phi_{j-1}L_{D,j}^T
+	\end{bmatrix}
+	=
+	\begin{bmatrix}
+		\Phi_{j+1}U_{1,j}^T\\ \vdots\\ \Phi_{j+1}U_{D,j}^T
+	\end{bmatrix}.
+	\]
+	Equivalently,
+	\[
+	\begin{bmatrix}
+		x_1\Phi_j\\ \vdots\\ x_D\Phi_j
+	\end{bmatrix}
+	-
+	\mathcal{B}_j(\Phi_j,\Phi_{j-1})
+	=
+	(\,I_D\otimes \Phi_{j+1}\,)\,\mathcal{U}_j^T,
+	\]
+	where $\mathcal{B}_j$ denotes the known (extracted) lower-degree contributions.
+	Right-multiplying by $\mathcal{U}_j^{+T}$ yields an explicit formula for $\Phi_{j+1}$:
+	\[
+	\Phi_{j+1}
+	=
+	\left(
+	\begin{bmatrix}
+		x_1\Phi_j\\ \vdots\\ x_D\Phi_j
+	\end{bmatrix}
+	-
+	\mathcal{B}_j(\Phi_j,\Phi_{j-1})
+	\right)^T
+	\mathcal{U}_j^{+T}.
+	\]
+	\emph{Crucial point:} this is a recurrence in total degree that uses only the blocks extracted from $J_i$
+	and the left-inverse $\mathcal{U}_j^+$; we never need symbolic recurrence coefficients.
+	
+	\subsubsection{Operator Clenshaw for applying $q(J)$ to a vector}
+	
+	We now derive the apply-only recurrence for
+	\[
+	y = q(J_1,\dots,J_D)c,\qquad c\in\mathbb{R}^M.
+	\]
+	Write $q$ in homogeneous blocks $q_j\in\mathbb{R}^{m_j}$:
+	\[
+	q(x) \approx \sum_{j=0}^{p} \Phi_j(x)^T q_j.
+	\]
+	Define the embedding of a degree-$j$ coefficient block into $\mathbb{R}^M$ by
+	\[
+	\mathrm{emb}_j(q_j) := E_j q_j \in \mathbb{R}^M.
+	\]
+	
+	\paragraph{Backward recurrence states.}
+	We compute auxiliary vectors $b_{j}\in\mathbb{R}^M$ for $j=p+1,p,\dots,0$ by a backward sweep:
+	\[
+	b_{p+2}=0,\qquad b_{p+1}=0.
+	\]
+	For $j=p,p-1,\dots,0$ we update
+	\begin{equation}
+		\label{eq:clenshaw-update}
+		b_j
+		=
+		\mathrm{emb}_j(q_j)\odot c
+		\;+\;
+		\sum_{i=1}^D J_i\,\Gamma_{i,j}(b_{j+1})
+		\;-\;
+		\Delta_{j+1}(b_{j+2}),
+	\end{equation}
+	and return
+	\[
+	y := b_0.
+	\]
+	
+	\paragraph{What are $\Gamma_{i,j}$ and $\Delta_j$? (No symbolic recurrences.)}
+	In univariate Clenshaw, $\Gamma$ and $\Delta$ are scalar multiples determined by the 3-term recurrence.
+	Here, instead of closed forms, we determine the needed ``degree-propagation'' maps directly from the
+	degree blocks extracted from $J_i$ and the left-inverses $\mathcal{U}_j^+$.
+	
+	Concretely, define degree-extraction of any global vector $v\in\mathbb{R}^M$ as $v_j=E_j^T v$.
+	Then we define the degree-$j$ components of \eqref{eq:clenshaw-update} by enforcing that, for each $j$,
+	the contribution from $b_{j+1}$ is mapped through the same up/same/down splitting as coordinate
+	multiplication. This is achieved by:
+	\begin{itemize}
+		\item applying SpMV with each $J_i$ to $b_{j+1}$ (global vectors), and
+		\item using the cached $\mathcal{U}_j^+$ to convert the stacked degree-$(j+1)$ contributions into the
+		correct degree-$j$ block update.
+	\end{itemize}
+	
+	\paragraph{Implementation form (blockwise).}
+	Let $z_{i} := J_i b_{j+1}$ for $i=1,\dots,D$ (computed by CSC SpMV).
+	Extract their degree-$(j+1)$ blocks and stack:
+	\[
+	Z_{j+1} :=
+	\begin{bmatrix}
+		E_{j+1}^T z_1\\
+		\vdots\\
+		E_{j+1}^T z_D
+	\end{bmatrix}
+	\in\mathbb{R}^{D\,m_{j+1}}.
+	\]
+	Then the recurrence uses the precomputed left-inverse to fold this stacked object into a degree-$j$ update:
+	\[
+	\widetilde{b}_{j} \;:=\; E_j \left(\mathcal{U}_j^+\, Z_{j+1}\right)\in\mathbb{R}^M.
+	\]
+	Finally incorporate the lower-degree correction (the analogue of the $c_{j+1}b_{j+2}$ term in 1D),
+	again using blocks extracted from $J_i$:
+	\[
+	\Delta_{j+1}(b_{j+2})
+	\;:=\;
+	\sum_{i=1}^D E_j\left(L_{i,j+1}\, (E_{j+2}^T b_{j+2})\right),
+	\]
+	with admissibility conventions at low degrees.
+	
+	Putting this together, one practical (apply-only) realization of \eqref{eq:clenshaw-update} is:
+	\begin{equation}
+		\label{eq:clenshaw-practical}
+		b_j
+		=
+		E_j q_j \odot c
+		\;+\;
+		E_j\left(\mathcal{U}_j^+\,
+		\begin{bmatrix}
+			E_{j+1}^T(J_1 b_{j+1})\\
+			\vdots\\
+			E_{j+1}^T(J_D b_{j+1})
+		\end{bmatrix}
+		\right)
+		\;-\;
+		\sum_{i=1}^D E_j\left(L_{i,j+1}\,(E_{j+2}^T b_{j+2})\right),
+	\end{equation}
+	and we return $y=b_0$.
+	
+	\paragraph{Notes.}
+	\begin{itemize}
+		\item The only expensive primitives are SpMV calls with $J_i$ and applications of $\mathcal{U}_j^+$.
+		\item All maps $E_j$, $U_{i,j}$, $L_{i,j}$ are obtained from the degree-block structure of the stored CSC $J_i$.
+		\item The left-inverse applications $\mathcal{U}_j^+$ are implemented via cached SuiteSparseQR factors.
+	\end{itemize}
+	
+	\subsubsection{Complexity (matches OTV-style scaling)}
+	Let $M=\dim\Pi_n^D=\Theta(n^D)$ and assume $\mathrm{nnz}(J_i)=\Theta(M)$ (true for our stencil-built $J_i$).
+	Each SpMV $J_i v$ costs $\Theta(M)$.
+	
+	A degree-sweep over $j=0,\dots,p$ performs:
+	\begin{itemize}
+		\item $D$ SpMV operations per level (to form $J_i b_{j+1}$),
+		\item one application of $\mathcal{U}_j^+$ per level (small: acts on dimension $D m_{j+1}$),
+		\item lower-order block extractions and axpy operations.
+	\end{itemize}
+	Thus the total cost to apply $y=q(J)c$ is
+	\[
+	\mathrm{cost}\bigl(c\mapsto q(J)c\bigr)
+	=
+	\Theta(p\,D\,M)
+	\;+\;
+	\sum_{j=0}^{p}\mathrm{cost}\bigl(\mathcal{U}_j^+\text{-apply}\bigr),
+	\]
+	with \emph{no fill-in} in the operators (no elimination is performed during application).
+	All fill-in occurs only in the one-time QR factorization of $\mathcal{U}_j$ (offline), which is cached.
+	
+	\paragraph{Why this is preferable to precomputing $M_q$.}
+	Forming $M_q$ explicitly requires at least $\Theta(M^2)$ storage and $\Theta(M^2)$ work per update.
+	In contrast, the apply-only Clenshaw recurrence \eqref{eq:clenshaw-practical} uses only $\Theta(pDM)$ work,
+	making it suitable for repeated solves and model discovery where $q$ changes frequently.
 	
 \end{document}
