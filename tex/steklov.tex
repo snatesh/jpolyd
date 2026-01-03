@@ -1266,6 +1266,7 @@ a dense factorization of $B_{j-1}^T$ and apply it to each of the $M_K$ right-han
 	block operators $A_j,B_j,C_j$ and $\mathcal J_j,\mathcal J_j^T$.
 	\item The only places the large $M_K\times M_K$ Jacobi matrices appear are in the applications
 	of $\mathcal J_j$ and $\mathcal J_j^T$, which are implemented by sparse SpMV with the $J_i^{(K)}$.
+	\item \color{red} We actually find that $B_{j-1}$ are sparse - lower triangular and banded with a main diagonal, and only non-zeros below the diagonal in the last few row blocks. Hence, we implement a simple back substitution routine on the sparse upper-triangular system. \color{black}
 \end{itemize}
 
 	
