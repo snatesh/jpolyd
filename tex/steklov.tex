@@ -6,6 +6,7 @@
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{color}
+
 \geometry{margin=1in}
 
 \newtheorem{theorem}{Theorem}
@@ -877,1009 +878,397 @@ and placing the corresponding nonzero entry in the sparse matrix representation.
 The conversion between multi-indices and local indices within $\mathcal{H}_j^D$
 is performed by fixed, degree-consistent maps induced by the chosen ordering.
 
-	
-%	%======================================================================
-%	% Multiplication-by-q on \Pi_n^D and operator-valued Clenshaw recurrence
-%	% (with stacked raising operator + left inverse; worked example p=4)
-%	%======================================================================
-%	
-%	\subsection{Multiplication-by-$q$ on $\Pi_n^D$ and an operator-valued Clenshaw recurrence}
-%	
-%	\paragraph{Spaces and ordering.}
-%	Fix $D\ge 1$, parameters $\kappa\in\mathbb{R}^{D+1}$ with $\kappa_r>-1/2$, and degree cutoff $n\ge 0$.
-%	Let $\Pi_n^D$ be the space of polynomials of total degree $\le n$ on the simplex $\Delta^D$, equipped with
-%	the orthonormal Jacobi simplex basis $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$ ordered by total degree.
-%	Write
-%	\[
-%	M := \dim \Pi_n^D,\qquad
-%	\mathbb{R}^M \cong \bigoplus_{j=0}^n \mathbb{R}^{m_j},\quad m_j := \dim \mathcal{H}_j^D,
-%	\]
-%	where $\mathcal{H}_j^D$ denotes the homogeneous subspace of degree exactly $j$.
-%	We write any coefficient vector $c\in\mathbb{R}^M$ in blocks
-%	\[
-%	c = \begin{bmatrix} c_0 \\ c_1 \\ \vdots \\ c_n \end{bmatrix},
-%	\qquad c_j \in \mathbb{R}^{m_j}.
-%	\]
-%	
-%	\paragraph{Degree embeddings/extractions.}
-%	Let $E_j\in\mathbb{R}^{M\times m_j}$ denote the block embedding that inserts a degree-$j$ block into
-%	the global vector (zeros elsewhere), and $E_j^T$ the corresponding extraction:
-%	\[
-%	c_j = E_j^T c,\qquad c = \sum_{j=0}^n E_j c_j.
-%	\]
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Coordinate Jacobi matrices: degree-block structure and symmetry}
-%	
-%	For each coordinate $x_i$ ($i=1,\dots,D$) define the coordinate-multiplication (Jacobi) matrix
-%	\[
-%	J_i \in \mathbb{R}^{M\times M},\qquad
-%	(J_i)_{\ell k} = \left\langle \phi_{\ell}^{(\kappa)},\, x_i\, \phi_{k}^{(\kappa)}\right\rangle_{w_\kappa}.
-%	\]
-%	Since $\{\phi_\alpha^{(\kappa)}\}$ is orthonormal and multiplication by $x_i$ is self-adjoint in
-%	$\langle\cdot,\cdot\rangle_{w_\kappa}$,
-%	\[
-%	J_i = J_i^T \qquad \text{(real symmetric)}.
-%	\]
-%	
-%	\paragraph{Degree-tridiagonal structure.}
-%	Multiplication by a coordinate changes total degree by at most $1$, hence $J_i$ is block tridiagonal
-%	in the total-degree ordering:
-%	\[
-%	E_r^T J_i E_s = 0\quad \text{unless}\quad r\in\{s-1,s,s+1\}.
-%	\]
-%	Define the three degree-coupling blocks (for $j\ge 0$):
-%	\begin{align*}
-%		U_{i,j} &:= E_{j+1}^T J_i E_j \in \mathbb{R}^{m_{j+1}\times m_j} \qquad \text{(up block)},\\
-%		B_{i,j} &:= E_{j}^T   J_i E_j \in \mathbb{R}^{m_{j}\times m_j} \qquad \text{(same-degree block)},\\
-%		L_{i,j} &:= E_{j-1}^T J_i E_j \in \mathbb{R}^{m_{j-1}\times m_j} \qquad \text{(down block)}.
-%	\end{align*}
-%	By symmetry of $J_i$ we also have the transpose relations
-%	\[
-%	L_{i,j+1} = U_{i,j}^T,\qquad B_{i,j}=B_{i,j}^T.
-%	\]
-%	
-%	\paragraph{Block matrix picture.}
-%	With respect to the decomposition $\mathbb{R}^M=\bigoplus_{j=0}^n \mathbb{R}^{m_j}$, each $J_i$ has the form
-%	\[
-%	J_i =
-%	\begin{bmatrix}
-%		B_{i,0}     & U_{i,0}^T   &             &        & \\
-%		U_{i,0}     & B_{i,1}     & U_{i,1}^T   &        & \\
-%		& U_{i,1}     & B_{i,2}     & \ddots & \\
-%		&             & \ddots      & \ddots & U_{i,n-1}^T \\
-%		&             &             & U_{i,n-1} & B_{i,n}
-%	\end{bmatrix}.
-%	\]
-%	
-%	\paragraph{Vector three-term recurrence (extracted).}
-%	Let $\Phi_j(x)\in\mathbb{R}^{m_j}$ denote the vector of degree-$j$ basis functions.
-%	Then for $j\ge 0$,
-%	\begin{equation}
-%		\label{eq:vector-3term}
-%		x_i\,\Phi_j(x)
-%		=
-%		\Phi_{j+1}(x)\,U_{i,j}^{T}
-%		+
-%		\Phi_{j}(x)\,B_{i,j}^{T}
-%		+
-%		\Phi_{j-1}(x)\,L_{i,j}^{T},
-%		\qquad \Phi_{-1}\equiv 0.
-%	\end{equation}
-%	We emphasize: in our implementation we do \emph{not} derive closed-form coefficients; we extract
-%	$U_{i,j},B_{i,j},L_{i,j}$ directly from the stored sparse CSC matrices $J_i$.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Stacked raising operator and its left inverse}
-%	
-%	\paragraph{Stacked raising operator.}
-%	Define the stacked raising operator at degree $j$ by
-%	\[
-%	\mathcal{U}_j :=
-%	\begin{bmatrix}
-%		U_{1,j}\\ \vdots\\ U_{D,j}
-%	\end{bmatrix}
-%	\in \mathbb{R}^{(D\,m_{j+1})\times m_j}.
-%	\]
-%	Equivalently, $\mathcal{U}_j$ is the map
-%	\[
-%	c_j \longmapsto
-%	\begin{bmatrix}
-%		U_{1,j}c_j\\ \vdots\\ U_{D,j}c_j
-%	\end{bmatrix},
-%	\qquad c_j\in\mathbb{R}^{m_j}.
-%	\]
-%	
-%	\paragraph{Left inverse (minimum-norm).}
-%	Assume $\mathcal{U}_j$ has full column rank. We define its (Moore--Penrose) left inverse
-%	\[
-%	\mathcal{U}_j^{+}\in\mathbb{R}^{m_j\times (D\,m_{j+1})},
-%	\qquad
-%	\mathcal{U}_j^{+}\mathcal{U}_j = I_{m_j}.
-%	\]
-%	Implementation: we precompute a sparse QR factorization of $\mathcal{U}_j$ once per $(D,n,\kappa)$,
-%	and apply $\mathcal{U}_j^{+}$ by QR solves.
-%	
-%	\paragraph{Why $\mathcal{U}_j^+$ is the right ``folding'' map.}
-%	For any $t\in\mathbb{R}^{m_j}$, stacking the \emph{upward} actions gives
-%	\[
-%	\mathcal{U}_j\, t =
-%	\begin{bmatrix}
-%		U_{1,j}t\\ \vdots\\ U_{D,j}t
-%	\end{bmatrix}
-%	\in \mathbb{R}^{D\,m_{j+1}}.
-%	\]
-%	Conversely, given a stacked vector $Z\in\mathbb{R}^{D\,m_{j+1}}$ that lies (approximately) in the range of
-%	$\mathcal{U}_j$, the vector $\mathcal{U}_j^+ Z$ is the unique minimum-norm $t$ such that
-%	$\mathcal{U}_j t \approx Z$.
-%	This is exactly the operation we need in the Clenshaw sweep: we form a stacked degree-$(j+1)$ quantity
-%	and fold it down to a degree-$j$ update.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Multiplication-by-$q$ and apply-only evaluation $y = q(J)c$}
-%	
-%	Let $q$ be represented in homogeneous blocks up to degree $p$:
-%	\[
-%	q(x) \approx \sum_{j=0}^{p} \Phi_j(x)^T\,q_j,
-%	\qquad q_j\in\mathbb{R}^{m_j}.
-%	\]
-%	We define the aliased multiplication operator on $\Pi_n^D$ by
-%	\[
-%	\mathcal{M}_q^{(n)} := \Pi_n\circ (q\cdot)\circ \Pi_n,
-%	\]
-%	and its coefficient action is $y = M_q c$.
-%	Rather than assembling $M_q$ by triple-product contraction, we evaluate $y$ by an apply-only recurrence
-%	using only sparse SpMV with $J_i$ and applications of $\mathcal{U}_j^+$.
-%	
-%	\paragraph{Forcing embeddings.}
-%	Define the degree-$j$ embedded vector
-%	\[
-%	Q_j := E_j q_j \in \mathbb{R}^M.
-%	\]
-%	
-%	\paragraph{Degree extraction of a global vector.}
-%	For any $v\in\mathbb{R}^M$, write its degree-$j$ block as $v^{(j)} := E_j^T v\in\mathbb{R}^{m_j}$.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Operator-valued Clenshaw recurrence: the update at level $j$}
-%	
-%	We compute auxiliary vectors $b_{p+2},b_{p+1},\dots,b_0\in\mathbb{R}^M$ by a backward sweep:
-%	\[
-%	b_{p+2}=0,\qquad b_{p+1}=0.
-%	\]
-%	For $j=p,p-1,\dots,0$ define
-%	\[
-%	z_i := J_i\, b_{j+1}\in\mathbb{R}^M,\qquad i=1,\dots,D,
-%	\]
-%	and form the stacked degree-$(j+1)$ extraction
-%	\begin{equation}
-%		\label{eq:Zstack}
-%		Z_{j+1} :=
-%		\begin{bmatrix}
-%			E_{j+1}^T z_1\\
-%			\vdots\\
-%			E_{j+1}^T z_D
-%		\end{bmatrix}
-%		=
-%		\begin{bmatrix}
-%			E_{j+1}^T (J_1 b_{j+1})\\
-%			\vdots\\
-%			E_{j+1}^T (J_D b_{j+1})
-%		\end{bmatrix}
-%		\in\mathbb{R}^{D\,m_{j+1}}.
-%	\end{equation}
-%	We then \emph{fold} this stacked vector down to degree $j$ using the cached left inverse:
-%	\begin{equation}
-%		\label{eq:tj}
-%		t_j := \mathcal{U}_j^{+}\, Z_{j+1}\in\mathbb{R}^{m_j},
-%		\qquad
-%		T_j := E_j t_j\in\mathbb{R}^M.
-%	\end{equation}
-%	
-%	\paragraph{Meaning of $t_j$ (what it recovers).}
-%	Because $J_i$ is degree-tridiagonal, the degree-$(j+1)$ block of $z_i=J_i b_{j+1}$ is
-%	\[
-%	E_{j+1}^T z_i
-%	=
-%	E_{j+1}^T (J_i b_{j+1})
-%	=
-%	\underbrace{U_{i,j}\, b_{j+1}^{(j)}}_{\text{from degree $j$ of }b_{j+1}}
-%	+
-%	\underbrace{B_{i,j+1}\, b_{j+1}^{(j+1)}}_{\text{from degree $j{+}1$}}
-%	+
-%	\underbrace{U_{i,j+1}^T\, b_{j+1}^{(j+2)}}_{\text{from degree $j{+}2$}},
-%	\]
-%	where we use $L_{i,j+1}=U_{i,j}^T$ and $B_{i,j+1}=B_{i,j+1}^T$.
-%	Stacking over $i$ gives
-%	\[
-%	Z_{j+1}
-%	=
-%	\mathcal{U}_j\, b_{j+1}^{(j)}
-%	+
-%	\mathcal{B}_{j+1}\, b_{j+1}^{(j+1)}
-%	+
-%	\mathcal{U}_{j+1}^{T}\, b_{j+1}^{(j+2)},
-%	\]
-%	where
-%	\[
-%	\mathcal{B}_{j+1}:=
-%	\begin{bmatrix}
-%		B_{1,j+1}\\ \vdots\\ B_{D,j+1}
-%	\end{bmatrix},
-%	\qquad
-%	\mathcal{U}_{j+1}^{T}:=
-%	\begin{bmatrix}
-%		U_{1,j+1}^T\\ \vdots\\ U_{D,j+1}^T
-%	\end{bmatrix}.
-%	\]
-%	Applying $\mathcal{U}_j^+$ yields
-%	\begin{equation}
-%		\label{eq:tj-expansion}
-%		t_j
-%		=
-%		b_{j+1}^{(j)}
-%		+
-%		\mathcal{U}_j^+\,\mathcal{B}_{j+1}\, b_{j+1}^{(j+1)}
-%		+
-%		\mathcal{U}_j^+\,\mathcal{U}_{j+1}^{T}\, b_{j+1}^{(j+2)}.
-%	\end{equation}
-%	Thus $t_j$ contains the desired contribution from the \emph{degree-$j$ part} of $b_{j+1}$ plus known
-%	corrections coming from degrees $(j+1)$ and $(j+2)$ of $b_{j+1}$.
-%	
-%	\paragraph{Down-correction (remove the $(j+2)$ leakage).}
-%	To obtain a clean two-step recurrence (analogue of univariate Clenshaw), we subtract the predictable
-%	$(j+2)$ leakage using only extracted blocks. Since
-%	\[
-%	\mathcal{U}_j^+\,\mathcal{U}_{j+1}^{T}\, b_{j+1}^{(j+2)}
-%	\quad \text{depends on degree }(j+2),
-%	\]
-%	we build a correction using $b_{j+2}$ (one level further back) and the down blocks
-%	$L_{i,j+2}=U_{i,j+1}^T$ (equivalently the transpose up blocks):
-%	\begin{equation}
-%		\label{eq:down-corr}
-%		d_j := \sum_{i=1}^D \left(E_j^T J_i E_{j+1}\right)\, b_{j+2}^{(j+1)}
-%		\;=\;
-%		\sum_{i=1}^D U_{i,j}^{T}\, b_{j+2}^{(j+1)}
-%		\in\mathbb{R}^{m_j},
-%		\qquad
-%		D_j := E_j d_j.
-%	\end{equation}
-%	(Any equivalent correction that cancels the $(j+2)$ contamination and uses only the known degree bands
-%	is acceptable; \eqref{eq:down-corr} is convenient when $J_i$ are symmetric and $U_{i,j}^T$ is available
-%	as the $(j,j{+}1)$ block of $J_i$.)
-%	
-%	\paragraph{Clenshaw update.}
-%	The backward recurrence is
-%	\begin{equation}
-%		\label{eq:clenshaw-update-final}
-%		b_j = Q_j + T_j - D_j,
-%		\qquad j=p,p-1,\dots,0,
-%	\end{equation}
-%	with $b_{p+2}=b_{p+1}=0$, and we return
-%	\[
-%	y := b_0.
-%	\]
-%	
-%	\paragraph{Implementation primitives.}
-%	At each level $j$ we use:
-%	\begin{itemize}
-%		\item $D$ sparse SpMV calls $z_i=J_i b_{j+1}$;
-%		\item one application of the cached left inverse $\mathcal{U}_j^+$ to $Z_{j+1}$ to get $t_j$;
-%		\item cheap block extractions/embeddings via degree offsets (row/col ranges).
-%	\end{itemize}
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Worked expansion for $p=4$ (what each step uses)}
-%	
-%	Assume $p=4$ and initialize $b_6=b_5=0$. We compute $b_4,b_3,b_2,b_1,b_0$.
-%	
-%	\paragraph{Step $j=4$.}
-%	Since $b_5=0$, we have $z_i=J_i b_5=0$, hence $Z_5=0$ and $t_4=\mathcal{U}_4^+ Z_5=0$.
-%	Also $b_6=0$ implies $D_4=0$. Thus
-%	\[
-%	b_4 = Q_4.
-%	\]
-%	
-%	\paragraph{Step $j=3$.}
-%	Compute $z_i=J_i b_4=J_i Q_4$ and stack the degree-$4$ blocks:
-%	\[
-%	Z_4=
-%	\begin{bmatrix}
-%		E_4^T(J_1 Q_4)\\ \vdots\\ E_4^T(J_D Q_4)
-%	\end{bmatrix}.
-%	\]
-%	Fold:
-%	\[
-%	t_3=\mathcal{U}_3^+ Z_4,\qquad T_3=E_3 t_3.
-%	\]
-%	Down-correction uses $b_5=0$, so $D_3=0$. Therefore
-%	\[
-%	b_3 = Q_3 + T_3.
-%	\]
-%	
-%	\paragraph{Step $j=2$.}
-%	Compute $z_i=J_i b_3$, stack degree-$3$:
-%	\[
-%	Z_3=
-%	\begin{bmatrix}
-%		E_3^T(J_1 b_3)\\ \vdots\\ E_3^T(J_D b_3)
-%	\end{bmatrix},
-%	\qquad
-%	t_2=\mathcal{U}_2^+ Z_3,\quad T_2=E_2 t_2.
-%	\]
-%	Now the down-correction uses $b_4=Q_4$:
-%	\[
-%	d_2=\sum_{i=1}^D (E_2^T J_i E_3)\, b_4^{(3)}
-%	\;=\;
-%	\sum_{i=1}^D (E_2^T J_i E_3)\, (E_3^T b_4),
-%	\qquad D_2=E_2 d_2.
-%	\]
-%	Thus
-%	\[
-%	b_2 = Q_2 + T_2 - D_2.
-%	\]
-%	
-%	\paragraph{Step $j=1$.}
-%	Compute
-%	\[
-%	Z_2=
-%	\begin{bmatrix}
-%		E_2^T(J_1 b_2)\\ \vdots\\ E_2^T(J_D b_2)
-%	\end{bmatrix},
-%	\qquad
-%	t_1=\mathcal{U}_1^+ Z_2,\quad T_1=E_1 t_1.
-%	\]
-%	Down-correction now uses $b_3$:
-%	\[
-%	d_1=\sum_{i=1}^D (E_1^T J_i E_2)\,(E_2^T b_3),
-%	\qquad D_1=E_1 d_1.
-%	\]
-%	Update:
-%	\[
-%	b_1 = Q_1 + T_1 - D_1.
-%	\]
-%	
-%	\paragraph{Step $j=0$.}
-%	Compute
-%	\[
-%	Z_1=
-%	\begin{bmatrix}
-%		E_1^T(J_1 b_1)\\ \vdots\\ E_1^T(J_D b_1)
-%	\end{bmatrix},
-%	\qquad
-%	t_0=\mathcal{U}_0^+ Z_1,\quad T_0=E_0 t_0.
-%	\]
-%	Down-correction uses $b_2$:
-%	\[
-%	d_0=\sum_{i=1}^D (E_0^T J_i E_1)\,(E_1^T b_2),
-%	\qquad D_0=E_0 d_0.
-%	\]
-%	Finally,
-%	\[
-%	b_0 = Q_0 + T_0 - D_0,\qquad y=b_0.
-%	\]
-%	
-%	\paragraph{Summary for $p=4$.}
-%	The sweep computes
-%	\begin{align*}
-%	b_4&=Q_4,\\
-%	b_3&=Q_3+E_3\bigl(\mathcal{U}_3^+ Z_4\bigr),\\
-%	b_2&=Q_2+E_2\bigl(\mathcal{U}_2^+ Z_3\bigr)-E_2 d_2,\\
-%	b_1&=Q_1+E_1\bigl(\mathcal{U}_1^+ Z_2\bigr)-E_1 d_1,\\
-%	b_0&=Q_0+E_0\bigl(\mathcal{U}_0^+ Z_1\bigr)-E_0 d_0,
-%	\end{align*}
-%	with $Z_{j+1}$ defined in \eqref{eq:Zstack} and $d_j$ defined in \eqref{eq:down-corr}.
-%	Only $J_i$ SpMV, block extracts/embeds, and $\mathcal{U}_j^+$-applies are used.
-%	
-%	%======================================================================
-%	% End
-%	%======================================================================
-%	
-%	%======================================================================
-%	% Multiplication-by-q on Pi_n^D with lifted-space definition and
-%	% operator-valued Clenshaw apply that depends on input coefficients c.
-%	%
-%	% NOTE: We do NOT claim a closed-form multivariate 3-term recurrence for
-%	% simplex Jacobi basis polynomials. Instead we define the operator basis
-%	% by lifting multiplication to Pi_{N} with N=n+p and projecting once at end.
-%	% The Clenshaw apply is an apply-only scheme for M_q^{(n)} c.
-%	%======================================================================
-%	
-%	\subsection{Multiplication-by-$q$ on $\Pi_n^D$ via lifted-space multiplication and operator-valued Clenshaw}
-%	
-%	\paragraph{Spaces and ordering.}
-%	Fix $D\ge 1$, parameters $\kappa\in\mathbb{R}^{D+1}$ with $\kappa_r>-1/2$, a target cutoff $n\ge 0$,
-%	and let $p\ge 0$ be the degree cutoff for the multiplier $q$.
-%	Define the lifted cutoff
-%	\[
-%	N := n+p.
-%	\]
-%	Let $\Pi_m^D$ denote total-degree $\le m$ polynomials on $\Delta^D$ with the orthonormal Jacobi simplex
-%	basis $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le m}$ ordered by total degree. For each cutoff $m$ write
-%	\[
-%	M_m := \dim \Pi_m^D,\qquad
-%	\mathbb{R}^{M_m} \cong \bigoplus_{j=0}^m \mathbb{R}^{m_j},\quad m_j := \dim \mathcal{H}_j^D,
-%	\]
-%	and block any coefficient vector $c^{(m)}\in\mathbb{R}^{M_m}$ as
-%	\[
-%	c^{(m)}=\begin{bmatrix}c^{(m)}_0\\ \vdots\\ c^{(m)}_m\end{bmatrix},\qquad c^{(m)}_j\in\mathbb{R}^{m_j}.
-%	\]
-%	
-%	\paragraph{Degree embeddings/extractions.}
-%	For each degree $j$ and cutoff $m$, let $E^{(m)}_j\in\mathbb{R}^{M_m\times m_j}$ embed degree-$j$ blocks and
-%	$E^{(m)T}_j$ extract:
-%	\[
-%	c^{(m)}_j = E^{(m)T}_j c^{(m)},\qquad c^{(m)}=\sum_{j=0}^m E^{(m)}_j c^{(m)}_j.
-%	\]
-%	
-%	\paragraph{Inter-cutoff lift/restrict.}
-%	Define the canonical lift (zero-pad) and restrict (truncate) maps
-%	\[
-%	\mathcal{E}_{n\to N}:\mathbb{R}^{M_n}\to\mathbb{R}^{M_N},\qquad
-%	\mathcal{R}_{N\to n}:\mathbb{R}^{M_N}\to\mathbb{R}^{M_n},
-%	\]
-%	by
-%	\[
-%	\mathcal{E}_{n\to N} c :=
-%	\begin{bmatrix} c\\ 0\end{bmatrix},
-%	\qquad
-%	\mathcal{R}_{N\to n} \begin{bmatrix} y\\ \star\end{bmatrix} := y,
-%	\]
-%	where the block split is with respect to degrees $\le n$ versus $>n$ in the total-degree ordering.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Coordinate Jacobi matrices on $\Pi_N^D$: symmetry and degree blocks}
-%	
-%	For each coordinate $x_i$ ($i=1,\dots,D$) define the coordinate-multiplication (Jacobi) matrix at cutoff $N$:
-%	\[
-%	J_i^{(N)} \in \mathbb{R}^{M_N\times M_N},\qquad
-%	(J_i^{(N)})_{\ell k} = \left\langle \phi_{\ell}^{(\kappa)},\, x_i\, \phi_{k}^{(\kappa)}\right\rangle_{w_\kappa},
-%	\]
-%	stored in sparse CSC. Since the basis is orthonormal and multiplication by $x_i$ is self-adjoint,
-%	\[
-%	J_i^{(N)} = (J_i^{(N)})^T \qquad \text{(real symmetric)}.
-%	\]
-%	Multiplication by $x_i$ changes total degree by at most $1$, so each $J_i^{(N)}$ is block tridiagonal
-%	in the total-degree ordering:
-%	\[
-%	E^{(N)T}_r\, J_i^{(N)}\, E^{(N)}_s = 0\quad\text{unless}\quad r\in\{s-1,s,s+1\}.
-%	\]
-%	Define the three degree-coupling blocks for $j\ge 0$:
-%	\begin{align*}
-%		U^{(N)}_{i,j} &:= E^{(N)T}_{j+1} J_i^{(N)} E^{(N)}_{j} \in \mathbb{R}^{m_{j+1}\times m_{j}},\\
-%		B^{(N)}_{i,j} &:= E^{(N)T}_{j}   J_i^{(N)} E^{(N)}_{j} \in \mathbb{R}^{m_{j}\times m_{j}},\\
-%		L^{(N)}_{i,j} &:= E^{(N)T}_{j-1} J_i^{(N)} E^{(N)}_{j} \in \mathbb{R}^{m_{j-1}\times m_{j}}.
-%	\end{align*}
-%	By symmetry, $B^{(N)}_{i,j}=B^{(N)T}_{i,j}$ and $L^{(N)}_{i,j+1}=U^{(N)T}_{i,j}$.
-%	
-%	\paragraph{Vector three-term recurrence (extracted).}
-%	Let $\Phi^{(N)}_j(x)\in\mathbb{R}^{m_j}$ denote the vector of degree-$j$ basis functions (homogeneous block).
-%	Then for $j\ge 0$,
-%	\begin{equation}
-%		\label{eq:vector-3term-N}
-%		x_i\,\Phi^{(N)}_j(x)
-%		=
-%		\Phi^{(N)}_{j+1}(x)\,U^{(N)T}_{i,j}
-%		+
-%		\Phi^{(N)}_{j}(x)\,B^{(N)T}_{i,j}
-%		+
-%		\Phi^{(N)}_{j-1}(x)\,L^{(N)T}_{i,j},
-%		\qquad \Phi^{(N)}_{-1}\equiv 0.
-%	\end{equation}
-%	We emphasize: we do \emph{not} derive closed-form coefficients; we extract
-%	$U^{(N)}_{i,j},B^{(N)}_{i,j},L^{(N)}_{i,j}$ directly from stored sparse CSC $J_i^{(N)}$.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{The multiplication operator $M_q^{(n)}$ (functional calculus) defined by lifting}
-%	
-%	Let $q\in\Pi_p^D$ be given by Jacobi-simplex coefficients up to degree $p$:
-%	\[
-%	q(x) = \sum_{j=0}^{p} \Phi^{(p)}_j(x)^T\, q_j,\qquad q_j\in\mathbb{R}^{m_j}.
-%	\]
-%	Let $f\in\Pi_n^D$ with coefficient vector $c\in\mathbb{R}^{M_n}$, so $f(x)=\sum_{k=0}^n \Phi^{(n)}_k(x)^T c_k$.
-%	
-%	\paragraph{Lifted-space definition.}
-%	Define the multiplication operator on $\Pi_n^D$ by lifting the multiplication to $\Pi_N^D$ and projecting once:
-%	\begin{equation}
-%		\label{eq:Mq-lift-def}
-%		\boxed{
-%			M_q^{(n)} c
-%			\;:=\;
-%			\mathcal{R}_{N\to n}\Bigl( M_q^{(N)} \, \mathcal{E}_{n\to N} c \Bigr),
-%		}
-%	\end{equation}
-%	where $M_q^{(N)}$ is the (exact/aliased) multiplication operator on $\Pi_N^D$,
-%	i.e.\ $M_q^{(N)} \tilde c$ are the coefficients of $\Pi_N(q\,\tilde f)$ for $\tilde f\in\Pi_N^D$.
-%	Since $\deg(q)\le p$ and $\deg(f)\le n$, the product $qf$ has degree $\le n+p=N$, so \eqref{eq:Mq-lift-def}
-%	captures the correct single-projection semantics: multiply in a space large enough to represent $qf$,
-%	then restrict to degrees $\le n$.
-%	
-%	\paragraph{Goal.}
-%	Given input coefficients $c\in\mathbb{R}^{M_n}$ and multiplier coefficients $\{q_j\}_{j=0}^p$,
-%	compute
-%	\[
-%	y := M_q^{(n)}c \in \mathbb{R}^{M_n}
-%	\]
-%	\emph{without assembling} the dense triple-product matrix for $M_q^{(N)}$.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Stacked raising operator and its cached left inverse (lifted cutoff $N$)}
-%	
-%	For each degree $j=0,\dots,N-1$ define the stacked raising operator
-%	\[
-%	\mathcal{U}^{(N)}_j :=
-%	\begin{bmatrix}
-%		U^{(N)}_{1,j}\\ \vdots\\ U^{(N)}_{D,j}
-%	\end{bmatrix}
-%	\in \mathbb{R}^{(D\,m_{j+1})\times m_j}.
-%	\]
-%	Assume $\mathcal{U}^{(N)}_j$ has full column rank and define its left inverse
-%	\[
-%	\mathcal{U}^{(N)+}_j\in\mathbb{R}^{m_j\times (D\,m_{j+1})},
-%	\qquad
-%	\mathcal{U}^{(N)+}_j\,\mathcal{U}^{(N)}_j = I_{m_j}.
-%	\]
-%	Implementation: cache a sparse QR factorization (e.g.\ SuiteSparseQR) of $\mathcal{U}^{(N)}_j$ once per
-%	$(D,N,\kappa)$ and apply $\mathcal{U}^{(N)+}_j$ by QR solves.
-%	
-%	%----------------------------------------------------------------------
-%	\subsubsection{Operator-valued basis actions $\mathsf{P}_{j}(J^{(N)})$ and the Clenshaw apply}
-%	
-%	\paragraph{Why we need operator-valued basis actions.}
-%	In $D=1$, if $q(x)=\sum_{j=0}^p a_j\,\phi_j(x)$ then
-%	\[
-%	\Pi_N(q f) \;\Longleftrightarrow\; \sum_{j=0}^p a_j\,\phi_j(J^{(N)})\,c,
-%	\]
-%	and Clenshaw computes this sum using the scalar three-term recurrence for $\phi_j$.
-%	In $D>1$, the degree-$j$ simplex basis is vector-valued $\Phi^{(N)}_j(x)\in\mathbb{R}^{m_j}$, and the expansion
-%	$q(x)=\sum_j \Phi^{(N)}_j(x)^T q_j$ suggests the operator identity
-%	\begin{equation}
-%		\label{eq:op-expansion}
-%		\Pi_N(q f) \;\Longleftrightarrow\;
-%		\sum_{j=0}^p \left( \Phi^{(N)}_j(J^{(N)}) \right)^T q_j \; c.
-%	\end{equation}
-%	Thus we must define the \emph{operator-valued basis action}
-%	\[
-%	\Phi^{(N)}_j(J^{(N)}): \mathbb{R}^{M_N}\to \mathbb{R}^{m_j},
-%	\]
-%	and provide an apply-only recurrence to compute the contracted sum \eqref{eq:op-expansion} on an input vector $c$.
-%	
-%	\paragraph{Definition of $\Phi^{(N)}_j(J^{(N)})$ by lifted coordinate recurrence.}
-%	We define $\Phi^{(N)}_j(J^{(N)})$ as the unique sequence of linear maps
-%	\[
-%	\Phi^{(N)}_j(J^{(N)}):\mathbb{R}^{M_N}\to\mathbb{R}^{m_j},\qquad j=0,\dots,N,
-%	\]
-%	characterized by:
-%	\begin{itemize}
-%		\item Base cases:
-%		\[
-%		\Phi^{(N)}_{-1}(J^{(N)}) \equiv 0,\qquad
-%		\Phi^{(N)}_{0}(J^{(N)})\,c := c^{(0)} \in \mathbb{R}^{m_0}
-%		\quad\text{(extract degree-0 block).}
-%		\]
-%		\item Degree-raising recurrence (operator form):
-%		for $j=0,\dots,N-1$,
-%		\begin{equation}
-%			\label{eq:PhiJ-raise}
-%			\boxed{
-%				\Phi^{(N)}_{j+1}(J^{(N)})\,c
-%				:=
-%				\mathcal{U}^{(N)+T}_j\left(
-%				\begin{bmatrix}
-%					E^{(N)T}_{j+1} J^{(N)}_1\, \Pi^{(N)}_{j}\,c\\
-%					\vdots\\
-%					E^{(N)T}_{j+1} J^{(N)}_D\, \Pi^{(N)}_{j}\,c
-%				\end{bmatrix}
-%				-
-%				\begin{bmatrix}
-%					B^{(N)}_{1,j+1}\,\Phi^{(N)}_{j}(J^{(N)})\,c\\
-%					\vdots\\
-%					B^{(N)}_{D,j+1}\,\Phi^{(N)}_{j}(J^{(N)})\,c
-%				\end{bmatrix}
-%				-
-%				\begin{bmatrix}
-%					U^{(N)T}_{1,j}\,\Phi^{(N)}_{j-1}(J^{(N)})\,c\\
-%					\vdots\\
-%					U^{(N)T}_{D,j}\,\Phi^{(N)}_{j-1}(J^{(N)})\,c
-%				\end{bmatrix}
-%				\right),
-%			}
-%		\end{equation}
-%		where $\Pi^{(N)}_{j}$ denotes projection of a coefficient vector onto degrees $\le j$ (block truncate),
-%		i.e.\ $\Pi^{(N)}_{j} = \sum_{r=0}^j E^{(N)}_r E^{(N)T}_r$.
-%	\end{itemize}
-%	Equation \eqref{eq:PhiJ-raise} is the lifted-space analogue of the basis recurrence \eqref{eq:vector-3term-N},
-%	but written entirely in terms of extracted blocks and the cached left inverse. It defines the operator-valued
-%	maps $\Phi^{(N)}_j(J^{(N)})$ \emph{implicitly} and avoids symbolic recurrence coefficients.
-%	
-%\paragraph{Contracted operator polynomials (correct form).}
-%For $q_j\in\mathbb{R}^{m_j}$, define the degree-$j$ multiplication operator
-%\[
-%\mathsf{P}_j^{(N)}(q_j) : \mathbb{R}^{M_N}\to\mathbb{R}^{M_N}
-%\]
-%by
-%\[
-%\boxed{
-%	\mathsf{P}_j^{(N)}(q_j)\,c
-%	\;:=\;
-%	\sum_{|\beta|=j} q_\beta\, \phi_\beta(J^{(N)})\,c,
-%	\qquad c\in\mathbb{R}^{M_N}.
-%}
-%\]
-%Equivalently, $\mathsf{P}_j^{(N)}(q_j)c$ is the coefficient vector of
-%$\Pi_N\!\bigl( (\sum_{|\beta|=j} q_\beta \phi_\beta)\, f \bigr)$,
-%where $f\leftrightarrow c$.
-%
-%With this definition, the lifted multiplication operator is
-%\[
-%\boxed{
-%	M_q^{(N)} c
-%	=
-%	\sum_{j=0}^{p} \mathsf{P}_j^{(N)}(q_j)\,c.
-%}
-%\]
-%
-%	%----------------------------------------------------------------------
-%	\subsubsection{Apply-only Clenshaw-style evaluation of $M_q^{(n)}c$ in the lifted space}
-%	
-%	\paragraph{Lift inputs.}
-%	Given $c\in\mathbb{R}^{M_n}$, define $\tilde c:=\mathcal{E}_{n\to N}c\in\mathbb{R}^{M_N}$.
-%	Embed the multiplier coefficients into the lifted cutoff by setting $\tilde q_j := q_j$ for $0\le j\le p$
-%	and $\tilde q_j:=0$ for $p< j\le N$.
-%	
-%	\paragraph{Forward construction of $\Phi_j(J^{(N)})\tilde c$ by degree.}
-%	Using \eqref{eq:PhiJ-raise}, we can compute the sequence
-%	\[
-%	g_j := \Phi^{(N)}_j(J^{(N)})\,\tilde c \in \mathbb{R}^{m_j},\qquad j=0,\dots,N,
-%	\]
-%	by a forward sweep:
-%	\[
-%	g_{-1}=0,\qquad g_0 = E^{(N)T}_0 \tilde c,
-%	\]
-%	and for $j=0,\dots,N-1$,
-%	\[
-%	g_{j+1} \;=\; \Phi^{(N)}_{j+1}(J^{(N)})\,\tilde c
-%	\quad\text{via}\quad \eqref{eq:PhiJ-raise}.
-%	\]
-%	This sweep depends linearly on the \emph{input coefficients} $\tilde c$ and uses only
-%	SpMV with $J_i^{(N)}$, block extractions, and applications of $\mathcal{U}_j^{(N)+}$.
-%	
-%	\paragraph{Assemble the output in the lifted space and restrict.}
-%	Given the computed $g_j$, form
-%	\[
-%	\tilde y := \sum_{j=0}^{p} E^{(N)}_j \bigl(g_j \odot q_j\bigr) \in \mathbb{R}^{M_N},
-%	\]
-%	and restrict to the target cutoff:
-%	\begin{equation}
-%		\label{eq:final-restrict}
-%		\boxed{
-%			y := M_q^{(n)}c
-%			\;=\;
-%			\mathcal{R}_{N\to n}\,\tilde y.
-%		}
-%	\end{equation}
-%	Equations \eqref{eq:PhiJ-raise}--\eqref{eq:final-restrict} define an apply-only evaluation of the
-%	multiplication functional calculus $c\mapsto M_q^{(n)}c$ that depends explicitly on the input coefficients $c$,
-%	does not assemble triple-product tensors, and applies only sparse SpMV and cached $\mathcal{U}_j^{(N)+}$ solves.
-%	
-%	\paragraph{Complexity.}
-%	Let $M_N=\dim \Pi_N^D=\Theta(N^D)$ and assume $\mathrm{nnz}(J_i^{(N)})=\Theta(M_N)$.
-%	The forward sweep computes $g_1,\dots,g_N$; each level performs $D$ SpMV operations and one application of
-%	$\mathcal{U}_j^{(N)+}$. Thus the total cost is
-%	\[
-%	\mathrm{cost}\bigl(c\mapsto M_q^{(n)}c\bigr)
-%	=
-%	\Theta(D\,N\,M_N)
-%	+
-%	\sum_{j=0}^{N-1}\mathrm{cost}\bigl(\mathcal{U}_j^{(N)+}\text{-apply}\bigr),
-%	\]
-%	with all fill-in confined to the one-time QR factorization of $\mathcal{U}_j^{(N)}$.
-	%======================================================================
-	% End
-	%======================================================================
-	%======================================================================
-	\subsection{Multiplication operators via Jacobi matrices and an operator-valued Clenshaw algorithm}
-	\label{sec:multbyq_clenshaw_corrected}
-	%
-	% This section follows the operator-valued Clenshaw viewpoint of Olver--Townsend--Vasil
-	% (triangle case) and generalizes the construction to the $D$-simplex using total-degree blocks
-	% and stacked left-inverses.  See \cite{OTV_sparse_triangle} for the triangle derivation,
-	% especially the Jacobi-operator and multiplication-operator discussion around (2.11)--(2.12).
-	%
-	% \cite{OTV_sparse_triangle} is the attached PDF: \filecite{turn4file0}.
-	%======================================================================
-	
-	\paragraph{Spaces and ordering.}
-	Fix $D\ge 1$, parameters $\kappa\in\mathbb{R}^{D+1}$ with $\kappa_r>-1/2$, and a degree cutoff $n\ge 0$.
-	Let $\Pi_n^D$ be the space of polynomials of total degree $\le n$ on the simplex $\Delta^D$ with an
-	\emph{orthonormal} Jacobi simplex basis $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$ ordered by total degree.
-	Write
+\subsection{Multiplication operators via lifted operator-valued Clenshaw on the $D$-simplex}
+
+\paragraph{Polynomial spaces.}
+Let $D\ge 1$ and let $\kappa\in\mathbb{R}^{D+1}$ with $\kappa_r>-1/2$.
+Let $\{\phi_\alpha^{(\kappa)}\}_{|\alpha|\le n}$ denote the orthonormal Jacobi basis on the simplex
+$\Delta^D$, ordered in graded lexicographic order.
+Define
+\[
+\Pi_n^D := \operatorname{span}\{\phi_\alpha^{(\kappa)} : |\alpha|\le n\},
+\qquad
+M_n := \dim \Pi_n^D .
+\]
+Let
+\[
+\mathcal H_j^D := \operatorname{span}\{\phi_\alpha^{(\kappa)} : |\alpha|=j\},
+\qquad
+m_j := \dim \mathcal H_j^D = \binom{j+D-1}{D-1}.
+\]
+Then
+\[
+\Pi_n^D = \bigoplus_{j=0}^n \mathcal H_j^D,
+\qquad
+M_n = \sum_{j=0}^n m_j .
+\]
+
+For each $j$, let $E_j\in\mathbb{R}^{M_n\times m_j}$ denote the canonical embedding of the
+degree-$j$ block, and $E_j^T$ the corresponding extraction.
+
+\paragraph{Coordinate Jacobi matrices.}
+For each coordinate $x_i$, $i=1,\dots,D$, define the Jacobi (multiplication) matrix
+\[
+J_i^{(n)} \in \mathbb{R}^{M_n\times M_n},
+\qquad
+(J_i^{(n)})_{\ell k}
+=
+\langle \phi_\ell^{(\kappa)},\, x_i\,\phi_k^{(\kappa)}\rangle_{w_\kappa}.
+\]
+Since the basis is orthonormal and multiplication by $x_i$ is self-adjoint,
+\[
+J_i^{(n)} = (J_i^{(n)})^T .
+\]
+Moreover, multiplication by a coordinate changes total degree by at most one, so
+\[
+E_r^T J_i^{(n)} E_s = 0
+\quad\text{unless}\quad r\in\{s-1,s,s+1\}.
+\]
+
+Define the degree blocks
+\[
+\begin{aligned}
+	A_{i,j} &:= E_j^T J_i^{(p)} E_j \in \mathbb{R}^{m_j\times m_j},\\
+	B_{i,j} &:= E_j^T J_i^{(p)} E_{j+1} \in \mathbb{R}^{m_j\times m_{j+1}},\\
+	C_{i,j} &:= E_j^T J_i^{(p)} E_{j-1} = B_{i,j-1}^T .
+\end{aligned}
+\]
+
+\paragraph{Multiplication as operator functional calculus.}
+Let
+\[
+f(x) = \sum_{|\alpha|\le N} c_\alpha\,\phi_\alpha^{(\kappa)}(x),
+\qquad
+q(x) = \sum_{|\beta|\le p} q_\beta\,\phi_\beta^{(\kappa)}(x).
+\]
+Formally,
+\[
+q(x) f(x)
+=
+\Phi(x)^T\, q(J_1,\dots,J_D)\, c .
+\]
+To evaluate this stably and without aliasing, we work in a lifted space
+$\Pi_K^D$ with
+\[
+K \ge N + p,
+\]
+embed $c$ into $\Pi_K^D$, apply the multiplication operator there, and then restrict back
+to $\Pi_N^D$.
+
+\paragraph{Lifted unknowns.}
+Define lifted vectors
+\[
+v_j \in \mathbb{R}^{m_j M_K},
+\qquad j=0,1,\dots,p,
+\]
+and stack
+\[
+v :=
+\begin{bmatrix}
+	v_0\\ v_1\\ \vdots\\ v_p
+\end{bmatrix}
+\in \mathbb{R}^{M_p M_K}.
+\]
+Each $v_j$ represents the action of $\Phi_j(J)$ on function-space coefficients in $\Pi_K^D$.
+
+\paragraph{Stacked degree recurrence.}
+For each $j\ge 0$, the coordinate recurrences
+\[
+x_i \Phi_j
+=
+\Phi_{j-1} C_{i,j}
++
+\Phi_j A_{i,j}
++
+\Phi_{j+1} B_{i,j},
+\qquad i=1,\dots,D,
+\]
+are stacked into
+\[
+\mathcal C_j \Phi_{j-1}
++
+\mathcal A_j \Phi_j
+-
+(I \otimes J^{(K)}) \Phi_j
++
+\mathcal B_j \Phi_{j+1}
+= 0,
+\]
+where
+\[
+\mathcal A_j :=
+\begin{bmatrix}
+	A_{1,j}\\ \vdots\\ A_{D,j}
+\end{bmatrix},
+\quad
+\mathcal B_j :=
+\begin{bmatrix}
+	B_{1,j}\\ \vdots\\ B_{D,j}
+\end{bmatrix},
+\quad
+\mathcal C_j :=
+\begin{bmatrix}
+	C_{1,j}\\ \vdots\\ C_{D,j}
+\end{bmatrix}.
+\]
+This system has $D m_j$ equations but only $m_{j+1}$ unknowns in $\Phi_{j+1}$.
+
+\paragraph{Canonical pivot rule.}
+Let $\alpha=(\alpha_1,\dots,\alpha_D)$ denote the graded-lex multi-index.
+From the $D m_j$ stacked equations, select exactly $m_{j+1}$ rows by:
+\begin{itemize}
+	\item taking all rows from coordinate $i=1$,
+	\item from coordinate $i=2$, taking only those basis indices with $\alpha_1=0$,
+	\item from coordinate $i=3$, those with $\alpha_1=\alpha_2=0$,
+	\item $\vdots$
+	\item from coordinate $i=D$, those with $\alpha_1=\cdots=\alpha_{D-1}=0$.
+\end{itemize}
+The total number of selected rows is
+\[
+m_j + \binom{j+D-2}{D-2} + \cdots + 1
+=
+\binom{j+D}{D-1}
+=
+m_{j+1}.
+\]
+
+Let $P_j$ denote the row-selection operator implementing this pivot rule.
+Define the effective blocks
+\[
+A_j := P_j \mathcal A_j,
+\qquad
+B_j := P_j \mathcal B_j,
+\qquad
+C_j := P_j \mathcal C_j .
+\]
+
+\paragraph{Lifted block system.}
+Define the block operator $L_{p,K}(J)\in\mathbb{R}^{(M_p M_K)\times(M_p M_K)}$ by:
+\begin{itemize}
+	\item the $(0,0)$ block is $I_{M_K}$;
+	\item for $j=0,\dots,p-1$, the $(j+1)$-st block row is
 	\[
-	M_n := \dim \Pi_n^D,\qquad
-	\mathbb{R}^{M_n} \cong \bigoplus_{j=0}^{n} \mathbb{R}^{m_j},\quad m_j := \dim \mathcal{H}_j^D,
+	C_j \otimes I_{M_K}
+	\;+\;
+	A_j \otimes I_{M_K}
+	\;-\;
+	(I \otimes J^{(K)})
+	\;+\;
+	B_j \otimes I_{M_K},
 	\]
-	and block any coefficient vector $c\in\mathbb{R}^{M_n}$ as $c=[c_0;\dots;c_n]$, $c_j\in\mathbb{R}^{m_j}$.
-	
-	\paragraph{Degree embeddings/extractions.}
-	Let $E^{(n)}_j\in\mathbb{R}^{M_n\times m_j}$ embed a degree-$j$ block into the global vector (zeros elsewhere),
-	and $(E^{(n)}_j)^T$ extract:
+	acting on $(v_{j-1},v_j,v_{j+1})$.
+\end{itemize}
+This operator is square and block lower triangular.
+
+\paragraph{Central identity (operator-valued Clenshaw).}
+Let $q\in\mathbb{R}^{M_p}$ and let $c^{(K)}\in\mathbb{R}^{M_K}$ be the embedding of
+$c\in\mathbb{R}^{M_N}$ into $\Pi_K^D$.
+Then
+\[
+\boxed{
+	\begin{aligned}
+		L_{p,K}(J)^T v &= q \otimes c^{(K)},\\
+		M_q^{(K)} c^{(K)} &= (e_0^T \otimes I)\, v .
+\end{aligned}}
+\]
+Finally, the de-aliased multiplication operator on $\Pi_N^D$ is obtained by restriction:
+\[
+\boxed{
+	M_q^{(N)} c
+	=
+	R_{K\to N}\,
+	\bigl(M_q^{(K)} E_{N\to K} c\bigr).
+}
+\]
+
+\paragraph{Interpretation.}
+This construction evaluates the multiplication operator $q(J)$ by a lifted,
+block-triangular solve (operator-valued Clenshaw), avoiding aliasing by performing
+all intermediate operations in $\Pi_K^D$ before restriction.
+
+\subsubsection{Block back substitution (operator Clenshaw) without assembling $L_{p,K}(J)$}
+
+We keep the notation of the previous section.  Fix $D\ge 1$, degrees $p\ge 0$ and $K\ge 0$,
+and let $M_p=\dim\Pi_p^D$, $M_K=\dim\Pi_K^D$, $m_j=\dim\mathcal H_j^D$.
+
+\paragraph{Lifted unknowns and right-hand side.}
+For each $j=0,1,\dots,p$ define
+\[
+v_j \in \mathbb{R}^{m_j M_K},
+\qquad
+v := [v_0;v_1;\dots;v_p] \in \mathbb{R}^{M_p M_K}.
+\]
+Let the coefficient blocks of $q\in\Pi_p^D$ be $q_j\in\mathbb{R}^{m_j}$ so that
+$q=[q_0;\dots;q_p]\in\mathbb{R}^{M_p}$.
+Let $c^{(K)}\in\mathbb{R}^{M_K}$ denote the embedding of $c\in\mathbb{R}^{M_N}$ into $\Pi_K^D$
+(zeros in degrees $>N$).  Define the block right-hand side
+\[
+r_j := q_j \otimes c^{(K)} \in \mathbb{R}^{m_j M_K},
+\qquad
+r := [r_0;\dots;r_p] = q\otimes c^{(K)} \in \mathbb{R}^{M_p M_K}.
+\]
+
+\paragraph{Row selection (canonical pivot rule).}
+For each $j=0,\dots,p-1$ we stack the $D$ coordinate equations, yielding $D m_j$ rows.
+Let $P_j$ be the row-selection operator that picks exactly $m_{j+1}$ rows (the pivot rule used in code):
+\begin{itemize}
+	\item from coordinate block $i=1$: all $m_j$ rows,
+	\item from coordinate block $i=2$: only those with $\alpha_1=0$,
+	\item from coordinate block $i=3$: only those with $\alpha_1=\alpha_2=0$,
+	\item $\vdots$
+	\item from coordinate block $i=D$: only those with $\alpha_1=\cdots=\alpha_{D-1}=0$,
+\end{itemize}
+so that the total number of selected rows is $m_{j+1}$.
+
+Equivalently, there exists a deterministic map
+\[
+\sigma_j:\{1,\dots,m_{j+1}\}\to\{1,\dots,D\}\times\{1,\dots,m_j\},
+\qquad
+\sigma_j(\ell)=(i_\ell,b_\ell),
+\]
+such that the $\ell$-th selected row comes from coordinate $i_\ell$ and within-degree index $b_\ell$.
+
+\paragraph{Degree blocks from Jacobi matrices.}
+Using the Jacobi matrices in $\Pi_p^D$, define the per-coordinate blocks
+\[
+A_{i,j} := E_j^T J_i^{(p)} E_j \in \mathbb{R}^{m_j\times m_j},\qquad
+B_{i,j} := E_j^T J_i^{(p)} E_{j+1} \in \mathbb{R}^{m_j\times m_{j+1}},\qquad
+C_{i,j} := B_{i,j-1}^T .
+\]
+Stack across coordinates:
+\[
+\mathcal A_j := \begin{bmatrix} A_{1,j}\\ \vdots\\ A_{D,j}\end{bmatrix}\in\mathbb{R}^{(D m_j)\times m_j},\quad
+\mathcal B_j := \begin{bmatrix} B_{1,j}\\ \vdots\\ B_{D,j}\end{bmatrix}\in\mathbb{R}^{(D m_j)\times m_{j+1}},\quad
+\mathcal C_j := \begin{bmatrix} C_{1,j}\\ \vdots\\ C_{D,j}\end{bmatrix}\in\mathbb{R}^{(D m_j)\times m_{j-1}}.
+\]
+Apply the pivot rule:
+\[
+A_j := P_j \mathcal A_j \in \mathbb{R}^{m_{j+1}\times m_j},\qquad
+B_j := P_j \mathcal B_j \in \mathbb{R}^{m_{j+1}\times m_{j+1}},\qquad
+C_j := P_j \mathcal C_j \in \mathbb{R}^{m_{j+1}\times m_{j-1}} \ (j\ge 1).
+\]
+
+\paragraph{The row-picked function-space multiplication operator.}
+Let $J_i^{(K)}\in\mathbb{R}^{M_K\times M_K}$ be the Jacobi matrices in $\Pi_K^D$
+(the function-space multiplication operators).  Define a linear operator
+\[
+\mathcal J_j : \mathbb{R}^{m_j M_K}\to \mathbb{R}^{m_{j+1} M_K}
+\]
+by the canonical row map $\sigma_j$:
+write any $u\in\mathbb{R}^{m_j M_K}$ in $m_j$ blocks $u=[u^{(1)};\dots;u^{(m_j)}]$ with $u^{(b)}\in\mathbb{R}^{M_K}$,
+and define
+\[
+(\mathcal J_j u)^{(\ell)} := J_{i_\ell}^{(K)}\, u^{(b_\ell)} \in \mathbb{R}^{M_K},
+\qquad \ell=1,\dots,m_{j+1},
+\]
+where $\sigma_j(\ell)=(i_\ell,b_\ell)$.
+This is exactly the action assembled in the code by placing the row-picked blocks $-(I\otimes J_i^{(K)})$
+into the middle block column of $L_{p,K}(J)$.
+
+The adjoint $\mathcal J_j^T:\mathbb{R}^{m_{j+1}M_K}\to\mathbb{R}^{m_jM_K}$ satisfies
+\[
+(\mathcal J_j^T w)^{(b)} \;=\;\sum_{\ell:\,b_\ell=b} (J_{i_\ell}^{(K)})^T\, w^{(\ell)}
+\;=\;\sum_{\ell:\,b_\ell=b} J_{i_\ell}^{(K)}\, w^{(\ell)},
+\]
+using symmetry of $J_i^{(K)}$.
+
+\paragraph{Implicit block operator $L_{p,K}(J)$.}
+Define the block-lower-triangular operator $L_{p,K}(J)$ (never explicitly assembled for the back-substitution form)
+by its action on block vectors $[v_0;\dots;v_p]$:
+\begin{align*}
+	\text{block row }0:\qquad & I_{M_K}\, v_0,\\
+	\text{block row }(j+1),\ j=0,\dots,p-1:\qquad
+	& (C_j\otimes I_{M_K})\, v_{j-1}
+	\;+\;
+	\bigl(A_j\otimes I_{M_K} - \mathcal J_j\bigr)\, v_j
+	\;+\;
+	(B_j\otimes I_{M_K})\, v_{j+1}.
+\end{align*}
+(For $j=0$, the $C_0$ term is absent.)
+
+\paragraph{Central solve and extraction.}
+We compute $v$ from the \emph{upper-triangular} system
+\[
+L_{p,K}(J)^T v = r = q\otimes c^{(K)},
+\]
+and return
+\[
+M_q^{(K)} c^{(K)} = (e_0^T\otimes I)\, v = v_0 \in \mathbb{R}^{M_K}.
+\]
+Finally, the de-aliased multiplication operator on $\Pi_N^D$ is
+\[
+M_q^{(N)}c = R_{K\to N}\, v_0 .
+\]
+
+\paragraph{Block back substitution (operator Clenshaw).}
+Because $L_{p,K}(J)$ is block lower triangular with diagonal blocks
+\[
+D_0 := I_{M_K},\qquad
+D_j := B_{j-1}\otimes I_{M_K}\ \ (j=1,\dots,p),
+\]
+the transposed system $L_{p,K}(J)^T v=r$ is block upper triangular.
+Introduce the conventions $v_{p+1}\equiv 0$ and $v_{p+2}\equiv 0$.
+Then the back substitution proceeds for $j=p,p-1,\dots,0$ as follows:
+
+\begin{itemize}
+	\item For $j=p$:
 	\[
-	c_j=(E^{(n)}_j)^T c,\qquad c=\sum_{j=0}^n E^{(n)}_j c_j.
+	(B_{p-1}^T\otimes I_{M_K})\, v_p = r_p.
 	\]
-	
-	%----------------------------------------------------------------------
-	\subsubsection{Coordinate Jacobi matrices: block structure and symmetry}
-	
-	For each coordinate $x_i$ ($i=1,\dots,D$) define the coordinate-multiplication (Jacobi) matrix
+	\item For $1\le j\le p-1$:
 	\[
-	J_i^{(n)}\in\mathbb{R}^{M_n\times M_n},\qquad
-	(J_i^{(n)})_{\ell k}=\langle \phi_\ell^{(\kappa)},\,x_i\,\phi_k^{(\kappa)}\rangle_{w_\kappa}.
+	(B_{j-1}^T\otimes I_{M_K})\, v_j
+	=
+	r_j
+	-
+	\bigl(A_j\otimes I_{M_K} - \mathcal J_j\bigr)^T v_{j+1}
+	-
+	(C_{j+1}^T\otimes I_{M_K})\, v_{j+2}.
 	\]
-	Because the basis is orthonormal and $x_i$ is self-adjoint in $\langle\cdot,\cdot\rangle_{w_\kappa}$,
+	\item For $j=0$:
 	\[
-	J_i^{(n)}=(J_i^{(n)})^T\qquad\text{(real symmetric)}.
+	v_0
+	=
+	r_0
+	-
+	\bigl(A_0\otimes I_{M_K} - \mathcal J_0\bigr)^T v_1
+	-
+	(C_{1}^T\otimes I_{M_K})\, v_{2}.
 	\]
+\end{itemize}
+
+\paragraph{Diagonal solves are small (tensor structure).}
+Since $D_j=B_{j-1}\otimes I_{M_K}$, solving
+\[
+(B_{j-1}^T\otimes I_{M_K}) v_j = s_j
+\]
+reduces to applying $B_{j-1}^{-T}$ on the polynomial-block index while leaving the
+$\Pi_K^D$ (function-space) dimension untouched:
+if $v_j=[v_j^{(1)};\dots;v_j^{(m_j)}]$ and $s_j=[s_j^{(1)};\dots;s_j^{(m_j)}]$ with blocks in $\mathbb{R}^{M_K}$,
+then for each fixed function-space coordinate $t\in\{1,\dots,M_K\}$,
+\[
+\begin{bmatrix}
+	v_j^{(1)}[t]\\ \vdots\\ v_j^{(m_j)}[t]
+\end{bmatrix}
+=
+B_{j-1}^{-T}
+\begin{bmatrix}
+	s_j^{(1)}[t]\\ \vdots\\ s_j^{(m_j)}[t]
+\end{bmatrix}.
+\]
+In practice, $B_{j-1}\in\mathbb{R}^{m_j\times m_j}$ is small and dense, so we precompute
+a dense factorization of $B_{j-1}^T$ and apply it to each of the $M_K$ right-hand sides.
+
+\paragraph{Remarks.}
+\begin{itemize}
+	\item This recurrence is exactly the block back substitution for the system solved in code by
+	\texttt{spsolve(L.T, $q \otimes c$)}; it avoids assembling $L_{p,K}(J)$ by applying only the
+	block operators $A_j,B_j,C_j$ and $\mathcal J_j,\mathcal J_j^T$.
+	\item The only places the large $M_K\times M_K$ Jacobi matrices appear are in the applications
+	of $\mathcal J_j$ and $\mathcal J_j^T$, which are implemented by sparse SpMV with the $J_i^{(K)}$.
+\end{itemize}
+
 	
-	\paragraph{Degree-tridiagonal structure.}
-	Multiplication by a coordinate changes total degree by at most $1$, hence
-	\[
-	(E^{(n)}_r)^T\,J_i^{(n)}\,E^{(n)}_s=0\quad\text{unless}\quad r\in\{s-1,s,s+1\}.
-	\]
-	Define the degree-coupling blocks:
-	\begin{align*}
-		U^{(n)}_{i,j} &:= (E^{(n)}_{j+1})^T\,J_i^{(n)}\,E^{(n)}_{j}\in\mathbb{R}^{m_{j+1}\times m_j},\\
-		B^{(n)}_{i,j} &:= (E^{(n)}_{j})^T\,J_i^{(n)}\,E^{(n)}_{j}\in\mathbb{R}^{m_{j}\times m_j},\\
-		L^{(n)}_{i,j} &:= (E^{(n)}_{j-1})^T\,J_i^{(n)}\,E^{(n)}_{j}\in\mathbb{R}^{m_{j-1}\times m_j}.
-	\end{align*}
-	By symmetry,
-	\[
-	L^{(n)}_{i,j+1}=(U^{(n)}_{i,j})^T,\qquad B^{(n)}_{i,j}=(B^{(n)}_{i,j})^T.
-	\]
 	
-	%----------------------------------------------------------------------
-	\subsubsection{The multiplication operator $M_q^{(n)}$ as a matrix polynomial}
-	
-	Let $f\in\Pi_n^D$ have coefficient vector $c\in\mathbb{R}^{M_n}$:
-	\[
-	f(x)=\sum_{|\alpha|\le n} c_\alpha\,\phi_\alpha^{(\kappa)}(x).
-	\]
-	Given a polynomial $q$ (or a truncated Jacobi expansion) we define the \emph{aliased multiplication operator}
-	\[
-	\mathcal{M}_q^{(n)} := \Pi_n\circ(q\cdot)\circ\Pi_n:\Pi_n^D\to \Pi_n^D,
-	\]
-	and its coefficient action is
-	\[
-	\boxed{\,y=M_q^{(n)}\,c,\quad y,c\in\mathbb{R}^{M_n},\,}
-	\]
-	where $y$ are the coefficients of $\Pi_n(qf)$ in the same orthonormal basis.
-	
-	\paragraph{Functional calculus definition.}
-	Since $J_i^{(n)}$ represent coordinate multiplication on $\Pi_n^D$ (in coefficient space),
-	we define
-	\[
-	\boxed{\,M_q^{(n)} := q\!\left(J_1^{(n)},\dots,J_D^{(n)}\right)\,}
-	\]
-	in the standard multivariate matrix-polynomial sense (well-defined because the $J_i^{(n)}$ commute in the
-	infinite-dimensional setting, and in practice are consistent truncations of the same commuting operators;
-	this is exactly the viewpoint adopted in the triangle case in \cite{OTV_sparse_triangle}). % \filecite{turn4file0}
-	
-	\paragraph{Key correction (dependence on $c$).}
-	Everything below constructs an \emph{apply-only} algorithm for
-	\[
-	y = M_q^{(n)}c,
-	\]
-	i.e.\ the recurrence is driven by the input coefficient vector $c$ (coefficients of $f$), not just by $q$.
-	
-	%----------------------------------------------------------------------
-	\subsubsection{Why a lifted space is sometimes necessary}
-	
-	If $\deg q=p$, then $\deg(qf)\le n+p$ before projection back to $\Pi_n^D$.
-	To avoid aliasing during intermediate steps, we introduce a \emph{lift} degree $N\ge n+p$ and work on
-	$\Pi_N^D$:
-	\[
-	M_q^{(n)}c \;=\; (E^{(N\to n)})^T \Bigl( M_q^{(N)}\, E^{(n\to N)} c \Bigr),
-	\]
-	where $E^{(n\to N)}:\mathbb{R}^{M_n}\to\mathbb{R}^{M_N}$ is the natural zero-padding embedding of coefficients
-	and $(E^{(N\to n)})^T$ extracts degrees $\le n$.
-	In what follows we therefore describe the algorithm on $\Pi_N^D$ (drop the superscript $(N)$ for readability).
-	
-	%----------------------------------------------------------------------
-	\subsubsection{Stacked raising blocks and a left-inverse}
-	
-	For each degree $j$ define the stacked \emph{upward} block (compare the triangle $B_n$ in \cite{OTV_sparse_triangle}) % \filecite{turn4file0}
-	\[
-	\mathcal{B}_j :=
-	\begin{bmatrix}
-		U_{1,j}\\ \vdots\\ U_{D,j}
-	\end{bmatrix}
-	\in \mathbb{R}^{(D\,m_{j+1})\times m_j}.
-	\]
-	Assume $\mathcal{B}_j$ has full column rank; define a left-inverse (minimum-norm)
-	\[
-	\mathcal{B}_j^+\in\mathbb{R}^{m_j\times (D\,m_{j+1})},
-	\qquad \mathcal{B}_j^+\mathcal{B}_j = I_{m_j}.
-	\]
-	In code, $\mathcal{B}_j^+$ is applied via cached sparse QR factors of $\mathcal{B}_j$.
-	
-	%----------------------------------------------------------------------
-	\subsubsection{OTV-style operator-valued Clenshaw: the Kronecker formulation}
-	
-	\paragraph{Coefficient blocks of $q$.}
-	Represent $q$ in the \emph{same orthonormal simplex basis} on $\Pi_p^D$:
-	\[
-	q(x)=\sum_{j=0}^{p} \Phi_j(x)^T q_j,\qquad q_j\in\mathbb{R}^{m_j},
-	\]
-	where $\Phi_j(x)\in\mathbb{R}^{m_j}$ stacks the degree-$j$ basis functions.
-	
-	\paragraph{The central identity (triangle analogue (2.12)).}
-	The operator-valued Clenshaw algorithm is most cleanly stated as a \emph{triangular block solve}
-	in a lifted product space, exactly as in \cite[\S2.4]{OTV_sparse_triangle}. % \filecite{turn4file0}
-	Define unknowns
-	\[
-	v_j \in \mathbb{R}^{M_N},\qquad j=0,1,\dots,p,
-	\]
-	and stack $v:=[v_0;v_1;\dots;v_p]\in\mathbb{R}^{(p+1)M_N}$.
-	
-	Define a lower block-triangular operator $\widetilde{L}_p(J)$ such that the formal ``evaluation''
-	vector $(\Phi_0(J),\dots,\Phi_p(J))$ satisfies
-	\[
-	\widetilde{L}_p(J)\,
-	\begin{bmatrix}
-		\Phi_0(J)\\ \Phi_1(J)\\ \vdots\\ \Phi_p(J)
-	\end{bmatrix}
-	= e_0\otimes I,
-	\]
-	where $e_0$ is the first canonical basis vector in $\mathbb{R}^{p+1}$ and $I$ is the identity on $\mathbb{R}^{M_N}$.
-	
-	Then the multiplication operator action applied to $c$ is
-	\begin{equation}
-		\label{eq:OTV_mq_apply}
-		\boxed{
-			\quad y \;=\; M_q^{(N)}c
-			\;=\; (e_0^T\otimes I)\,\Bigl(\widetilde{L}_p(J)^{-T}\,(q\otimes c)\Bigr).
-			\quad}
-	\end{equation}
-	This is the exact analogue of the triangle formula
-	$M_q=(e_0\otimes I)\,L^{-T}q$ in \cite[\eqref{2.12}]{OTV_sparse_triangle}, % \filecite{turn4file0}
-	except that we explicitly apply it to $c$ by replacing $q$ with $q\otimes c$.
-	
-	\paragraph{Interpretation.}
-	Equation \eqref{eq:OTV_mq_apply} says:
-	\begin{itemize}
-		\item build a block upper-triangular system $\widetilde{L}_p(J)^T v = q\otimes c$;
-		\item solve it by back substitution (this \emph{is} operator-valued Clenshaw);
-		\item return $y=v_0$.
-	\end{itemize}
-	Thus the dependence on $c$ is explicit and unavoidable: the right-hand side is $q\otimes c$.
-	
-	%----------------------------------------------------------------------
-	\subsubsection{Making $\widetilde{L}_p(J)$ explicit using only SpMV with $J_i$ and $\mathcal{B}_j^+$}
-	
-	We now express the back-substitution update using only:
-	(i) sparse SpMV with $J_i$ on $\mathbb{R}^{M_N}$, and
-	(ii) applications of $\mathcal{B}_j^+$ on stacked degree blocks.
-	
-	\paragraph{Degree extract/stack operators.}
-	For any $w\in\mathbb{R}^{M_N}$ define $w^{(j)}:=(E^{(N)}_j)^T w\in\mathbb{R}^{m_j}$.
-	Define the stacked degree extraction
-	\[
-	\mathcal{E}_{j+1}(w)
-	:=
-	\begin{bmatrix}
-		(E^{(N)}_{j+1})^T(J_1 w)\\ \vdots\\ (E^{(N)}_{j+1})^T(J_D w)
-	\end{bmatrix}
-	\in\mathbb{R}^{D m_{j+1}}.
-	\]
-	
-	\paragraph{The two-step Clenshaw states.}
-	Define $b_{p+1}=0$, $b_{p+2}=0$ in $\mathbb{R}^{M_N}$.
-	For $j=p,p-1,\dots,0$, compute
-	\begin{equation}
-		\label{eq:clenshaw_correct}
-		\boxed{
-			\;
-			b_j
-			=
-			\underbrace{\Bigl(E^{(N)}_j q_j\Bigr)\,\langle\!\langle\,\cdot\,\rangle\!\rangle\,c}_{\text{degree-$j$ forcing from }q\otimes c}
-			\;+\;
-			\underbrace{E^{(N)}_j\Bigl(\mathcal{B}_j^+\,\mathcal{E}_{j+1}(b_{j+1})\Bigr)}_{\text{folded action of }J_i\text{ on }b_{j+1}}
-			\;-\;
-			\underbrace{E^{(N)}_j\Bigl(\mathcal{C}_{j+1}\,(E^{(N)}_{j+1})^T b_{j+2}\Bigr)}_{\text{two-step correction}},
-			\;}
-	\end{equation}
-	and return $y=b_0$ (and finally restrict degrees $\le n$ if you lifted).
-	
-	\paragraph{What is the contraction $\langle\!\langle\,\cdot\,\rangle\!\rangle$? (This fixes the earlier mistake.)}
-	In \eqref{eq:OTV_mq_apply}, the right-hand side is $q\otimes c$, not an entrywise product.
-	Accordingly, the correct ``forcing'' in \eqref{eq:clenshaw_correct} is:
-	\[
-	\Bigl(E^{(N)}_j q_j\Bigr)\,\langle\!\langle\,\cdot\,\rangle\!\rangle\,c
-	\;\equiv\;
-	(E^{(N)}_j\otimes I)\,(q_j\otimes c)
-	\;=\;
-	E^{(N)}_j q_j \;\otimes\; c,
-	\]
-	i.e.\ it is \emph{Kronecker injection}, not Hadamard multiplication.
-	In implementation you never explicitly form $q_j\otimes c$ as a dense tensor; rather,
-	you run the back substitution on block-vectors in $\mathbb{R}^{M_N}$ with the correct RHS assembly:
-	each degree-$j$ block RHS is $q_j$ \emph{times} the current $c$ in the Kronecker sense.
-	(For testing, you \emph{can} form $q\otimes c$ explicitly for small sizes to validate the recurrence.)
-	
-	\paragraph{The correction operator $\mathcal{C}_{j+1}$.}
-	The last term in \eqref{eq:clenshaw_correct} is the analogue of the $-\beta_{j+1}b_{j+2}$ term in 1D.
-	In OTV's triangle setting it is induced by the next-level coupling after applying the left-inverse
-	(see the discussion surrounding the left-inverse $B_n^+$). % \filecite{turn4file0}
-	For the $D$-simplex, the clean way to define it is:
-	\[
-	\mathcal{C}_{j+1}
-	:=
-	\mathcal{B}_j^+\,
-	\begin{bmatrix}
-		B_{1,j+1}\\ \vdots\\ B_{D,j+1}
-	\end{bmatrix}
-	\in\mathbb{R}^{m_j\times m_{j+1}}
-	\quad\text{(same-degree leakage folded down).}
-	\]
-	Then the two-step correction uses $b_{j+2}$ through its degree-$(j+1)$ block:
-	\[
-	E^{(N)}_j\Bigl(\mathcal{C}_{j+1}\,(E^{(N)}_{j+1})^T b_{j+2}\Bigr).
-	\]
-	This is precisely the piece that an ``ad hoc down-block subtraction'' gets wrong in $D>1$ if you do not
-	track the \emph{same-degree} leakage through $B_{i,j+1}$ before applying $\mathcal{B}_j^+$.
-	
-	\paragraph{Returned quantity.}
-	After the sweep, set
-	\[
-	y^{(N)} := b_0\in\mathbb{R}^{M_N},\qquad
-	y^{(n)} := (E^{(N\to n)})^T y^{(N)}\in\mathbb{R}^{M_n}.
-	\]
-	Then $y^{(n)}$ are exactly the coefficients of $\Pi_n(qf)$.
-	
-	%----------------------------------------------------------------------
-	\subsubsection{Worked schematic for $p=4$ (showing the dependence on $c$)}
-	
-	Let $p=4$, initialize $b_6=b_5=0$ and compute $b_4,\dots,b_0$ using \eqref{eq:clenshaw_correct}:
-	\begin{align*}
-		b_4 &=
-		\Bigl(E_4 q_4\Bigr)\langle\!\langle\,\cdot\,\rangle\!\rangle c,
-		\\
-		b_3 &=
-		\Bigl(E_3 q_3\Bigr)\langle\!\langle\,\cdot\,\rangle\!\rangle c
-		+
-		E_3\Bigl(\mathcal{B}_3^+\,\mathcal{E}_4(b_4)\Bigr),
-		\\
-		b_2 &=
-		\Bigl(E_2 q_2\Bigr)\langle\!\langle\,\cdot\,\rangle\!\rangle c
-		+
-		E_2\Bigl(\mathcal{B}_2^+\,\mathcal{E}_3(b_3)\Bigr)
-		-
-		E_2\Bigl(\mathcal{C}_3\,(E_3)^T b_4\Bigr),
-		\\
-		b_1 &=
-		\Bigl(E_1 q_1\Bigr)\langle\!\langle\,\cdot\,\rangle\!\rangle c
-		+
-		E_1\Bigl(\mathcal{B}_1^+\,\mathcal{E}_2(b_2)\Bigr)
-		-
-		E_1\Bigl(\mathcal{C}_2\,(E_2)^T b_3\Bigr),
-		\\
-		b_0 &=
-		\Bigl(E_0 q_0\Bigr)\langle\!\langle\,\cdot\,\rangle\!\rangle c
-		+
-		E_0\Bigl(\mathcal{B}_0^+\,\mathcal{E}_1(b_1)\Bigr)
-		-
-		E_0\Bigl(\mathcal{C}_1\,(E_1)^T b_2\Bigr),
-		\qquad y=b_0.
-	\end{align*}
-	Every line depends on $c$ via the RHS forcing and through the propagated $b_j$.
-	
-	%======================================================================
-	% Bib entry (adapt as you like)
-	%======================================================================
-	\begin{thebibliography}{1}
-		\bibitem{OTV_sparse_triangle}
-		S.~Olver, A.~Townsend, and G.~Vasil,
-		\newblock \emph{A sparse spectral method on triangles},
-		\newblock arXiv:1902.04863, 2019.
-	\end{thebibliography}
 	
 \end{document}
