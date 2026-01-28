@@ -12,7 +12,7 @@ from math import comb
 import time
 
 from jdmat import dmat_build_tprod_natural_pruned
-from jkmat import kmat_build_tprod
+from jkmat import kmat_build_tprod, kmat_build_tprod_pruned_csc
 from jquad_tprod import jquad_mapped_build_kappa
 from jbasis import (
   jbasis_build_structures,
@@ -283,6 +283,27 @@ class RefTetPrecomp:
     self.w_vol_lap = w_lap
     self.V_vol_lap = V_lap
 
+    # sparse first deriv maps
+    Dcols = []
+    kappa_rng_list = []
+    alpha_rng_list = []
+    tail_rng_list = []
+    invh_rng_list = []
+    
+    for axis in range(3):
+      kappa_rng = self.kappa_src + dk_natural(3, axis)
+      alpha_rng, tail_rng, invh_rng = jbasis_build_structures(3, self.n, kappa_rng)
+    
+      Daxis = dmat_build_tprod_natural_pruned(3, self.n, self.q_vol, self.kappa_src, axis)  # (Mrng x Msrc), sparse
+    
+      kappa_rng_list.append(kappa_rng)
+      alpha_rng_list.append(alpha_rng)
+      tail_rng_list.append(tail_rng)
+      invh_rng_list.append(invh_rng)
+      Dcols.append(Daxis)
+
+
+
     # faces
     self.face = []
     perms = all_S3_perms()
@@ -313,9 +334,30 @@ class RefTetPrecomp:
       for sigma in perms:
         u_loc, v_loc = tri_coords_perm(u, v, sigma)
         Xf_hat, _, _ = face_map_and_geom(face_id, u_loc, v_loc)
-        Vv, dVv_hat = jbasis_eval_all_with_grad(
+        #Vv, dVv_hat = jbasis_eval_all_with_grad(
+        #  Xf_hat, self.kappa_src, self.n, alpha_src, tail_src, invh_src, 3
+        #)
+        Vv = jbasis_eval_all(
           Xf_hat, self.kappa_src, self.n, alpha_src, tail_src, invh_src, 3
         )
+        
+        dVcols = []
+        for axis in range(3):
+          Vrng = jbasis_eval_all(
+            Xf_hat,
+            kappa_rng_list[axis],
+            self.n,
+            alpha_rng_list[axis],
+            tail_rng_list[axis],
+            invh_rng_list[axis],
+            3
+          )  # (nq, Mrng)
+        
+          # sparse matmul: (nq, Mrng) @ (Mrng, Msrc) = (nq, Msrc)
+          dV_axis = Vrng @ Dcols[axis]
+          dVcols.append(np.asarray(dV_axis))
+        
+        dVv_hat = np.stack(dVcols, axis=2)  # (nq, Msrc, 3)
         Xf_hat_sigma[sigma] = Xf_hat
         Vv_sigma[sigma] = Vv
         dVv_hat_sigma[sigma] = dVv_hat
@@ -376,7 +418,7 @@ class RefTetPrecomp:
     self.L_ref_csc = self.detJabs * self.L_ref_csc[:self.m,:]
     self.T_ref, self.F_ref = self._assemble_TF_full_sigma()
     #self.tau_ref = np.linalg.norm(self.L_ref, ord=2)**2 / np.linalg.norm(self.T_ref, ord=2)**2
-    #self.Mgam, self.R, self.Rinv, _ = self._precompute_precond()
+    #self.Mgam, self.R, self.Rinv, _ = self._precompute_precond() not used
     self.tau_ref = None
     self.Mgam=None
     self.R=None
@@ -822,68 +864,182 @@ class TetSteklovLeaf:
       "rank": rank,
       "economy": bool(economy),
     }
-
-  def solve(self, B):
+  def solve(self, B, *,
+            use_lsmr=True,
+            atol=1e-12,
+            btol=1e-12,
+            conlim=1e12,
+            maxiter=None,
+            verbose=True):
     """
-    Solve min ||A X - B||_F with minimum-norm solution.
+    Solve min ||A X - B||_F.
   
-    Parameters
-    ----------
-    B : array_like
-        Either
-          - shape (nrows,)          [single RHS]
-          - shape (nrows, p)        [multiple RHS]
+    If use_lsmr=True and A is full column rank (rank == nvars), use LSMR on the
+    right-preconditioned system:
+      min_y || A (E R^{-1}) y - b ||_2
+    then x = (E R^{-1}) y.
   
-    Returns
-    -------
-    X : ndarray
-        Either
-          - shape (nvars,)          if B was 1D
-          - shape (nvars, p)        if B was 2D
+    Falls back to the existing SPQR-based minimum-norm solve if rank < nvars
+    (or if use_lsmr=False).
+  
+    Parameters are chosen to be sane defaults for double precision.
     """
+  
     F = self.SPQR
-    Q = F["Q"]          # (nrows, q)
-    R = F["R"]          # (q, nvars), CSR
-    E = F["E"]
-    r = F["rank"]
+    Asp = F["Asp"]    # (nrows, nvars) CSC
+    Q = F["Q"]        # (nrows, q) CSC (economy => q ~ nvars typically)
+    R = F["R"]        # (q, nvars) CSR
+    E = F["E"]        # permutation, A[:,E] = Q R
+    r = int(F["rank"])
   
     B = np.asarray(B, dtype=np.float64)
-  
-    # --- normalize RHS to 2D ---
     is_vector = (B.ndim == 1)
     if is_vector:
-      B = B.reshape(-1, 1)          # (nrows, 1)
+      B = B.reshape(-1, 1)
   
-    # ensure Fortran order for multi-RHS
     if not B.flags.f_contiguous:
       B = np.asfortranarray(B)
   
     nrows, p = B.shape
-    nvars = R.shape[1]
+    nvars = Asp.shape[1]
   
-    # --- apply Q^T ---
-    Y = Q.T @ B                     # dense (q, p)
+    # If not using LSMR, or rank-deficient, fall back to your current SPQR solve.
+    # (Your current method returns the minimum-norm solution in the rank-deficient case.)
+    if (not use_lsmr) or (r < nvars):
+      print("USING SPQR")
+      # ---- existing SPQR solve path (verbatim logic) ----
+      Y = Q.T @ B
+      R11 = R[:r, :r]
+      Z = spla.spsolve_triangular(R11, Y[:r, :], lower=False)
+      Xpre = np.zeros((nvars, p), dtype=np.float64, order="F")
+      Xpre[:r, :] = Z
+      X = np.empty_like(Xpre)
+      X[E, :] = Xpre
+      return X[:, 0] if is_vector else X
   
-    # --- triangular solve on leading block ---
-    R11 = R[:r, :r]
-    Z = spla.spsolve_triangular(
-      R11,
-      Y[:r, :],
-      lower=False
-    )                               # (r, p)
+    # Full column rank: build right-preconditioned operator Atilde = A @ (E R^{-1})
+    # using only matvec/rmatvec; no explicit formation.
+    R11 = R[:nvars, :nvars]  # since r == nvars
+    # Ensure the triangular solve sees CSR/CSC it likes.
+    if not sps.isspmatrix_csr(R11):
+      R11 = R11.tocsr()
   
-    # --- pad in permuted coordinates ---
-    Xpre = np.zeros((nvars, p), dtype=np.float64, order="F")
-    Xpre[:r, :] = Z
+    def apply_P(Y2d):
+      """
+      Apply P = E R^{-1} to dense Y2d (nvars, k) -> X2d (nvars, k)
+      Steps:
+        z = R^{-1} y   (upper-tri solve in permuted coordinates)
+        x = E z        (scatter to original coordinates)
+      """
+      Z = spla.spsolve_triangular(R11, Y2d, lower=False)  # (nvars, k)
+      X2d = np.zeros((nvars, Y2d.shape[1]), dtype=np.float64, order="F")
+      X2d[E, :] = Z
+      return X2d
   
-    # --- unpermute back to original column order ---
-    X = np.empty_like(Xpre)
-    X[E, :] = Xpre
+    def apply_PT(W2d):
+      """
+      Apply P^T = (E R^{-1})^T = R^{-T} E^T to dense W2d (nvars, k).
+      Steps:
+        w_perm = E^T w   (gather in permuted coords)
+        y = R^{-T} w_perm (lower-tri solve with R^T)
+      """
+      Wperm = W2d[E, :]
+      Y = spla.spsolve_triangular(R11.T, Wperm, lower=True)  # (nvars, k)
+      return Y
   
-    # --- return shape consistent with input ---
-    if is_vector:
-      return X[:, 0]
-    return X
+    # Define LinearOperator for Atilde
+    def mv(y):
+      y = np.asarray(y, dtype=np.float64).reshape(-1)
+      Y2d = y.reshape(-1, 1)
+      X2d = apply_P(Y2d)
+      out = Asp @ X2d[:, 0]
+      return out
+  
+    def rmv(w):
+      w = np.asarray(w, dtype=np.float64).reshape(-1)
+      t = Asp.T @ w                      # (nvars,)
+      T2d = t.reshape(-1, 1)
+      y = apply_PT(T2d)[:, 0]            # (nvars,)
+      return y
+  
+    Atilde = spla.LinearOperator((nrows, nvars), matvec=mv, rmatvec=rmv, dtype=np.float64)
+  
+    # Solve each RHS (LSMR is single-RHS; loop is fine since p is usually kf or 1)
+    X = np.zeros((nvars, p), dtype=np.float64, order="F")
+    for j in range(p):
+      bj = B[:, j]
+      # Optional warm start is not supported by LSMR directly.
+      y, istop, itn, normr, normar, norma, conda, normx = spla.lsmr(
+        Atilde, bj,
+        atol=atol, btol=btol, conlim=conlim,
+        maxiter=maxiter, show=verbose
+      )
+      # x = P y
+      X[:, j] = apply_P(y.reshape(-1, 1))[:, 0]
+  
+    return X[:, 0] if is_vector else X
+
+  #def solve(self, B):
+  #  """
+  #  Solve min ||A X - B||_F with minimum-norm solution.
+  #
+  #  Parameters
+  #  ----------
+  #  B : array_like
+  #      Either
+  #        - shape (nrows,)          [single RHS]
+  #        - shape (nrows, p)        [multiple RHS]
+  #
+  #  Returns
+  #  -------
+  #  X : ndarray
+  #      Either
+  #        - shape (nvars,)          if B was 1D
+  #        - shape (nvars, p)        if B was 2D
+  #  """
+  #  F = self.SPQR
+  #  Q = F["Q"]          # (nrows, q)
+  #  R = F["R"]          # (q, nvars), CSR
+  #  E = F["E"]
+  #  r = F["rank"]
+  #
+  #  B = np.asarray(B, dtype=np.float64)
+  #
+  #  # --- normalize RHS to 2D ---
+  #  is_vector = (B.ndim == 1)
+  #  if is_vector:
+  #    B = B.reshape(-1, 1)          # (nrows, 1)
+  #
+  #  # ensure Fortran order for multi-RHS
+  #  if not B.flags.f_contiguous:
+  #    B = np.asfortranarray(B)
+  #
+  #  nrows, p = B.shape
+  #  nvars = R.shape[1]
+  #
+  #  # --- apply Q^T ---
+  #  Y = Q.T @ B                     # dense (q, p)
+  #
+  #  # --- triangular solve on leading block ---
+  #  R11 = R[:r, :r]
+  #  Z = spla.spsolve_triangular(
+  #    R11,
+  #    Y[:r, :],
+  #    lower=False
+  #  )                               # (r, p)
+  #
+  #  # --- pad in permuted coordinates ---
+  #  Xpre = np.zeros((nvars, p), dtype=np.float64, order="F")
+  #  Xpre[:r, :] = Z
+  #
+  #  # --- unpermute back to original column order ---
+  #  X = np.empty_like(Xpre)
+  #  X[E, :] = Xpre
+  #
+  #  # --- return shape consistent with input ---
+  #  if is_vector:
+  #    return X[:, 0]
+  #  return X
 
   def face_diameter(self, face_id):
     """
@@ -1602,13 +1758,13 @@ def make_manufactured_u_f_grad(m_max):
 
   # Example 1: a polynomial (degree controlled by m_max)
   # Feel free to replace this with ANY SymPy expression in x,y,z.
-  #u_expr = 0
-  #for a in range(m_max + 1):
-  #  for b in range(m_max + 1 - a):
-  #    for c in range(m_max + 1 - a - b):
-  #      coef = sp.Rational(1, 1 + a + b + c)
-  #      u_expr += coef * (x**a) * (y**b) * (z**c)
-  u_expr = sp.exp(sp.cos(x**2 + y**2 + z**2))
+  u_expr = 0
+  for a in range(m_max + 1):
+    for b in range(m_max + 1 - a):
+      for c in range(m_max + 1 - a - b):
+        coef = sp.Rational(1, 1 + a + b + c)
+        u_expr += coef * (x**a) * (y**b) * (z**c)
+  #u_expr = sp.exp(sp.cos(x**2 + y**2 + z**2))
 
   return make_sym_u_f_and_grad(u_expr, simplify=True)  
 
@@ -1773,7 +1929,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
                                    w_pde=1.0):
   """Convergence test on a single physical tet ."""
   if kappa_src is None:
-    kappa_src = np.array([0.5, 0.5, 0.5, 0.5], dtype=np.float64)
+    kappa_src = np.array([0.5, 1.5, 3, 2.7], dtype=np.float64)
   else:
     kappa_src = np.asarray(kappa_src, dtype=np.float64)
 
@@ -1799,7 +1955,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
   dofs = []
   errs = []
 
-  for n in range(10, n_max + 1):
+  for n in range(2, n_max + 1):
     q_vol = n + q_pad
     q_face = n + q_pad
     ref = RefTetPrecomp(n=n, q_vol=q_vol, q_face=q_face, kappa_src=kappa_src)
@@ -1837,7 +1993,7 @@ def run_single_tet_poly_convergence(m_max=8, n_max=14, q_pad=2,
 
 
 if __name__ == "__main__":
-  dofs, errs = run_single_tet_poly_convergence(m_max=12, n_max=17, q_pad=1, do_print=True, method="minls")
+  dofs, errs = run_single_tet_poly_convergence(m_max=8, n_max=15, q_pad=1, do_print=True, method="minls")
   s = np.zeros_like(errs)
   for j in range(len(errs)):
     if j == 0:
