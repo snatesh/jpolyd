@@ -227,6 +227,7 @@ if(JPOLYD_BUILD_CAPI)
     c_api/src/jquad_optim_c.cpp
     c_api/src/jkmat.cpp
     c_api/src/jdmat.cpp
+    c_api/src/jmult_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -317,6 +318,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/thread_control.py DESTINATION ${PY_SITE
 install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_optim.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jkmat.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jdmat.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jmult.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)
