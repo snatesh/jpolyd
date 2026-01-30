@@ -86,6 +86,50 @@ struct BasisClassic1D
   }
 }; // BasisClassic1D
 
+template<class Real>
+struct BlasGemm;
+
+// float specialization
+template<>
+struct BlasGemm<float>
+{
+  static inline void run(CBLAS_ORDER order,
+                         CBLAS_TRANSPOSE transA,
+                         CBLAS_TRANSPOSE transB,
+                         int M, int N, int K,
+                         float alpha,
+                         const float* A, int lda,
+                         const float* B, int ldb,
+                         float beta,
+                         float* C, int ldc)
+  {
+    cblas_sgemm(order, transA, transB, M, N, K,
+                alpha, A, lda, B, ldb, beta, C, ldc);
+  }
+};
+
+// double specialization
+template<>
+struct BlasGemm<double>
+{
+  static inline void run(CBLAS_ORDER order,
+                         CBLAS_TRANSPOSE transA,
+                         CBLAS_TRANSPOSE transB,
+                         int M, int N, int K,
+                         double alpha,
+                         const double* A, int lda,
+                         const double* B, int ldb,
+                         double beta,
+                         double* C, int ldc)
+  {
+    cblas_dgemm(order, transA, transB, M, N, K,
+                alpha, A, lda, B, ldb, beta, C, ldc);
+  }
+};
+
+
+
+
 /* Symmetric tridiagonal eigen-decomposition:
      - For Real = float  -> LAPACKE_sstevd
      - For Real = double -> LAPACKE_dstevd
