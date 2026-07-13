@@ -225,8 +225,8 @@ if(JPOLYD_BUILD_CAPI)
     bindings/c_api/src/jevd_c.cpp
     bindings/c_api/src/thread_control.cpp
     bindings/c_api/src/jquad_optim_c.cpp
-    bindings/c_api/src/jkmat.cpp
-    bindings/c_api/src/jdmat.cpp
+    bindings/c_api/src/jkmat_c.cpp
+    bindings/c_api/src/jdmat_c.cpp
     bindings/c_api/src/jmult_c.cpp
 
     # temporary / validation LSMR ctypes export
