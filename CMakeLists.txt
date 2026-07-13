@@ -218,20 +218,20 @@ set_target_properties(test_dct_vs_jacobi PROPERTIES
 # -------- C API shared lib --------
 if(JPOLYD_BUILD_CAPI)
   add_library(jpolyd_c SHARED
-    c_api/src/jweight_c.cpp
-    c_api/src/jquad_tprod_c.cpp
-    c_api/src/jbasis_c.cpp
-    c_api/src/jmat_c.cpp
-    c_api/src/jevd_c.cpp
-    c_api/src/thread_control.cpp
-    c_api/src/jquad_optim_c.cpp
-    c_api/src/jkmat.cpp
-    c_api/src/jdmat.cpp
-    c_api/src/jmult_c.cpp
+    bindings/c_api/src/jweight_c.cpp
+    bindings/c_api/src/jquad_tprod_c.cpp
+    bindings/c_api/src/jbasis_c.cpp
+    bindings/c_api/src/jmat_c.cpp
+    bindings/c_api/src/jevd_c.cpp
+    bindings/c_api/src/thread_control.cpp
+    bindings/c_api/src/jquad_optim_c.cpp
+    bindings/c_api/src/jkmat.cpp
+    bindings/c_api/src/jdmat.cpp
+    bindings/c_api/src/jmult_c.cpp
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/c_api/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/bindings/c_api/include
   )
   target_link_libraries(jpolyd_c 
     PRIVATE 
