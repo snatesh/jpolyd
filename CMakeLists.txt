@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(jpolyd LANGUAGES C CXX)
+project(jpolyd LANGUAGES C CXX Fortran)
 
 # -------- options --------
 option(JPOLYD_BUILD_CAPI "Build the C API shared library" ON)
@@ -228,6 +228,20 @@ if(JPOLYD_BUILD_CAPI)
     bindings/c_api/src/jkmat.cpp
     bindings/c_api/src/jdmat.cpp
     bindings/c_api/src/jmult_c.cpp
+
+    # temporary / validation LSMR ctypes export
+    bindings/c_api/src/lsmr_dense_shared.cpp
+
+    # SOL LSMR Fortran sources
+    third_party/lsmr/lsmrDataModule.f90
+    third_party/lsmr/lsmrblas.f90
+    third_party/lsmr/lsmrblasInterface.f90
+    third_party/lsmr/lsmrCheckModule.f90
+    third_party/lsmr/lsmrReverse.f90
+
+    # your Fortran C ABI shim
+    bindings/lsmr/lsmr_c_shim.f90
+
   )
   target_include_directories(jpolyd_c PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -319,6 +333,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jquad_optim.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jkmat.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jdmat.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jmult.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jlsmr.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)

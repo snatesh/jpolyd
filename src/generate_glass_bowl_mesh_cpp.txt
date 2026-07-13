@@ -1,0 +1,371 @@
+// src/generate_glass_bowl_mesh.cpp
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <vector>
+
+static inline int node_index(int iv, int ith, int iw,
+                             int Nv, int Ntheta, int Nw)
+{
+  // Nv, Ntheta, Nw are interval counts; nodes are (Nv+1)*Ntheta*(Nw+1)
+  int Nw_nodes = Nw + 1;
+  return ((iv * Ntheta) + ith) * Nw_nodes + iw;
+}
+
+// Inverse of node_index: recover (iv, ith, iw) from a node index
+static inline void node_coords_from_index(int idx,
+                                          int Nv, int Ntheta, int Nw,
+                                          int &iv, int &ith, int &iw)
+{
+  int Nw_nodes = Nw + 1;
+  iw = idx % Nw_nodes;
+  int tmp = idx / Nw_nodes;
+  ith = tmp % Ntheta;
+  iv = tmp / Ntheta;
+}
+
+int main(int argc, char** argv)
+{
+  if (argc < 2)
+  {
+    std::cerr << "Usage:\n"
+              << "  " << argv[0]
+              << " output.vtk [H] [R] [thickness] [Nv] [Ntheta] [Nw]\n\n"
+              << "Defaults:\n"
+              << "  H         = 0.10  (meters, height)\n"
+              << "  R         = 0.08  (meters, inner rim radius)\n"
+              << "  thickness = 0.005 (meters, wall thickness)\n"
+              << "  Nv        = 16    (height subdivisions)\n"
+              << "  Ntheta    = 32    (angular sectors)\n"
+              << "  Nw        = 4     (through-thickness subdivisions)\n";
+    return EXIT_FAILURE;
+  }
+
+  std::string outname = argv[1];
+
+  double H         = (argc > 2) ? std::atof(argv[2]) : 0.10;   // height
+  double R         = (argc > 3) ? std::atof(argv[3]) : 0.08;   // inner rim radius
+  double thickness = (argc > 4) ? std::atof(argv[4]) : 0.005;  // wall thickness
+  int Nv           = (argc > 5) ? std::atoi(argv[5]) : 16;
+  int Ntheta       = (argc > 6) ? std::atoi(argv[6]) : 32;
+  int Nw           = (argc > 7) ? std::atoi(argv[7]) : 4;
+
+  if (H <= 0.0 || R <= 0.0 || thickness <= 0.0 ||
+      Nv <= 0 || Ntheta <= 2 || Nw <= 0)
+  {
+    std::cerr << "Error: invalid parameters.\n";
+    return EXIT_FAILURE;
+  }
+
+  const int Nw_nodes = Nw + 1;
+  const int Nv_nodes = Nv + 1;
+
+  const int num_points =
+    Nv_nodes * Ntheta * Nw_nodes;
+
+  // Allocate points: (x,y,z) per node
+  std::vector<double> pts(3 * num_points);
+
+  // Build node coordinates
+  for (int iv = 0; iv < Nv_nodes; ++iv)
+  {
+    double v = static_cast<double>(iv) / static_cast<double>(Nv);  // in [0,1]
+    double z = H * v;
+
+    // inner/outer radii as functions of v
+    double rin  = R * std::sqrt(v);  // paraboloid: z = H (rin/R)^2
+    double rout = rin + thickness;
+
+    for (int ith = 0; ith < Ntheta; ++ith)
+    {
+      double theta = 2.0 * M_PI *
+                     static_cast<double>(ith) /
+                     static_cast<double>(Ntheta);
+
+      for (int iw = 0; iw < Nw_nodes; ++iw)
+      {
+        double w = static_cast<double>(iw) / static_cast<double>(Nw);  // in [0,1]
+        double r = rin + w * (rout - rin);
+
+        double x = r * std::cos(theta);
+        double y = r * std::sin(theta);
+
+        int idx = node_index(iv, ith, iw, Nv, Ntheta, Nw);
+
+        pts[3 * idx + 0] = x;
+        pts[3 * idx + 1] = y;
+        pts[3 * idx + 2] = z;
+      }
+    }
+  }
+
+  // Build tetra connectivity
+  // Each (iv, ith, iw) brick -> 5 tets
+  const int num_bricks = Nv * Ntheta * Nw;
+  const int tets_per_brick = 5;
+  const int num_tets = num_bricks * tets_per_brick;
+
+  std::vector<int> cells;
+  cells.reserve(num_tets * 5);  // 5 ints per tet: [4, i0, i1, i2, i3]
+
+  for (int iv = 0; iv < Nv; ++iv)
+  {
+    for (int ith = 0; ith < Ntheta; ++ith)
+    {
+      int ith_next = (ith + 1) % Ntheta;
+
+      for (int iw = 0; iw < Nw; ++iw)
+      {
+        int n000 = node_index(iv,     ith,      iw,     Nv, Ntheta, Nw);
+        int n100 = node_index(iv + 1, ith,      iw,     Nv, Ntheta, Nw);
+        int n010 = node_index(iv,     ith_next, iw,     Nv, Ntheta, Nw);
+        int n110 = node_index(iv + 1, ith_next, iw,     Nv, Ntheta, Nw);
+        int n001 = node_index(iv,     ith,      iw + 1, Nv, Ntheta, Nw);
+        int n101 = node_index(iv + 1, ith,      iw + 1, Nv, Ntheta, Nw);
+        int n011 = node_index(iv,     ith_next, iw + 1, Nv, Ntheta, Nw);
+        int n111 = node_index(iv + 1, ith_next, iw + 1, Nv, Ntheta, Nw);
+
+        // 5-tet decomposition of the brick (using main diagonal n000->n111)
+        // Tet 1: (n000, n100, n110, n111)
+        cells.push_back(4);
+        cells.push_back(n000);
+        cells.push_back(n100);
+        cells.push_back(n110);
+        cells.push_back(n111);
+
+        // Tet 2: (n000, n110, n010, n111)
+        cells.push_back(4);
+        cells.push_back(n000);
+        cells.push_back(n110);
+        cells.push_back(n010);
+        cells.push_back(n111);
+
+        // Tet 3: (n000, n001, n101, n111)
+        cells.push_back(4);
+        cells.push_back(n000);
+        cells.push_back(n001);
+        cells.push_back(n101);
+        cells.push_back(n111);
+
+        // Tet 4: (n000, n101, n100, n111)
+        cells.push_back(4);
+        cells.push_back(n000);
+        cells.push_back(n101);
+        cells.push_back(n100);
+        cells.push_back(n111);
+
+        // Tet 5: (n000, n010, n011, n111)
+        cells.push_back(4);
+        cells.push_back(n000);
+        cells.push_back(n010);
+        cells.push_back(n011);
+        cells.push_back(n111);
+      }
+    }
+  }
+
+  // Cell types: all 10 = VTK_TETRA
+  std::vector<int> cell_types(num_tets, 10);
+
+  // --- Explicit construction of boundary faces + tags ---
+  //
+  // Tag conventions:
+  //  1 = INNER  wall (iw = 0)
+  //  2 = OUTER  wall (iw = Nw)
+  //  3 = BOTTOM (iv = 0)
+  //  4 = TOP_RIM (iv = Nv)
+
+  std::vector<int> bfaces_nodes; // 3 per face
+  std::vector<int> bfaces_tags;  // 1 per face
+
+  auto add_face = [&](int n0, int n1, int n2, int tag) {
+    bfaces_nodes.push_back(n0);
+    bfaces_nodes.push_back(n1);
+    bfaces_nodes.push_back(n2);
+    bfaces_tags.push_back(tag);
+  };
+
+  auto wrap_theta = [&](int ith) {
+    if (ith >= Ntheta) return ith - Ntheta;
+    if (ith < 0)       return ith + Ntheta;
+    return ith;
+  };
+
+  // 1) INNER WALL (iw = 0), iv = 0..Nv-1, ith = 0..Ntheta-1
+  for (int iv = 0; iv < Nv; ++iv)
+  {
+    for (int ith = 0; ith < Ntheta; ++ith)
+    {
+      int ith_next = wrap_theta(ith + 1);
+
+      int A = node_index(iv,     ith,      0, Nv, Ntheta, Nw); // lower, current theta
+      int B = node_index(iv,     ith_next, 0, Nv, Ntheta, Nw); // lower, next theta
+      int C = node_index(iv + 1, ith,      0, Nv, Ntheta, Nw); // upper, current theta
+      int D = node_index(iv + 1, ith_next, 0, Nv, Ntheta, Nw); // upper, next theta
+
+      // Split quad A-B-D-C into two triangles: (A,C,D) and (A,D,B)
+      add_face(A, C, D, 1); // INNER
+      add_face(A, D, B, 1);
+    }
+  }
+
+  // 2) OUTER WALL (iw = Nw)
+  for (int iv = 0; iv < Nv; ++iv)
+  {
+    for (int ith = 0; ith < Ntheta; ++ith)
+    {
+      int ith_next = wrap_theta(ith + 1);
+
+      int A = node_index(iv,     ith,      Nw, Nv, Ntheta, Nw);
+      int B = node_index(iv,     ith_next, Nw, Nv, Ntheta, Nw);
+      int C = node_index(iv + 1, ith,      Nw, Nv, Ntheta, Nw);
+      int D = node_index(iv + 1, ith_next, Nw, Nv, Ntheta, Nw);
+
+      add_face(A, C, D, 2); // OUTER
+      add_face(A, D, B, 2);
+    }
+  }
+
+  // 3) BOTTOM DISC (iv = 0), between inner and outer radii
+  for (int ith = 0; ith < Ntheta; ++ith)
+  {
+    int ith_next = wrap_theta(ith + 1);
+
+    int A = node_index(0, ith,      0,  Nv, Ntheta, Nw); // inner, this theta
+    int B = node_index(0, ith_next, 0,  Nv, Ntheta, Nw); // inner, next theta
+    int C = node_index(0, ith,      Nw, Nv, Ntheta, Nw); // outer, this theta
+    int D = node_index(0, ith_next, Nw, Nv, Ntheta, Nw); // outer, next theta
+
+    // Split quad A-B-D-C into (A,B,C) and (B,D,C) for a consistent fan
+    add_face(A, B, C, 3); // BOTTOM
+    add_face(B, D, C, 3);
+  }
+
+  // 4) TOP RIM RING (iv = Nv), between inner and outer radii
+  for (int ith = 0; ith < Ntheta; ++ith)
+  {
+    int ith_next = wrap_theta(ith + 1);
+
+    int A = node_index(Nv, ith,      0,  Nv, Ntheta, Nw); // inner rim
+    int B = node_index(Nv, ith_next, 0,  Nv, Ntheta, Nw);
+    int C = node_index(Nv, ith,      Nw, Nv, Ntheta, Nw); // outer rim
+    int D = node_index(Nv, ith_next, Nw, Nv, Ntheta, Nw);
+
+    add_face(A, C, D, 4); // TOP_RIM
+    add_face(A, D, B, 4);
+  }
+
+  const int num_bfaces = static_cast<int>(bfaces_tags.size());
+
+  // --- Write legacy VTK unstructured grid for volume (tets) ---
+
+  std::ofstream ofs(outname.c_str());
+  if (!ofs)
+  {
+    std::cerr << "Error: could not open " << outname << " for writing.\n";
+    return EXIT_FAILURE;
+  }
+
+  ofs << "# vtk DataFile Version 3.0\n";
+  ofs << "Glass bowl mesh\n";
+  ofs << "ASCII\n";
+  ofs << "DATASET UNSTRUCTURED_GRID\n";
+
+  ofs << "POINTS " << num_points << " float\n";
+  for (int i = 0; i < num_points; ++i)
+  {
+    ofs << static_cast<float>(pts[3 * i + 0]) << " "
+        << static_cast<float>(pts[3 * i + 1]) << " "
+        << static_cast<float>(pts[3 * i + 2]) << "\n";
+  }
+
+  ofs << "\n";
+  ofs << "CELLS " << num_tets << " " << num_tets * 5 << "\n";
+  for (int c = 0; c < num_tets; ++c)
+  {
+    int base = c * 5;
+    ofs << cells[base + 0] << " "  // should be 4
+        << cells[base + 1] << " "
+        << cells[base + 2] << " "
+        << cells[base + 3] << " "
+        << cells[base + 4] << "\n";
+  }
+
+  ofs << "\n";
+  ofs << "CELL_TYPES " << num_tets << "\n";
+  for (int c = 0; c < num_tets; ++c)
+  {
+    ofs << cell_types[c] << "\n";
+  }
+
+  ofs.close();
+
+  // --- Write separate VTK for boundary faces with tags ---
+
+  std::string bfaces_name = outname + "_bfaces.vtk";
+  std::ofstream ofb(bfaces_name.c_str());
+  if (!ofb)
+  {
+    std::cerr << "Error: could not open " << bfaces_name << " for writing.\n";
+    return EXIT_FAILURE;
+  }
+
+  ofb << "# vtk DataFile Version 3.0\n";
+  ofb << "Glass bowl boundary faces\n";
+  ofb << "ASCII\n";
+  ofb << "DATASET UNSTRUCTURED_GRID\n";
+
+  ofb << "POINTS " << num_points << " float\n";
+  for (int i = 0; i < num_points; ++i)
+  {
+    ofb << static_cast<float>(pts[3 * i + 0]) << " "
+        << static_cast<float>(pts[3 * i + 1]) << " "
+        << static_cast<float>(pts[3 * i + 2]) << "\n";
+  }
+
+  ofb << "\n";
+  ofb << "CELLS " << num_bfaces << " " << num_bfaces * 4 << "\n";
+  for (int f = 0; f < num_bfaces; ++f)
+  {
+    int n0 = bfaces_nodes[3 * f + 0];
+    int n1 = bfaces_nodes[3 * f + 1];
+    int n2 = bfaces_nodes[3 * f + 2];
+    ofb << 3 << " " << n0 << " " << n1 << " " << n2 << "\n";
+  }
+
+  ofb << "\n";
+  ofb << "CELL_TYPES " << num_bfaces << "\n";
+  for (int f = 0; f < num_bfaces; ++f)
+  {
+    ofb << 5 << "\n"; // VTK_TRIANGLE
+  }
+
+  ofb << "\n";
+  ofb << "CELL_DATA " << num_bfaces << "\n";
+  ofb << "SCALARS boundary_tag int 1\n";
+  ofb << "LOOKUP_TABLE default\n";
+  for (int f = 0; f < num_bfaces; ++f)
+  {
+    ofb << bfaces_tags[f] << "\n";
+  }
+
+  ofb.close();
+
+  std::cout << "Wrote bowl mesh to " << outname << "\n"
+            << "  H         = " << H << " m\n"
+            << "  R         = " << R << " m (inner rim radius)\n"
+            << "  thickness = " << thickness << " m\n"
+            << "  Nv        = " << Nv << "\n"
+            << "  Ntheta    = " << Ntheta << "\n"
+            << "  Nw        = " << Nw << "\n"
+            << "  points    = " << num_points << "\n"
+            << "  tets      = " << num_tets << "\n"
+            << "Wrote boundary faces with tags to " << bfaces_name << "\n"
+            << "  boundary faces = " << num_bfaces << "\n"
+            << "  tags: 1=inner, 2=outer, 3=bottom, 4=top_rim\n";
+
+  return EXIT_SUCCESS;
+}
+

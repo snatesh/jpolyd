@@ -1,0 +1,1652 @@
+Loaded Jacobi: p_max=6 M=28 P0=36 P1=28
+
+============================================================
+Block type 0 (gradient)
+Classifier decision (M_low=3, mse_thresh=10): Jacobi
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.937 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.7105 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.937 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.7105 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.937 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.7105 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.937 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.9112 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=43.7105 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=71.4245 dB
+base_step=2  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.5 PSNR=59.5349 dB
+base_step=4  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=3.25 PSNR=57.2992 dB
+base_step=8  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2.625 PSNR=48.0064 dB
+base_step=16  DCT: bpp=2.5 PSNR=47.2759   Jac: bpp=2 PSNR=42.1772 dB
+
+
+============================================================
+Block type 1 (diagonal step)
+Classifier decision (M_low=3, mse_thresh=10): Jacobi
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=4.625 PSNR=18.1505   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=6.25 PSNR=20.0805   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7 PSNR=21.6019   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=2  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=76.635 dB
+base_step=4  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=61.5863 dB
+base_step=8  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+base_step=16  DCT: bpp=7.875 PSNR=26.2938   Jac: bpp=2 PSNR=52.9104 dB
+
+
+============================================================
+Block type 2 (high-frequency sinusoid)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2415 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2414 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2412 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.875 PSNR=20.3962 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.625 PSNR=20.3962 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3955 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3897 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2.875 PSNR=20.3771 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=20.6295 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.25 PSNR=20.6285 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.75 PSNR=20.6247 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.25 PSNR=20.6082 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.125 PSNR=20.4973 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=7.5 PSNR=21.1028 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.75 PSNR=21.0998 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=21.078 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.875 PSNR=20.9927 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=12 PSNR=26.266 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=10.125 PSNR=26.0409 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=8.25 PSNR=24.6987 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.375 PSNR=22.9361 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2415 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2414 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2412 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.875 PSNR=20.3962 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.625 PSNR=20.3962 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3955 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3897 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2.875 PSNR=20.3771 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=20.6295 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.25 PSNR=20.6285 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.75 PSNR=20.6247 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.25 PSNR=20.6082 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.125 PSNR=20.4973 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=7.5 PSNR=21.1028 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.75 PSNR=21.0998 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=21.078 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.875 PSNR=20.9927 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=12 PSNR=26.266 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=10.125 PSNR=26.0409 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=8.25 PSNR=24.6987 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.375 PSNR=22.9361 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2415 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2414 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2412 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2 PSNR=20.2408 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.875 PSNR=20.3962 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.625 PSNR=20.3962 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3955 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.3897 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=2.875 PSNR=20.3771 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=20.6295 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.25 PSNR=20.6285 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.75 PSNR=20.6247 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.25 PSNR=20.6082 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.125 PSNR=20.4973 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=7.5 PSNR=21.1028 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.75 PSNR=21.0998 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=5.625 PSNR=21.078 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=4.875 PSNR=20.9927 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=12 PSNR=26.266 dB
+base_step=2  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=10.125 PSNR=26.0409 dB
+base_step=4  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=8.25 PSNR=24.6987 dB
+base_step=8  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=6.375 PSNR=22.9361 dB
+base_step=16  DCT: bpp=1.5 PSNR=20.172   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=24.912   Jac: bpp=2 PSNR=20.2415 dB
+base_step=2  DCT: bpp=2 PSNR=24.912   Jac: bpp=2 PSNR=20.2414 dB
+base_step=4  DCT: bpp=2 PSNR=24.912   Jac: bpp=2 PSNR=20.2412 dB
+base_step=8  DCT: bpp=2 PSNR=24.912   Jac: bpp=2 PSNR=20.2408 dB
+base_step=16  DCT: bpp=2 PSNR=24.912   Jac: bpp=2 PSNR=20.2408 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.875 PSNR=20.3962 dB
+base_step=2  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.625 PSNR=20.3962 dB
+base_step=4  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.5 PSNR=20.3955 dB
+base_step=8  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.5 PSNR=20.3897 dB
+base_step=16  DCT: bpp=2 PSNR=24.912   Jac: bpp=2.875 PSNR=20.3771 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=24.912   Jac: bpp=5.625 PSNR=20.6295 dB
+base_step=2  DCT: bpp=2 PSNR=24.912   Jac: bpp=5.25 PSNR=20.6285 dB
+base_step=4  DCT: bpp=2 PSNR=24.912   Jac: bpp=4.75 PSNR=20.6247 dB
+base_step=8  DCT: bpp=2 PSNR=24.912   Jac: bpp=4.25 PSNR=20.6082 dB
+base_step=16  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.125 PSNR=20.4973 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=24.912   Jac: bpp=7.5 PSNR=21.1028 dB
+base_step=2  DCT: bpp=2 PSNR=24.912   Jac: bpp=6.75 PSNR=21.0998 dB
+base_step=4  DCT: bpp=2 PSNR=24.912   Jac: bpp=5.625 PSNR=21.078 dB
+base_step=8  DCT: bpp=2 PSNR=24.912   Jac: bpp=4.875 PSNR=20.9927 dB
+base_step=16  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.5 PSNR=20.6 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=24.912   Jac: bpp=12 PSNR=26.266 dB
+base_step=2  DCT: bpp=2 PSNR=24.912   Jac: bpp=10.125 PSNR=26.0409 dB
+base_step=4  DCT: bpp=2 PSNR=24.912   Jac: bpp=8.25 PSNR=24.6987 dB
+base_step=8  DCT: bpp=2 PSNR=24.912   Jac: bpp=6.375 PSNR=22.9361 dB
+base_step=16  DCT: bpp=2 PSNR=24.912   Jac: bpp=3.5 PSNR=20.6 dB
+
+
+============================================================
+Block type 3 (horizontal step edge)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.875 PSNR=16.862 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8617 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8604 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8521 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4 PSNR=17.9309 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.625 PSNR=17.9307 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.93 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.9225 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.912 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=5 PSNR=19.9517 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.75 PSNR=19.9497 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.9156 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.8479 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=7.625 PSNR=25.6933 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=7 PSNR=25.6735 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=6.875 PSNR=25.4726 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=6.375 PSNR=24.6867 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=5.625 PSNR=22.0431 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.875 PSNR=16.862 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8617 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8604 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=2.625 PSNR=16.8521 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4 PSNR=17.9309 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.625 PSNR=17.9307 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.93 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.9225 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=3.5 PSNR=17.912 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=5 PSNR=19.9517 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.75 PSNR=19.9497 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.9156 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=4.5 PSNR=19.8479 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=7.625 PSNR=25.6933 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=7 PSNR=25.6735 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=6.875 PSNR=25.4726 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=6.375 PSNR=24.6867 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.71   Jac: bpp=5.625 PSNR=22.0431 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.875 PSNR=16.862 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8617 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8604 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8521 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4 PSNR=17.9309 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.625 PSNR=17.9307 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.93 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.9225 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.912 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=5 PSNR=19.9517 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.75 PSNR=19.9497 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.9156 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.8479 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=7.625 PSNR=25.6933 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=7 PSNR=25.6735 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=6.875 PSNR=25.4726 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=6.375 PSNR=24.6867 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=5.625 PSNR=22.0431 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.875 PSNR=16.862 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8617 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8604 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=2.625 PSNR=16.8521 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4 PSNR=17.9309 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.625 PSNR=17.9307 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.93 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.9225 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=3.5 PSNR=17.912 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=5 PSNR=19.9517 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.75 PSNR=19.9497 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.9156 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=4.5 PSNR=19.8479 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=7.625 PSNR=25.6933 dB
+base_step=2  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=7 PSNR=25.6735 dB
+base_step=4  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=6.875 PSNR=25.4726 dB
+base_step=8  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=6.375 PSNR=24.6867 dB
+base_step=16  DCT: bpp=3.5 PSNR=34.5901   Jac: bpp=5.625 PSNR=22.0431 dB
+
+
+============================================================
+Block type 4 (vertical step edge)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=3.875 PSNR=16.862 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=3.625 PSNR=16.862 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=3.5 PSNR=16.8612 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=3.5 PSNR=16.8603 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=3.5 PSNR=16.8546 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=5.875 PSNR=17.9308 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=5.625 PSNR=17.9305 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=5.5 PSNR=17.9265 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=5.5 PSNR=17.9159 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=5.125 PSNR=17.8838 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=8.25 PSNR=19.951 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=8 PSNR=19.9481 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=7.75 PSNR=19.9321 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=7.125 PSNR=19.8715 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=6.25 PSNR=19.5835 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=15.5 PSNR=25.6068 dB
+base_step=2  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=12.875 PSNR=25.2393 dB
+base_step=4  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=11 PSNR=24.3186 dB
+base_step=8  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=9 PSNR=21.6997 dB
+base_step=16  DCT: bpp=2.5 PSNR=21.7125   Jac: bpp=6.875 PSNR=19.7061 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3 PSNR=25.4593   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=3 PSNR=25.4593   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=3 PSNR=25.4593   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=3 PSNR=25.4593   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=3 PSNR=25.4593   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3 PSNR=25.4593   Jac: bpp=3.875 PSNR=16.862 dB
+base_step=2  DCT: bpp=3 PSNR=25.4593   Jac: bpp=3.625 PSNR=16.862 dB
+base_step=4  DCT: bpp=3 PSNR=25.4593   Jac: bpp=3.5 PSNR=16.8612 dB
+base_step=8  DCT: bpp=3 PSNR=25.4593   Jac: bpp=3.5 PSNR=16.8603 dB
+base_step=16  DCT: bpp=3 PSNR=25.4593   Jac: bpp=3.5 PSNR=16.8546 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3 PSNR=25.4593   Jac: bpp=5.875 PSNR=17.9308 dB
+base_step=2  DCT: bpp=3 PSNR=25.4593   Jac: bpp=5.625 PSNR=17.9305 dB
+base_step=4  DCT: bpp=3 PSNR=25.4593   Jac: bpp=5.5 PSNR=17.9265 dB
+base_step=8  DCT: bpp=3 PSNR=25.4593   Jac: bpp=5.5 PSNR=17.9159 dB
+base_step=16  DCT: bpp=3 PSNR=25.4593   Jac: bpp=5.125 PSNR=17.8838 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3 PSNR=25.4593   Jac: bpp=8.25 PSNR=19.951 dB
+base_step=2  DCT: bpp=3 PSNR=25.4593   Jac: bpp=8 PSNR=19.9481 dB
+base_step=4  DCT: bpp=3 PSNR=25.4593   Jac: bpp=7.75 PSNR=19.9321 dB
+base_step=8  DCT: bpp=3 PSNR=25.4593   Jac: bpp=7.125 PSNR=19.8715 dB
+base_step=16  DCT: bpp=3 PSNR=25.4593   Jac: bpp=6.25 PSNR=19.5835 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3 PSNR=25.4593   Jac: bpp=15.5 PSNR=25.6068 dB
+base_step=2  DCT: bpp=3 PSNR=25.4593   Jac: bpp=12.875 PSNR=25.2393 dB
+base_step=4  DCT: bpp=3 PSNR=25.4593   Jac: bpp=11 PSNR=24.3186 dB
+base_step=8  DCT: bpp=3 PSNR=25.4593   Jac: bpp=9 PSNR=21.6997 dB
+base_step=16  DCT: bpp=3 PSNR=25.4593   Jac: bpp=6.875 PSNR=19.7061 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.875 PSNR=16.862 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.625 PSNR=16.862 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8612 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8603 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8546 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.875 PSNR=17.9308 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.625 PSNR=17.9305 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.5 PSNR=17.9265 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.5 PSNR=17.9159 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.125 PSNR=17.8838 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=8.25 PSNR=19.951 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=8 PSNR=19.9481 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=7.75 PSNR=19.9321 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=7.125 PSNR=19.8715 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=6.25 PSNR=19.5835 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=15.5 PSNR=25.6068 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=12.875 PSNR=25.2393 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=11 PSNR=24.3186 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=9 PSNR=21.6997 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=6.875 PSNR=19.7061 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.902 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.902 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9019 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9019 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=2 PSNR=11.9004 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.875 PSNR=16.862 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.625 PSNR=16.862 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8612 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8603 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=3.5 PSNR=16.8546 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.875 PSNR=17.9308 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.625 PSNR=17.9305 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.5 PSNR=17.9265 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.5 PSNR=17.9159 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=5.125 PSNR=17.8838 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=8.25 PSNR=19.951 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=8 PSNR=19.9481 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=7.75 PSNR=19.9321 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=7.125 PSNR=19.8715 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=6.25 PSNR=19.5835 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=15.5 PSNR=25.6068 dB
+base_step=2  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=12.875 PSNR=25.2393 dB
+base_step=4  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=11 PSNR=24.3186 dB
+base_step=8  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=9 PSNR=21.6997 dB
+base_step=16  DCT: bpp=3.5 PSNR=40.9258   Jac: bpp=6.875 PSNR=19.7061 dB
+
+
+============================================================
+Block type 5 (corner (quadrant split))
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2 PSNR=13.1823 dB
+base_step=2  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2 PSNR=13.1823 dB
+base_step=4  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2 PSNR=13.1822 dB
+base_step=8  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2 PSNR=13.1822 dB
+base_step=16  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2 PSNR=13.1822 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=3 PSNR=16.862 dB
+base_step=4  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=3 PSNR=16.8615 dB
+base_step=8  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2.75 PSNR=16.8613 dB
+base_step=16  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=2.75 PSNR=16.8613 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=2  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=4  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=4.125 PSNR=17.7309 dB
+base_step=8  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=3.875 PSNR=17.7261 dB
+base_step=16  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=3.875 PSNR=17.7158 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=5.5 PSNR=19.9514 dB
+base_step=2  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=5.5 PSNR=19.9509 dB
+base_step=4  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=5.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=4.375 PSNR=19.9043 dB
+base_step=16  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=4.875 PSNR=19.7883 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=9.5 PSNR=23.2421 dB
+base_step=2  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=8.375 PSNR=23.1119 dB
+base_step=4  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=7 PSNR=22.8659 dB
+base_step=8  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=6 PSNR=22.036 dB
+base_step=16  DCT: bpp=3.875 PSNR=19.8184   Jac: bpp=5.25 PSNR=20.3253 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2 PSNR=13.1823 dB
+base_step=2  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2 PSNR=13.1823 dB
+base_step=4  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2 PSNR=13.1822 dB
+base_step=8  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2 PSNR=13.1822 dB
+base_step=16  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2 PSNR=13.1822 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=3 PSNR=16.862 dB
+base_step=4  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=3 PSNR=16.8615 dB
+base_step=8  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2.75 PSNR=16.8613 dB
+base_step=16  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=2.75 PSNR=16.8613 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=2  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=4  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=4.125 PSNR=17.7309 dB
+base_step=8  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=3.875 PSNR=17.7261 dB
+base_step=16  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=3.875 PSNR=17.7158 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=5.5 PSNR=19.9514 dB
+base_step=2  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=5.5 PSNR=19.9509 dB
+base_step=4  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=5.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=4.375 PSNR=19.9043 dB
+base_step=16  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=4.875 PSNR=19.7883 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=9.5 PSNR=23.2421 dB
+base_step=2  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=8.375 PSNR=23.1119 dB
+base_step=4  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=7 PSNR=22.8659 dB
+base_step=8  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=6 PSNR=22.036 dB
+base_step=16  DCT: bpp=4.75 PSNR=22.2658   Jac: bpp=5.25 PSNR=20.3253 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2 PSNR=13.1823 dB
+base_step=2  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2 PSNR=13.1823 dB
+base_step=4  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2 PSNR=13.1822 dB
+base_step=8  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2 PSNR=13.1822 dB
+base_step=16  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2 PSNR=13.1822 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=3 PSNR=16.862 dB
+base_step=4  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=3 PSNR=16.8615 dB
+base_step=8  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2.75 PSNR=16.8613 dB
+base_step=16  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=2.75 PSNR=16.8613 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=2  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=4  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=4.125 PSNR=17.7309 dB
+base_step=8  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=3.875 PSNR=17.7261 dB
+base_step=16  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=3.875 PSNR=17.7158 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=5.5 PSNR=19.9514 dB
+base_step=2  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=5.5 PSNR=19.9509 dB
+base_step=4  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=5.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=4.375 PSNR=19.9043 dB
+base_step=16  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=4.875 PSNR=19.7883 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=9.5 PSNR=23.2421 dB
+base_step=2  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=8.375 PSNR=23.1119 dB
+base_step=4  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=7 PSNR=22.8659 dB
+base_step=8  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=6 PSNR=22.036 dB
+base_step=16  DCT: bpp=6.125 PSNR=27.2895   Jac: bpp=5.25 PSNR=20.3253 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2 PSNR=13.1823 dB
+base_step=2  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2 PSNR=13.1823 dB
+base_step=4  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2 PSNR=13.1822 dB
+base_step=8  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2 PSNR=13.1822 dB
+base_step=16  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2 PSNR=13.1822 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=3 PSNR=16.8621 dB
+base_step=2  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=3 PSNR=16.862 dB
+base_step=4  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=3 PSNR=16.8615 dB
+base_step=8  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2.75 PSNR=16.8613 dB
+base_step=16  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=2.75 PSNR=16.8613 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=2  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=4.125 PSNR=17.7335 dB
+base_step=4  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=4.125 PSNR=17.7309 dB
+base_step=8  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=3.875 PSNR=17.7261 dB
+base_step=16  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=3.875 PSNR=17.7158 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=5.5 PSNR=19.9514 dB
+base_step=2  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=5.5 PSNR=19.9509 dB
+base_step=4  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=5.5 PSNR=19.9466 dB
+base_step=8  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=4.375 PSNR=19.9043 dB
+base_step=16  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=4.875 PSNR=19.7883 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=9.5 PSNR=23.2421 dB
+base_step=2  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=8.375 PSNR=23.1119 dB
+base_step=4  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=7 PSNR=22.8659 dB
+base_step=8  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=6 PSNR=22.036 dB
+base_step=16  DCT: bpp=6.625 PSNR=29.3333   Jac: bpp=5.25 PSNR=20.3253 dB
+
+
+============================================================
+Block type 6 (slow cosine variation)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1797 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1796 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1734 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.75 PSNR=28.1143 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.1125 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.105 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.0798 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.375 PSNR=28.0002 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=39.8792 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=39.7071 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5 PSNR=39.438 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=7.5 PSNR=44.0746 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=43.031 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=8.125 PSNR=50.6835 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=6.5 PSNR=44.3228 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1797 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1796 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1734 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.75 PSNR=28.1143 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.1125 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.105 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.0798 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.375 PSNR=28.0002 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=39.8792 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=39.7071 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5 PSNR=39.438 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=7.5 PSNR=44.0746 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=43.031 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=8.125 PSNR=50.6835 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=6.5 PSNR=44.3228 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1797 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1796 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1734 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.75 PSNR=28.1143 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.1125 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.105 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.0798 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.375 PSNR=28.0002 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=39.8792 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=39.7071 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5 PSNR=39.438 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=7.5 PSNR=44.0746 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=43.031 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=8.125 PSNR=50.6835 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=6.5 PSNR=44.3228 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1797 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1796 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1789 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=2 PSNR=22.1734 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.75 PSNR=28.1143 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.1125 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.105 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.5 PSNR=28.0798 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=3.375 PSNR=28.0002 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=39.8792 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=39.7071 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5 PSNR=39.438 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=7.5 PSNR=44.0746 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.875 PSNR=43.031 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=8.125 PSNR=50.6835 dB
+base_step=2  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=6.5 PSNR=44.3228 dB
+base_step=4  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=5.625 PSNR=40.4618 dB
+base_step=8  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.875 PSNR=38.6905 dB
+base_step=16  DCT: bpp=3.5 PSNR=46.3597   Jac: bpp=4.125 PSNR=36.703 dB
+
+
+============================================================
+Block type 7 (medium texture)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=2 PSNR=24.655 dB
+base_step=2  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=2 PSNR=24.655 dB
+base_step=4  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=2 PSNR=24.6544 dB
+base_step=8  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=2 PSNR=24.6544 dB
+base_step=16  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=2 PSNR=24.6357 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=3.625 PSNR=25.6264 dB
+base_step=2  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=3.625 PSNR=25.6253 dB
+base_step=4  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=3.5 PSNR=25.6212 dB
+base_step=8  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=3.5 PSNR=25.6071 dB
+base_step=16  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=3.125 PSNR=25.5755 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=5.25 PSNR=27.4329 dB
+base_step=2  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=5.25 PSNR=27.4279 dB
+base_step=4  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=4.875 PSNR=27.4107 dB
+base_step=8  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=4.625 PSNR=27.326 dB
+base_step=16  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=4 PSNR=27.0459 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=7.5 PSNR=28.8576 dB
+base_step=2  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=6.75 PSNR=28.8312 dB
+base_step=4  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=6.25 PSNR=28.7631 dB
+base_step=8  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=5.125 PSNR=28.3739 dB
+base_step=16  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=10.625 PSNR=40.9399 dB
+base_step=2  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=8.875 PSNR=37.3584 dB
+base_step=4  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=7.375 PSNR=32.6996 dB
+base_step=8  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=5.5 PSNR=29.4948 dB
+base_step=16  DCT: bpp=3.375 PSNR=26.43   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5 PSNR=32.5497   Jac: bpp=2 PSNR=24.655 dB
+base_step=2  DCT: bpp=5 PSNR=32.5497   Jac: bpp=2 PSNR=24.655 dB
+base_step=4  DCT: bpp=5 PSNR=32.5497   Jac: bpp=2 PSNR=24.6544 dB
+base_step=8  DCT: bpp=5 PSNR=32.5497   Jac: bpp=2 PSNR=24.6544 dB
+base_step=16  DCT: bpp=5 PSNR=32.5497   Jac: bpp=2 PSNR=24.6357 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5 PSNR=32.5497   Jac: bpp=3.625 PSNR=25.6264 dB
+base_step=2  DCT: bpp=5 PSNR=32.5497   Jac: bpp=3.625 PSNR=25.6253 dB
+base_step=4  DCT: bpp=5 PSNR=32.5497   Jac: bpp=3.5 PSNR=25.6212 dB
+base_step=8  DCT: bpp=5 PSNR=32.5497   Jac: bpp=3.5 PSNR=25.6071 dB
+base_step=16  DCT: bpp=5 PSNR=32.5497   Jac: bpp=3.125 PSNR=25.5755 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5 PSNR=32.5497   Jac: bpp=5.25 PSNR=27.4329 dB
+base_step=2  DCT: bpp=5 PSNR=32.5497   Jac: bpp=5.25 PSNR=27.4279 dB
+base_step=4  DCT: bpp=5 PSNR=32.5497   Jac: bpp=4.875 PSNR=27.4107 dB
+base_step=8  DCT: bpp=5 PSNR=32.5497   Jac: bpp=4.625 PSNR=27.326 dB
+base_step=16  DCT: bpp=5 PSNR=32.5497   Jac: bpp=4 PSNR=27.0459 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5 PSNR=32.5497   Jac: bpp=7.5 PSNR=28.8576 dB
+base_step=2  DCT: bpp=5 PSNR=32.5497   Jac: bpp=6.75 PSNR=28.8312 dB
+base_step=4  DCT: bpp=5 PSNR=32.5497   Jac: bpp=6.25 PSNR=28.7631 dB
+base_step=8  DCT: bpp=5 PSNR=32.5497   Jac: bpp=5.125 PSNR=28.3739 dB
+base_step=16  DCT: bpp=5 PSNR=32.5497   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5 PSNR=32.5497   Jac: bpp=10.625 PSNR=40.9399 dB
+base_step=2  DCT: bpp=5 PSNR=32.5497   Jac: bpp=8.875 PSNR=37.3584 dB
+base_step=4  DCT: bpp=5 PSNR=32.5497   Jac: bpp=7.375 PSNR=32.6996 dB
+base_step=8  DCT: bpp=5 PSNR=32.5497   Jac: bpp=5.5 PSNR=29.4948 dB
+base_step=16  DCT: bpp=5 PSNR=32.5497   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.655 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.655 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6544 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6544 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6357 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.625 PSNR=25.6264 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.625 PSNR=25.6253 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.5 PSNR=25.6212 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.5 PSNR=25.6071 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.125 PSNR=25.5755 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.25 PSNR=27.4329 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.25 PSNR=27.4279 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.875 PSNR=27.4107 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.625 PSNR=27.326 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4 PSNR=27.0459 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=7.5 PSNR=28.8576 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=6.75 PSNR=28.8312 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=6.25 PSNR=28.7631 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.125 PSNR=28.3739 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=10.625 PSNR=40.9399 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=8.875 PSNR=37.3584 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=7.375 PSNR=32.6996 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.5 PSNR=29.4948 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.655 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.655 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6544 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6544 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=2 PSNR=24.6357 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.625 PSNR=25.6264 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.625 PSNR=25.6253 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.5 PSNR=25.6212 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.5 PSNR=25.6071 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=3.125 PSNR=25.5755 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.25 PSNR=27.4329 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.25 PSNR=27.4279 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.875 PSNR=27.4107 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.625 PSNR=27.326 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4 PSNR=27.0459 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=7.5 PSNR=28.8576 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=6.75 PSNR=28.8312 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=6.25 PSNR=28.7631 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.125 PSNR=28.3739 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.375 PSNR=27.1127 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=10.625 PSNR=40.9399 dB
+base_step=2  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=8.875 PSNR=37.3584 dB
+base_step=4  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=7.375 PSNR=32.6996 dB
+base_step=8  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=5.5 PSNR=29.4948 dB
+base_step=16  DCT: bpp=5.125 PSNR=34.7229   Jac: bpp=4.375 PSNR=27.1127 dB
+
+
+============================================================
+Block type 8 (random noise)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=2 PSNR=10.7133 dB
+base_step=2  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=2 PSNR=10.7133 dB
+base_step=4  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=2 PSNR=10.7133 dB
+base_step=8  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=2 PSNR=10.7132 dB
+base_step=16  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=2 PSNR=10.7127 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=3.625 PSNR=11.1863 dB
+base_step=2  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=3.5 PSNR=11.1863 dB
+base_step=4  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=3.25 PSNR=11.1861 dB
+base_step=8  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=3.25 PSNR=11.1854 dB
+base_step=16  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=3.25 PSNR=11.1844 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=5.75 PSNR=11.5389 dB
+base_step=2  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=5.625 PSNR=11.5388 dB
+base_step=4  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=5.375 PSNR=11.5381 dB
+base_step=8  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=5 PSNR=11.5341 dB
+base_step=16  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=5 PSNR=11.5258 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=8.375 PSNR=12.1444 dB
+base_step=2  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=7.875 PSNR=12.1437 dB
+base_step=4  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=7.75 PSNR=12.1404 dB
+base_step=8  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=6.625 PSNR=12.1315 dB
+base_step=16  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=6.375 PSNR=12.0914 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=16.625 PSNR=17.2376 dB
+base_step=2  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=14.375 PSNR=17.1883 dB
+base_step=4  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=12.125 PSNR=17.0382 dB
+base_step=8  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=10.125 PSNR=16.1654 dB
+base_step=16  DCT: bpp=4.75 PSNR=11.0712   Jac: bpp=8 PSNR=15.0935 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=2 PSNR=10.7133 dB
+base_step=2  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=2 PSNR=10.7133 dB
+base_step=4  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=2 PSNR=10.7133 dB
+base_step=8  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=2 PSNR=10.7132 dB
+base_step=16  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=2 PSNR=10.7127 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=3.625 PSNR=11.1863 dB
+base_step=2  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=3.5 PSNR=11.1863 dB
+base_step=4  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=3.25 PSNR=11.1861 dB
+base_step=8  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=3.25 PSNR=11.1854 dB
+base_step=16  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=3.25 PSNR=11.1844 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=5.75 PSNR=11.5389 dB
+base_step=2  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=5.625 PSNR=11.5388 dB
+base_step=4  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=5.375 PSNR=11.5381 dB
+base_step=8  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=5 PSNR=11.5341 dB
+base_step=16  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=5 PSNR=11.5258 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=8.375 PSNR=12.1444 dB
+base_step=2  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=7.875 PSNR=12.1437 dB
+base_step=4  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=7.75 PSNR=12.1404 dB
+base_step=8  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=6.625 PSNR=12.1315 dB
+base_step=16  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=6.375 PSNR=12.0914 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=16.625 PSNR=17.2376 dB
+base_step=2  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=14.375 PSNR=17.1883 dB
+base_step=4  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=12.125 PSNR=17.0382 dB
+base_step=8  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=10.125 PSNR=16.1654 dB
+base_step=16  DCT: bpp=6.25 PSNR=11.8727   Jac: bpp=8 PSNR=15.0935 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=8 PSNR=12.747   Jac: bpp=2 PSNR=10.7133 dB
+base_step=2  DCT: bpp=8 PSNR=12.747   Jac: bpp=2 PSNR=10.7133 dB
+base_step=4  DCT: bpp=8 PSNR=12.747   Jac: bpp=2 PSNR=10.7133 dB
+base_step=8  DCT: bpp=8 PSNR=12.747   Jac: bpp=2 PSNR=10.7132 dB
+base_step=16  DCT: bpp=8 PSNR=12.747   Jac: bpp=2 PSNR=10.7127 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=8 PSNR=12.747   Jac: bpp=3.625 PSNR=11.1863 dB
+base_step=2  DCT: bpp=8 PSNR=12.747   Jac: bpp=3.5 PSNR=11.1863 dB
+base_step=4  DCT: bpp=8 PSNR=12.747   Jac: bpp=3.25 PSNR=11.1861 dB
+base_step=8  DCT: bpp=8 PSNR=12.747   Jac: bpp=3.25 PSNR=11.1854 dB
+base_step=16  DCT: bpp=8 PSNR=12.747   Jac: bpp=3.25 PSNR=11.1844 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=8 PSNR=12.747   Jac: bpp=5.75 PSNR=11.5389 dB
+base_step=2  DCT: bpp=8 PSNR=12.747   Jac: bpp=5.625 PSNR=11.5388 dB
+base_step=4  DCT: bpp=8 PSNR=12.747   Jac: bpp=5.375 PSNR=11.5381 dB
+base_step=8  DCT: bpp=8 PSNR=12.747   Jac: bpp=5 PSNR=11.5341 dB
+base_step=16  DCT: bpp=8 PSNR=12.747   Jac: bpp=5 PSNR=11.5258 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=8 PSNR=12.747   Jac: bpp=8.375 PSNR=12.1444 dB
+base_step=2  DCT: bpp=8 PSNR=12.747   Jac: bpp=7.875 PSNR=12.1437 dB
+base_step=4  DCT: bpp=8 PSNR=12.747   Jac: bpp=7.75 PSNR=12.1404 dB
+base_step=8  DCT: bpp=8 PSNR=12.747   Jac: bpp=6.625 PSNR=12.1315 dB
+base_step=16  DCT: bpp=8 PSNR=12.747   Jac: bpp=6.375 PSNR=12.0914 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=8 PSNR=12.747   Jac: bpp=16.625 PSNR=17.2376 dB
+base_step=2  DCT: bpp=8 PSNR=12.747   Jac: bpp=14.375 PSNR=17.1883 dB
+base_step=4  DCT: bpp=8 PSNR=12.747   Jac: bpp=12.125 PSNR=17.0382 dB
+base_step=8  DCT: bpp=8 PSNR=12.747   Jac: bpp=10.125 PSNR=16.1654 dB
+base_step=16  DCT: bpp=8 PSNR=12.747   Jac: bpp=8 PSNR=15.0935 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=2 PSNR=10.7133 dB
+base_step=2  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=2 PSNR=10.7133 dB
+base_step=4  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=2 PSNR=10.7133 dB
+base_step=8  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=2 PSNR=10.7132 dB
+base_step=16  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=2 PSNR=10.7127 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=3.625 PSNR=11.1863 dB
+base_step=2  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=3.5 PSNR=11.1863 dB
+base_step=4  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=3.25 PSNR=11.1861 dB
+base_step=8  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=3.25 PSNR=11.1854 dB
+base_step=16  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=3.25 PSNR=11.1844 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=5.75 PSNR=11.5389 dB
+base_step=2  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=5.625 PSNR=11.5388 dB
+base_step=4  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=5.375 PSNR=11.5381 dB
+base_step=8  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=5 PSNR=11.5341 dB
+base_step=16  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=5 PSNR=11.5258 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=8.375 PSNR=12.1444 dB
+base_step=2  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=7.875 PSNR=12.1437 dB
+base_step=4  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=7.75 PSNR=12.1404 dB
+base_step=8  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=6.625 PSNR=12.1315 dB
+base_step=16  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=6.375 PSNR=12.0914 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=16.625 PSNR=17.2376 dB
+base_step=2  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=14.375 PSNR=17.1883 dB
+base_step=4  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=12.125 PSNR=17.0382 dB
+base_step=8  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=10.125 PSNR=16.1654 dB
+base_step=16  DCT: bpp=10.125 PSNR=21.6353   Jac: bpp=8 PSNR=15.0935 dB
+
+
+============================================================
+Block type 9 (checkerboard)
+Classifier decision (M_low=3, mse_thresh=10): DCT
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=8.58043   Jac: bpp=2 PSNR=8.64582 dB
+base_step=2  DCT: bpp=2 PSNR=8.58043   Jac: bpp=2 PSNR=8.64581 dB
+base_step=4  DCT: bpp=2 PSNR=8.58043   Jac: bpp=2 PSNR=8.64579 dB
+base_step=8  DCT: bpp=2 PSNR=8.58043   Jac: bpp=2 PSNR=8.64575 dB
+base_step=16  DCT: bpp=2 PSNR=8.58043   Jac: bpp=2 PSNR=8.64575 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=8.58043   Jac: bpp=3.625 PSNR=8.78822 dB
+base_step=2  DCT: bpp=2 PSNR=8.58043   Jac: bpp=3.625 PSNR=8.78819 dB
+base_step=4  DCT: bpp=2 PSNR=8.58043   Jac: bpp=3.5 PSNR=8.78817 dB
+base_step=8  DCT: bpp=2 PSNR=8.58043   Jac: bpp=3.5 PSNR=8.78812 dB
+base_step=16  DCT: bpp=2 PSNR=8.58043   Jac: bpp=3.5 PSNR=8.78612 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5.75 PSNR=9.03179 dB
+base_step=2  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5.625 PSNR=9.0317 dB
+base_step=4  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5.5 PSNR=9.03132 dB
+base_step=8  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5.375 PSNR=9.03109 dB
+base_step=16  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5 PSNR=9.02507 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=8.58043   Jac: bpp=8.125 PSNR=9.37936 dB
+base_step=2  DCT: bpp=2 PSNR=8.58043   Jac: bpp=8 PSNR=9.37899 dB
+base_step=4  DCT: bpp=2 PSNR=8.58043   Jac: bpp=7.375 PSNR=9.37759 dB
+base_step=8  DCT: bpp=2 PSNR=8.58043   Jac: bpp=6.625 PSNR=9.3721 dB
+base_step=16  DCT: bpp=2 PSNR=8.58043   Jac: bpp=5.5 PSNR=9.35483 dB
+
+=== Truncation config: dct_max_k_keep=10, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2 PSNR=8.58043   Jac: bpp=14.875 PSNR=13.5426 dB
+base_step=2  DCT: bpp=2 PSNR=8.58043   Jac: bpp=13.5 PSNR=13.5218 dB
+base_step=4  DCT: bpp=2 PSNR=8.58043   Jac: bpp=11.625 PSNR=13.4589 dB
+base_step=8  DCT: bpp=2 PSNR=8.58043   Jac: bpp=9.375 PSNR=13.0591 dB
+base_step=16  DCT: bpp=2 PSNR=8.58043   Jac: bpp=7.375 PSNR=12.34 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=2 PSNR=8.64582 dB
+base_step=2  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=2 PSNR=8.64581 dB
+base_step=4  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=2 PSNR=8.64579 dB
+base_step=8  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=2 PSNR=8.64575 dB
+base_step=16  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=2 PSNR=8.64575 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=3.625 PSNR=8.78822 dB
+base_step=2  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=3.625 PSNR=8.78819 dB
+base_step=4  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=3.5 PSNR=8.78817 dB
+base_step=8  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=3.5 PSNR=8.78812 dB
+base_step=16  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=3.5 PSNR=8.78612 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5.75 PSNR=9.03179 dB
+base_step=2  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5.625 PSNR=9.0317 dB
+base_step=4  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5.5 PSNR=9.03132 dB
+base_step=8  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5.375 PSNR=9.03109 dB
+base_step=16  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5 PSNR=9.02507 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=8.125 PSNR=9.37936 dB
+base_step=2  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=8 PSNR=9.37899 dB
+base_step=4  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=7.375 PSNR=9.37759 dB
+base_step=8  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=6.625 PSNR=9.3721 dB
+base_step=16  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=5.5 PSNR=9.35483 dB
+
+=== Truncation config: dct_max_k_keep=20, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=14.875 PSNR=13.5426 dB
+base_step=2  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=13.5 PSNR=13.5218 dB
+base_step=4  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=11.625 PSNR=13.4589 dB
+base_step=8  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=9.375 PSNR=13.0591 dB
+base_step=16  DCT: bpp=2.625 PSNR=8.59244   Jac: bpp=7.375 PSNR=12.34 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=2 PSNR=8.64582 dB
+base_step=2  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=2 PSNR=8.64581 dB
+base_step=4  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=2 PSNR=8.64579 dB
+base_step=8  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=2 PSNR=8.64575 dB
+base_step=16  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=2 PSNR=8.64575 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=3.625 PSNR=8.78822 dB
+base_step=2  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=3.625 PSNR=8.78819 dB
+base_step=4  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=3.5 PSNR=8.78817 dB
+base_step=8  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=3.5 PSNR=8.78812 dB
+base_step=16  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=3.5 PSNR=8.78612 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5.75 PSNR=9.03179 dB
+base_step=2  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5.625 PSNR=9.0317 dB
+base_step=4  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5.5 PSNR=9.03132 dB
+base_step=8  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5.375 PSNR=9.03109 dB
+base_step=16  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5 PSNR=9.02507 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=8.125 PSNR=9.37936 dB
+base_step=2  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=8 PSNR=9.37899 dB
+base_step=4  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=7.375 PSNR=9.37759 dB
+base_step=8  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=6.625 PSNR=9.3721 dB
+base_step=16  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=5.5 PSNR=9.35483 dB
+
+=== Truncation config: dct_max_k_keep=36, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=14.875 PSNR=13.5426 dB
+base_step=2  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=13.5 PSNR=13.5218 dB
+base_step=4  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=11.625 PSNR=13.4589 dB
+base_step=8  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=9.375 PSNR=13.0591 dB
+base_step=16  DCT: bpp=3.125 PSNR=8.62783   Jac: bpp=7.375 PSNR=12.34 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=0 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=2 PSNR=8.64582 dB
+base_step=2  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=2 PSNR=8.64581 dB
+base_step=4  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=2 PSNR=8.64579 dB
+base_step=8  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=2 PSNR=8.64575 dB
+base_step=16  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=2 PSNR=8.64575 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=1 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=3.625 PSNR=8.78822 dB
+base_step=2  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=3.625 PSNR=8.78819 dB
+base_step=4  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=3.5 PSNR=8.78817 dB
+base_step=8  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=3.5 PSNR=8.78812 dB
+base_step=16  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=3.5 PSNR=8.78612 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=2 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5.75 PSNR=9.03179 dB
+base_step=2  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5.625 PSNR=9.0317 dB
+base_step=4  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5.5 PSNR=9.03132 dB
+base_step=8  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5.375 PSNR=9.03109 dB
+base_step=16  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5 PSNR=9.02507 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=3 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=8.125 PSNR=9.37936 dB
+base_step=2  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=8 PSNR=9.37899 dB
+base_step=4  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=7.375 PSNR=9.37759 dB
+base_step=8  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=6.625 PSNR=9.3721 dB
+base_step=16  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=5.5 PSNR=9.35483 dB
+
+=== Truncation config: dct_max_k_keep=64, jac_max_deg_keep=6 ===
+Columns: base_step, DCT_bpp, DCT_PSNR, Jac_bpp, Jac_PSNR
+base_step=1  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=14.875 PSNR=13.5426 dB
+base_step=2  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=13.5 PSNR=13.5218 dB
+base_step=4  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=11.625 PSNR=13.4589 dB
+base_step=8  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=9.375 PSNR=13.0591 dB
+base_step=16  DCT: bpp=4.625 PSNR=26.5493   Jac: bpp=7.375 PSNR=12.34 dB
+
+
