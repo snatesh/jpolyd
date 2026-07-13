@@ -6,8 +6,6 @@
 
 using namespace jsimplex;
 
-namespace {
-
 // Change this to whatever max dimension you want compiled in.
 static constexpr int JS_DMAT_MAX_D = 5;
 
@@ -68,8 +66,6 @@ static inline void js_dmat_build_tprod_natural_pruned_csc_dispatch(int n,
   *colptr_out = colptr;
   *rowind_out = rowind;
   *x_out = x;
-}
-
 }
 
 extern "C" {
