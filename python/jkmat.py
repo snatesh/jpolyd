@@ -20,20 +20,14 @@ libjpolyd.js_kmat_build_tprod.argtypes = [
 libjpolyd.js_kmat_build_tprod.restype = ctypes.c_int
 
 
+import math
 def _dim_Pi(D, n):
   D = int(D)
   n = int(n)
-  if n < 0:
-    raise ValueError("n must be >= 0")
-  if D == 1:
-    return n + 1
-  if D == 2:
-    return (n + 1) * (n + 2) // 2
-  if D == 3:
-    return (n + 1) * (n + 2) * (n + 3) // 6
-  if D == 4:
-    return (n + 1) * (n + 2) * (n + 3) * (n + 4) // 24
-  raise ValueError("Unsupported D (compiled library may support fewer)")
+  if D < 1 or n < 0:
+    raise ValueError("invalid D or n")
+  return math.comb(n + D, D)
+
 
 
 def kmat_build_tprod(D, n, q, kappa_src, kappa_tgt):

@@ -11,7 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(NOT debug)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Iinclude -O3 -march=native")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -Wextra -Iinclude -O3 -march=native")
 elseif(debug)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Iinclude -g -DDEBUG -march=native")
 endif()
@@ -233,9 +233,10 @@ if(JPOLYD_BUILD_CAPI)
     bindings/c_api/src/jtrace_c.cpp
     bindings/c_api/src/jflux_c.cpp
     bindings/c_api/src/jlaplace_c.cpp
+    bindings/c_api/src/jprecomp_c.cpp
 
     # temporary / validation LSMR ctypes export
-    bindings/c_api/src/lsmr_dense_shared.cpp
+    bindings/c_api/src/jlsmr_c.cpp
 
     # SOL LSMR Fortran sources
     third_party/lsmr/lsmrDataModule.f90
@@ -345,6 +346,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jtrace.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jflux.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jlaplace.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jsource.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jprecomp.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)

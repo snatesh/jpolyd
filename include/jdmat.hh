@@ -350,7 +350,6 @@ struct DMat
       std::memset(Dout, 0, (std::size_t)M * (std::size_t)M * sizeof(Real));
       return;
     }
-
     const int stencil_min = D+1;
     const int stencil_max = 4*D;
 
@@ -359,7 +358,7 @@ struct DMat
       build_tprod_natural_pruned_dense(n, q, kappa_src, axis, Dout);
       return;
     }
-
+    std::cout << "USING STENCIL\n" << std::endl;
     // 1) Discover degree-invariant delta stencil (small-n exploration)
     DMatStencil S;
     std::memset(&S, 0, sizeof(S));
@@ -633,6 +632,7 @@ struct DMat
         S_out->clear();
         *S_out = S_cur;                // shallow move
         std::memset(&S_cur, 0, sizeof(S_cur));
+        std::cout << "stabilized at n_test = " << n_test << std::endl;
         return;
       }
   

@@ -211,6 +211,105 @@ inline void dsimplex_affine_from_verts(
   geom.valid = true;
 }
 
+template<int AmbientD, int SimplexD, class Real>
+inline Real dsimplex_embedded_simplex_measure_scale_colmajor(
+  const Real* V,
+  Real rel_pivot_tol = Real(100) * std::numeric_limits<Real>::epsilon()
+)
+{
+  static_assert(AmbientD >= 1, "AmbientD must be positive");
+  static_assert(SimplexD >= 0, "SimplexD must be nonnegative");
+  static_assert(SimplexD <= AmbientD, "SimplexD must be <= AmbientD");
+
+  assert(V != nullptr);
+
+  if constexpr (SimplexD == 0)
+  {
+    return Real(1);
+  }
+  else
+  {
+    Real G[SimplexD * SimplexD];
+
+    for (int a = 0; a < SimplexD; ++a)
+    {
+      for (int b = 0; b < SimplexD; ++b)
+      {
+        Real dot = Real(0);
+
+        for (int r = 0; r < AmbientD; ++r)
+        {
+          const Real ea = V[r + AmbientD * (a + 1)] - V[r];
+          const Real eb = V[r + AmbientD * (b + 1)] - V[r];
+          dot += ea * eb;
+        }
+
+        // Column-major storage: G(a,b) = G[a + SimplexD*b]
+        G[a + SimplexD * b] = dot;
+      }
+    }
+
+    Real Ginv[SimplexD * SimplexD];
+    Real detG = Real(0);
+
+    const bool ok = dsimplex_invert_matrix_col_major_pivoted<SimplexD,Real>(
+      G,
+      Ginv,
+      &detG,
+      rel_pivot_tol
+    );
+
+    if (!ok)
+    {
+      return Real(0);
+    }
+
+    return std::sqrt(std::max(Real(0), detG));
+  }
+}
+
+template<int D, class Real>
+inline Real dsimplex_reference_face_scale_from_vertex_ids(
+  const int face_vidx[D],
+  Real rel_pivot_tol = Real(100) * std::numeric_limits<Real>::epsilon()
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(face_vidx != nullptr);
+
+  if constexpr (D == 1)
+  {
+    return Real(1);
+  }
+  else
+  {
+    // Face has D vertices and is embedded in R^D.
+    // Vface is D x D column-major:
+    //   columns are the embedded reference vertices of the face.
+    Real Vface[D * D];
+
+    for (int j = 0; j < D; ++j)
+    {
+      const int v = face_vidx[j];
+      assert(0 <= v && v <= D);
+
+      for (int r = 0; r < D; ++r)
+      {
+        // Reference simplex vertices:
+        //   v_0 = 0
+        //   v_i = e_i, i=1,...,D
+        Vface[r + D * j] = (v == r + 1) ? Real(1) : Real(0);
+      }
+    }
+
+    return dsimplex_embedded_simplex_measure_scale_colmajor<D,D-1,Real>(
+      Vface,
+      rel_pivot_tol
+    );
+  }
+}
+
+
 } // namespace jsimplex
 
 #endif // JDSIMPLEX_GEOM_H

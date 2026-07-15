@@ -176,6 +176,41 @@ inline int perm_to_lehmer_index(const int sigma[D])
 }
 
 template<int D>
+inline void lehmer_index_to_perm(int index, int sigma[D])
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(sigma != nullptr);
+
+  const int nperm = factorial_int(D);
+  assert(0 <= index && index < nperm);
+
+  int remaining[D];
+  for (int i = 0; i < D; ++i)
+  {
+    remaining[i] = i;
+  }
+
+  int nrem = D;
+  int idx = index;
+
+  for (int i = 0; i < D; ++i)
+  {
+    const int f = factorial_int(D - 1 - i);
+    const int q = idx / f;
+    idx = idx % f;
+
+    assert(0 <= q && q < nrem);
+    sigma[i] = remaining[q];
+
+    for (int j = q; j + 1 < nrem; ++j)
+    {
+      remaining[j] = remaining[j + 1];
+    }
+    --nrem;
+  }
+}
+
+template<int D>
 inline int dsimplex_compute_face_sigma(
   const int global_vids[D + 1],
   int face_id

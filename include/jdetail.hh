@@ -596,6 +596,335 @@ static inline std::size_t compress_dense_to_csc(int M,
   return (std::size_t)nnz;
 }
 
+/* C-linkage for LSMR f90 routines and double precision driver */
+extern "C" {
+
+void lsmr_c_set_options(
+  const double* atol,
+  const double* btol,
+  const double* conlim,
+  const int* itnlim,
+  const int* nout,
+  const int* localsize,
+  const int* ctest);
+
+void lsmr_c_step(
+  const int* m,
+  const int* n,
+  int* action,
+  double* u,
+  double* v,
+  const double* b,
+  const double* damp,
+  double* x,
+  int* istop,
+  int* itn,
+  int* stat,
+  double* normr,
+  double* normA,
+  double* condA,
+  double* normb,
+  double* normx,
+  double* normAr);
+
+} // extern "C"
+
+inline void apply_A_colmajor(
+  int m,
+  int n,
+  const double* A,
+  const double* x,
+  double* y)
+{
+  // y = y + A*x, A(i,j)=A[i + m*j].
+  for (int j = 0; j < n; ++j)
+  {
+    const double xj = x[j];
+    const double* Aj = A + static_cast<std::ptrdiff_t>(m) * j;
+
+    for (int i = 0; i < m; ++i)
+    {
+      y[i] += Aj[i] * xj;
+    }
+  }
+}
+
+inline void apply_AT_colmajor(
+  int m,
+  int n,
+  const double* A,
+  const double* y,
+  double* x)
+{
+  // x = x + A^T*y, A(i,j)=A[i + m*j].
+  for (int j = 0; j < n; ++j)
+  {
+    const double* Aj = A + static_cast<std::ptrdiff_t>(m) * j;
+    double sum = 0.0;
+
+    for (int i = 0; i < m; ++i)
+    {
+      sum += Aj[i] * y[i];
+    }
+
+    x[j] += sum;
+  }
+}
+
+inline void cleanup_lsmr_state(
+  int m,
+  int n,
+  double* u,
+  double* v,
+  const double* b,
+  double damp,
+  double* x,
+  int& istop,
+  int& itn,
+  int& stat,
+  double& normr,
+  double& normA,
+  double& condA,
+  double& normb,
+  double& normx,
+  double& normAr)
+{
+  int action = 10;
+
+  lsmr_c_step(
+    &m,
+    &n,
+    &action,
+    u,
+    v,
+    b,
+    &damp,
+    x,
+    &istop,
+    &itn,
+    &stat,
+    &normr,
+    &normA,
+    &condA,
+    &normb,
+    &normx,
+    &normAr);
+}
+
+template<class Real>
+struct LsmrOptions
+{
+  Real damp = Real(0);
+  Real atol = Real(1.0e-12);
+  Real btol = Real(1.0e-12);
+  Real conlim = Real(1.0e12);
+  int itnlim = 500;
+  int nout = 0;
+  int localsize = 0;
+  int ctest = 3;
+};
+
+template<class Real>
+struct LsmrInfo
+{
+  int istop = -1;
+  int itn = -1;
+  int stat = 0;
+  Real normr = Real(0);
+  Real normA = Real(0);
+  Real condA = Real(0);
+  Real normb = Real(0);
+  Real normx = Real(0);
+  Real normAr = Real(0);
+};
+
+inline int lsmr_dense_solve_colmajor_double(
+  int m,
+  int n,
+  const double* A_colmajor,
+  const double* b,
+  double* x,
+  const LsmrOptions<double>& opt,
+  LsmrInfo<double>* info)
+{
+  if (m <= 0 || n <= 0)
+  {
+    return -1;
+  }
+
+  if (A_colmajor == nullptr || b == nullptr || x == nullptr || info == nullptr)
+  {
+    return -2;
+  }
+
+  try
+  {
+    double* u = (double*) calloc(static_cast<std::size_t>(m), sizeof(double));
+    double* v = (double*) calloc(static_cast<std::size_t>(n), sizeof(double));
+    //std::vector<double> u(static_cast<std::size_t>(m), 0.0);
+    //std::vector<double> v(static_cast<std::size_t>(n), 0.0);
+
+    std::fill(x, x + n, 0.0);
+
+    const double atol = opt.atol;
+    const double btol = opt.btol;
+    const double conlim = opt.conlim;
+    const int itnlim = opt.itnlim;
+    const int nout = opt.nout;
+    const int localsize = opt.localsize;
+    const int ctest = opt.ctest;
+    const double damp = opt.damp;
+
+    lsmr_c_set_options(
+      &atol,
+      &btol,
+      &conlim,
+      &itnlim,
+      &nout,
+      &localsize,
+      &ctest);
+
+    int action = 0;
+    int istop = 0;
+    int itn = 0;
+    int stat = 0;
+
+    double normr = 0.0;
+    double normA = 0.0;
+    double condA = 0.0;
+    double normb = 0.0;
+    double normx = 0.0;
+    double normAr = 0.0;
+
+    while (true)
+    {
+      lsmr_c_step(
+        &m,
+        &n,
+        &action,
+        u,
+        v,
+        b,
+        &damp,
+        x,
+        &istop,
+        &itn,
+        &stat,
+        &normr,
+        &normA,
+        &condA,
+        &normb,
+        &normx,
+        &normAr);
+
+      if (action == 0)
+      {
+        break;
+      }
+
+      if (action == 1)
+      {
+        // v = v + A^T*u.
+        apply_AT_colmajor(m, n, A_colmajor, u, v);
+      }
+      else if (action == 2)
+      {
+        // u = u + A*v.
+        apply_A_colmajor(m, n, A_colmajor, v, u);
+      }
+      else
+      {
+        cleanup_lsmr_state(
+          m,
+          n,
+          u,
+          v,
+          b,
+          damp,
+          x,
+          istop,
+          itn,
+          stat,
+          normr,
+          normA,
+          condA,
+          normb,
+          normx,
+          normAr);
+        return -4;
+      }
+    }
+
+    cleanup_lsmr_state(
+      m,
+      n,
+      u,
+      v,
+      b,
+      damp,
+      x,
+      istop,
+      itn,
+      stat,
+      normr,
+      normA,
+      condA,
+      normb,
+      normx,
+      normAr);
+
+    info->istop = istop;
+    info->itn = itn;
+    info->stat = stat;
+    info->normr = normr;
+    info->normA = normA;
+    info->condA = condA;
+    info->normb = normb;
+    info->normx = normx;
+    info->normAr = normAr;
+    if (u) { free(u); u = 0; }
+    if (v) { free(v); v = 0; }
+    return 0;
+  }
+  catch (...)
+  {
+    return -3;
+  }
+}
+
+template<class Real>
+inline LsmrOptions<double> to_double_options(const LsmrOptions<Real>& opt)
+{
+  LsmrOptions<double> out;
+  out.damp = static_cast<double>(opt.damp);
+  out.atol = static_cast<double>(opt.atol);
+  out.btol = static_cast<double>(opt.btol);
+  out.conlim = static_cast<double>(opt.conlim);
+  out.itnlim = opt.itnlim;
+  out.nout = opt.nout;
+  out.localsize = opt.localsize;
+  out.ctest = opt.ctest;
+  return out;
+}
+
+template<class Real>
+inline void copy_info_from_double(const LsmrInfo<double>& src, LsmrInfo<Real>* dst)
+{
+  if (dst == nullptr)
+  {
+    return;
+  }
+
+  dst->istop = src.istop;
+  dst->itn = src.itn;
+  dst->stat = src.stat;
+  dst->normr = static_cast<Real>(src.normr);
+  dst->normA = static_cast<Real>(src.normA);
+  dst->condA = static_cast<Real>(src.condA);
+  dst->normb = static_cast<Real>(src.normb);
+  dst->normx = static_cast<Real>(src.normx);
+  dst->normAr = static_cast<Real>(src.normAr);
+}
 
 } // namespace detail
 
