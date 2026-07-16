@@ -2,7 +2,9 @@
 #define JDSIMPLEX_PERMS_H
 
 #include <algorithm>
+#include <array>
 #include <cassert>
+#include <cstddef>
 
 namespace jsimplex {
 /*
@@ -23,10 +25,6 @@ namespace jsimplex {
 
     local_global_ids[i]
       == canonical_global_ids[sigma_local_to_canonical[i]].
-
-  This is the Python convention used in the reference diagnostics:
-
-    local_bary[i] = canonical_bary[sigma_local_to_canonical[i]].
 
   Current Jacobi/HPS convention
   -----------------------------
@@ -57,6 +55,9 @@ namespace jsimplex {
 */
 
 template<int D>
+using DSimplexFaceKey = std::array<int,D>;
+
+template<int D>
 inline void dsimplex_face_vertices(int face_id, int out_local_vidx[D])
 {
   static_assert(D >= 1, "D must be positive");
@@ -70,6 +71,44 @@ inline void dsimplex_face_vertices(int face_id, int out_local_vidx[D])
       out_local_vidx[k++] = v;
   }
   assert(k == D);
+}
+
+template<int D>
+inline DSimplexFaceKey<D> dsimplex_face_key(
+  const int global_vids[D + 1],
+  int face_id
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(global_vids != nullptr);
+  assert(0 <= face_id && face_id < D + 1);
+
+  int fv[D];
+  dsimplex_face_vertices<D>(face_id, fv);
+
+  DSimplexFaceKey<D> key{};
+  for (int i = 0; i < D; ++i)
+  {
+    key[(std::size_t)i] = global_vids[fv[i]];
+  }
+  std::sort(key.begin(), key.end());
+  return key;
+}
+
+template<int D>
+inline void dsimplex_all_face_keys(
+  const int global_vids[D + 1],
+  DSimplexFaceKey<D> out_keys[D + 1]
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(global_vids != nullptr);
+  assert(out_keys != nullptr);
+
+  for (int f = 0; f < D + 1; ++f)
+  {
+    out_keys[f] = dsimplex_face_key<D>(global_vids, f);
+  }
 }
 
 /*

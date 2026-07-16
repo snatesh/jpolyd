@@ -39,7 +39,8 @@ contains
     options%btol      = btol
     options%conlim    = conlim
     options%itnlim    = itnlim
-    options%nout      = nout
+    !options%nout      = nout
+    options%nout = -1_c_int
     options%localsize = localsize
     options%ctest     = ctest
 

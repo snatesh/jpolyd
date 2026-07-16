@@ -234,6 +234,8 @@ if(JPOLYD_BUILD_CAPI)
     bindings/c_api/src/jflux_c.cpp
     bindings/c_api/src/jlaplace_c.cpp
     bindings/c_api/src/jprecomp_c.cpp
+    #bindings/c_api/src/jhps_dummy_c.cpp
+    bindings/c_api/src/jhps_c.cpp
 
     # temporary / validation LSMR ctypes export
     bindings/c_api/src/jlsmr_c.cpp
@@ -347,6 +349,7 @@ install(FILES ${CMAKE_SOURCE_DIR}/python/jflux.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jlaplace.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jsource.py DESTINATION ${PY_SITE})
 install(FILES ${CMAKE_SOURCE_DIR}/python/jprecomp.py DESTINATION ${PY_SITE})
+install(FILES ${CMAKE_SOURCE_DIR}/python/jhps.py DESTINATION ${PY_SITE})
 
 # Install the shared lib next to it so ctypes can find it without extra paths
 if(JPOLYD_BUILD_CAPI)

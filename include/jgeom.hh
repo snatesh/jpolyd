@@ -1,11 +1,18 @@
 #ifndef JDSIMPLEX_GEOM_H
 #define JDSIMPLEX_GEOM_H
 
-#include <array>
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <stdexcept>
+#include <type_traits>
+#include <vector>
+
+#include <jdetail.hh>
+#include <jperms.hh>
 
 namespace jsimplex {
 /*
@@ -30,6 +37,18 @@ struct DSimplexGeom
   std::array<Real, D * D> BinvT{};
   Real detB = Real(0);
   Real detBabs = Real(0);
+  bool valid = false;
+};
+
+template<int D, class Real>
+struct DSimplexFaceGeom
+{
+  static_assert(D >= 1, "D must be positive");
+
+  Real scale = Real(0);       // Embedded face measure scale, no factorial.
+  Real h = Real(0);           // Characteristic face diameter: max edge length.
+  std::array<Real,D> unit_normal{};
+  std::array<Real,D> normal_scaled{}; // scale * unit_normal.
   bool valid = false;
 };
 
@@ -211,6 +230,33 @@ inline void dsimplex_affine_from_verts(
   geom.valid = true;
 }
 
+template<int D, class Real>
+inline void dsimplex_metric_from_geom(
+  const DSimplexGeom<D,Real>& geom,
+  Real* G_colmajor
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(G_colmajor != nullptr);
+  assert(geom.valid);
+
+  // G = B^{-1} B^{-T}.  Since geom.BinvT = B^{-T},
+  // G(i,j) = sum_k Binv(i,k) Binv(j,k)
+  //        = sum_k BinvT(k,i) BinvT(k,j).
+  for (int j = 0; j < D; ++j)
+  {
+    for (int i = 0; i < D; ++i)
+    {
+      Real acc = Real(0);
+      for (int k = 0; k < D; ++k)
+      {
+        acc += geom.BinvT[k + D * i] * geom.BinvT[k + D * j];
+      }
+      G_colmajor[i + D * j] = acc;
+    }
+  }
+}
+
 template<int AmbientD, int SimplexD, class Real>
 inline Real dsimplex_embedded_simplex_measure_scale_colmajor(
   const Real* V,
@@ -309,6 +355,210 @@ inline Real dsimplex_reference_face_scale_from_vertex_ids(
   }
 }
 
+template<int D, class Real>
+inline Real dsimplex_face_diameter_colmajor(const Real* Vface)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(Vface != nullptr);
+
+  if constexpr (D == 1)
+  {
+    return Real(0);
+  }
+  else
+  {
+    Real h = Real(0);
+    for (int a = 0; a < D; ++a)
+    {
+      for (int b = a + 1; b < D; ++b)
+      {
+        Real d2 = Real(0);
+        for (int r = 0; r < D; ++r)
+        {
+          const Real diff = Vface[r + D * a] - Vface[r + D * b];
+          d2 += diff * diff;
+        }
+        h = std::max(h, std::sqrt(d2));
+      }
+    }
+    return h;
+  }
+}
+
+template<int D, class Real>
+inline void dsimplex_face_unit_normal_from_vertices_colmajor(
+  const Real* Vface,
+  Real* n_out
+)
+{
+  static_assert(D >= 2, "normal helper only applies to D>=2");
+  static_assert(std::is_same<Real,float>::value || std::is_same<Real,double>::value,
+                "normal helper currently supports Real=float or Real=double");
+  assert(Vface != nullptr);
+  assert(n_out != nullptr);
+
+  constexpr int m = D - 1;
+  constexpr int ncols = D;
+
+  // A = E^T, column-major m x D.  Its nullspace is the face normal.
+  std::vector<Real> A((std::size_t)m * ncols, Real(0));
+  for (int col = 0; col < ncols; ++col)
+  {
+    for (int row = 0; row < m; ++row)
+    {
+      A[(std::size_t)row + (std::size_t)m * col] =
+        Vface[(std::size_t)col + (std::size_t)D * (row + 1)]
+      - Vface[(std::size_t)col + (std::size_t)D * 0];
+    }
+  }
+
+  std::vector<Real> S((std::size_t)std::min(m, ncols), Real(0));
+  std::vector<Real> U((std::size_t)m * m, Real(0));
+  std::vector<Real> VT((std::size_t)ncols * ncols, Real(0));
+
+  const lapack_int ret = detail::LapackGesdd<Real>::run(
+    'A',
+    (lapack_int)m,
+    (lapack_int)ncols,
+    A.data(),
+    (lapack_int)m,
+    S.data(),
+    U.data(),
+    (lapack_int)m,
+    VT.data(),
+    (lapack_int)ncols);
+
+  if (ret != 0)
+  {
+    throw std::runtime_error("dsimplex: SVD failed while computing face normal");
+  }
+
+  Real nrm2 = Real(0);
+  for (int r = 0; r < D; ++r)
+  {
+    const Real nr = VT[(std::size_t)(D - 1) + (std::size_t)D * r];
+    n_out[r] = nr;
+    nrm2 += nr * nr;
+  }
+
+  const Real nrm = std::sqrt(nrm2);
+  if (!(nrm > Real(0)))
+  {
+    throw std::runtime_error("dsimplex: zero face normal from SVD");
+  }
+
+  for (int r = 0; r < D; ++r)
+  {
+    n_out[r] /= nrm;
+  }
+}
+
+template<int D, class Real>
+inline void dsimplex_physical_face_geometry_colmajor(
+  const Real* V_phys,
+  int face_id,
+  DSimplexFaceGeom<D,Real>& out
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(V_phys != nullptr);
+  assert(0 <= face_id && face_id < D + 1);
+
+  out = DSimplexFaceGeom<D,Real>{};
+
+  if constexpr (D == 1)
+  {
+    const Real x0 = V_phys[0];
+    const Real x1 = V_phys[1];
+    const Real len = std::abs(x1 - x0);
+    if (!(len > Real(0)))
+    {
+      return;
+    }
+
+    const Real sgn = (x1 >= x0) ? Real(1) : Real(-1);
+    out.scale = Real(1);
+    out.h = len;
+
+    // face 0 is opposite vertex 0, i.e. endpoint vertex 1.
+    // face 1 is opposite vertex 1, i.e. endpoint vertex 0.
+    out.unit_normal[0] = (face_id == 0) ? sgn : -sgn;
+    out.normal_scaled[0] = out.unit_normal[0];
+    out.valid = true;
+  }
+  else
+  {
+    int fv[D];
+    dsimplex_face_vertices<D>(face_id, fv);
+
+    Real Vface[D * D]; // D x D, columns are the physical face vertices.
+    for (int j = 0; j < D; ++j)
+    {
+      const int v = fv[j];
+      for (int r = 0; r < D; ++r)
+      {
+        Vface[(std::size_t)r + (std::size_t)D * j] =
+          V_phys[(std::size_t)r + (std::size_t)D * v];
+      }
+    }
+
+    const Real s = dsimplex_embedded_simplex_measure_scale_colmajor<D,D-1,Real>(Vface);
+    if (!(s > Real(0)))
+    {
+      return;
+    }
+
+    out.scale = s;
+    out.h = dsimplex_face_diameter_colmajor<D,Real>(Vface);
+
+    dsimplex_face_unit_normal_from_vertices_colmajor<D,Real>(
+      Vface,
+      out.unit_normal.data());
+
+    // Orient the normal outward by checking the opposite vertex.
+    Real dot_to_opp = Real(0);
+    for (int r = 0; r < D; ++r)
+    {
+      const Real p_opp = V_phys[(std::size_t)r + (std::size_t)D * face_id];
+      const Real p0 = Vface[(std::size_t)r];
+      dot_to_opp += out.unit_normal[(std::size_t)r] * (p_opp - p0);
+    }
+
+    if (dot_to_opp > Real(0))
+    {
+      for (int r = 0; r < D; ++r)
+      {
+        out.unit_normal[(std::size_t)r] = -out.unit_normal[(std::size_t)r];
+      }
+    }
+
+    for (int r = 0; r < D; ++r)
+    {
+      out.normal_scaled[(std::size_t)r] = s * out.unit_normal[(std::size_t)r];
+    }
+
+    out.valid = true;
+  }
+}
+
+template<int D, class Real>
+inline void dsimplex_all_physical_face_geometry_colmajor(
+  const Real* V_phys,
+  DSimplexFaceGeom<D,Real>* face_geom_out
+)
+{
+  static_assert(D >= 1, "D must be positive");
+  assert(V_phys != nullptr);
+  assert(face_geom_out != nullptr);
+
+  for (int f = 0; f < D + 1; ++f)
+  {
+    dsimplex_physical_face_geometry_colmajor<D,Real>(
+      V_phys,
+      f,
+      face_geom_out[f]);
+  }
+}
 
 } // namespace jsimplex
 
