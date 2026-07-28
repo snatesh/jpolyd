@@ -33,6 +33,39 @@ libjpolyd.jmult_clenshaw_apply.restype = ctypes.c_int
 libjpolyd.jmult_clenshaw_destroy.argtypes = [ctypes.c_void_p]
 libjpolyd.jmult_clenshaw_destroy.restype = None
 
+libjpolyd.jmult_clenshaw_test_concurrency.argtypes = [
+  ctypes.c_void_p,
+  ctypes.POINTER(ctypes.c_double),
+  ctypes.POINTER(ctypes.c_double),
+  ctypes.c_int,
+  ctypes.c_int,
+  ctypes.c_double,
+  ctypes.c_double,
+  ctypes.POINTER(ctypes.c_double),
+  ctypes.POINTER(ctypes.c_double),
+  ctypes.POINTER(ctypes.c_int),
+]
+libjpolyd.jmult_clenshaw_test_concurrency.restype = ctypes.c_int
+
+libjpolyd.jmult_clenshaw_workspace_create.argtypes = [
+  ctypes.c_void_p,                  # plan
+  ctypes.POINTER(ctypes.c_void_p),  # workspace_out
+]
+libjpolyd.jmult_clenshaw_workspace_create.restype = ctypes.c_int
+
+libjpolyd.jmult_clenshaw_apply_workspace.argtypes = [
+  ctypes.c_void_p,                  # plan
+  ctypes.c_void_p,                  # workspace
+  ctypes.POINTER(ctypes.c_double),  # q
+  ctypes.POINTER(ctypes.c_double),  # c
+  ctypes.POINTER(ctypes.c_double),  # y_out
+]
+libjpolyd.jmult_clenshaw_apply_workspace.restype = ctypes.c_int
+
+libjpolyd.jmult_clenshaw_workspace_destroy.argtypes = [
+  ctypes.c_void_p,
+]
+libjpolyd.jmult_clenshaw_workspace_destroy.restype = None
 
 # -----------------------------
 # Python wrapper class
@@ -146,3 +179,153 @@ class JMultClenshaw:
 
     return y
 
+  def test_concurrency(self, q, c, ntrials=64, nthreads=0,
+                       rtol=1e-12, atol=1e-12):
+    """Compare serial and OpenMP shared-plan/independent-workspace results."""
+    if not getattr(self, "_handle", None) or not self._handle.value:
+      raise RuntimeError("Handle is closed")
+  
+    q = np.asarray(q, dtype=np.float64, order="C")
+    if q.ndim != 1 or q.size != self.Mp:
+      raise ValueError(f"q must have shape ({self.Mp},)")
+  
+    c = np.asarray(c, dtype=np.float64, order="C")
+    if c.ndim != 1:
+      raise ValueError("c must be 1D")
+  
+    max_abs = ctypes.c_double(0.0)
+    max_rel = ctypes.c_double(0.0)
+    threads_used = ctypes.c_int(0)
+  
+    ret = libjpolyd.jmult_clenshaw_test_concurrency(
+      self._handle,
+      q.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+      c.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+      ctypes.c_int(int(ntrials)),
+      ctypes.c_int(int(nthreads)),
+      ctypes.c_double(float(rtol)),
+      ctypes.c_double(float(atol)),
+      ctypes.byref(max_abs),
+      ctypes.byref(max_rel),
+      ctypes.byref(threads_used),
+    )
+  
+    if ret == 7:
+      raise RuntimeError(
+        "jmult concurrency test is unavailable: library was built without OpenMP"
+      )
+    if ret != 0:
+      raise RuntimeError(
+        "jmult_clenshaw_test_concurrency failed with code "
+        f"{ret}; threads={threads_used.value}, "
+        f"max_abs={max_abs.value:.3e}, max_rel={max_rel.value:.3e}"
+      )
+  
+    return {
+      "threads_used": int(threads_used.value),
+      "max_abs_error": float(max_abs.value),
+      "max_rel_error": float(max_rel.value),
+    }
+
+  def create_workspace(self):
+    """
+    Create an independent mutable workspace compatible with this plan.
+  
+    The returned workspace may be reused across serial calls. Different active
+    concurrent calls must use different workspaces.
+    """
+    if not getattr(self, "_handle", None) or not self._handle.value:
+      raise RuntimeError("Handle is closed")
+  
+    workspace = ctypes.c_void_p(None)
+  
+    ret = libjpolyd.jmult_clenshaw_workspace_create(
+      self._handle,
+      ctypes.byref(workspace),
+    )
+  
+    if ret != 0 or not workspace.value:
+      raise RuntimeError(
+        f"jmult_clenshaw_workspace_create failed with code {ret}"
+      )
+  
+    return workspace
+  
+  
+  def destroy_workspace(self, workspace):
+    """
+    Destroy a workspace created by create_workspace().
+  
+    Workspaces should be destroyed before closing the parent plan.
+    """
+    if workspace is None:
+      return
+  
+    if not isinstance(workspace, ctypes.c_void_p):
+      workspace = ctypes.c_void_p(workspace)
+  
+    if workspace.value:
+      libjpolyd.jmult_clenshaw_workspace_destroy(workspace)
+      workspace.value = None
+  
+  
+  def apply_workspace(self, workspace, q, c, out=None):
+    """
+    Compute y = M_q c using an explicitly supplied workspace.
+  
+    Parameters
+    ----------
+    workspace : ctypes.c_void_p
+      Workspace returned by create_workspace().
+    q : array_like, shape (Mp,)
+      Coefficients of the multiplier.
+    c : array_like, shape (MK,)
+      Lifted input coefficients.
+    out : optional ndarray, shape (MK,)
+      Preallocated output.
+  
+    Returns
+    -------
+    y : ndarray, shape (MK,)
+    """
+    if not getattr(self, "_handle", None) or not self._handle.value:
+      raise RuntimeError("Handle is closed")
+  
+    if workspace is None:
+      raise ValueError("workspace must not be None")
+  
+    if not isinstance(workspace, ctypes.c_void_p):
+      workspace = ctypes.c_void_p(workspace)
+  
+    if not workspace.value:
+      raise RuntimeError("Workspace is closed")
+  
+    q = np.asarray(q, dtype=np.float64, order="C")
+    if q.ndim != 1 or q.size != self.Mp:
+      raise ValueError(f"q must have shape ({self.Mp},)")
+  
+    c = np.asarray(c, dtype=np.float64, order="C")
+    if c.ndim != 1:
+      raise ValueError("c must be 1D")
+  
+    if out is None:
+      y = np.empty_like(c)
+    else:
+      y = np.asarray(out, dtype=np.float64, order="C")
+      if y.shape != c.shape:
+        raise ValueError("out must have same shape as c")
+  
+    ret = libjpolyd.jmult_clenshaw_apply_workspace(
+      self._handle,
+      workspace,
+      q.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+      c.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+      y.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+    )
+  
+    if ret != 0:
+      raise RuntimeError(
+        f"jmult_clenshaw_apply_workspace failed with code {ret}"
+      )
+  
+    return y

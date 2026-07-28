@@ -341,7 +341,9 @@ struct JMat
           }
         }
       }
-    } 
+    }
+    std::free(r);
+    std::free(off); 
   }
   
   /* Multiplication-by-coordinate sparse ops.
@@ -666,7 +668,7 @@ struct JMat
     uint64_t* tmp0  = (uint64_t*) std::malloc((std::size_t)r * (std::size_t)c0 * sizeof(uint64_t));
     uint64_t* tmpm1 = (uint64_t*) std::malloc((std::size_t)r * (std::size_t)c1 * sizeof(uint64_t));
     uint64_t* tmpp1 = (uint64_t*) std::malloc((std::size_t)r * (std::size_t)cm1 * sizeof(uint64_t));
-    if ((!tmp0 && r*c0) || (!tmpm1 && r*c1) || !(tmpp1 && r*cm1))
+    if ((!tmp0 && r*c0) || (!tmpm1 && r*c1) || (!tmpp1 && r*cm1))
     {
       std::cerr << "JMat::extract_deltas_from_block: alloc failed\n";
       std::exit(1);

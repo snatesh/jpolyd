@@ -1,6 +1,14 @@
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <new>
+#include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include <jmat.hh>
 #include <jbasis.hh>
@@ -18,10 +26,42 @@ struct JMultOpaque
                const double* c,
                double* y_out) = nullptr;
 
+  int (*workspace_create)(void* impl,
+                          void** workspace_impl_out) = nullptr;
+
+  int (*apply_workspace)(void* impl,
+                         void* workspace_impl,
+                         const double* q,
+                         const double* c,
+                         double* y_out) = nullptr;
+
+  void (*workspace_destroy)(void* workspace_impl) = nullptr;
+
+  int (*test_concurrency)(void* impl,
+                          const double* q,
+                          const double* c,
+                          int ntrials,
+                          int nthreads,
+                          double rtol,
+                          double atol,
+                          double* max_abs_error_out,
+                          double* max_rel_error_out,
+                          int* threads_used_out) = nullptr;
+
   void (*destroy)(void* impl) = nullptr;
 };
 
+struct JMultWorkspaceOpaque
+{
+  void* impl = nullptr;
 
+  // Workspaces created by the C API are tied to the exact plan instance that
+  // created them. This catches accidental cross-plan use even when dimensions
+  // happen to match.
+  const void* owner_impl = nullptr;
+
+  void (*destroy)(void* workspace_impl) = nullptr;
+};
 
 template<int D>
 struct JMultHandle
@@ -71,6 +111,12 @@ struct JMultHandle
       if (x_fun[i])      std::free(x_fun[i]);
     }
   }
+};
+
+template<int D>
+struct JMultWorkspaceHandle
+{
+  MultByQClenshawWorkspace<D,double> workspace;
 };
 
 template<int D>
@@ -189,6 +235,193 @@ static inline int jmult_apply_D(jmult_handle_t handle,
 }
 
 template<int D>
+static inline int jmult_workspace_create_D(jmult_handle_t handle,
+                                           void** workspace_impl_out)
+{
+  if (!handle || !workspace_impl_out) return 1;
+  *workspace_impl_out = nullptr;
+
+  auto* H = (JMultHandle<D>*)handle;
+  JMultWorkspaceHandle<D>* W = nullptr;
+
+  try
+  {
+    W = new JMultWorkspaceHandle<D>();
+    W->workspace.init(H->mbq.p, H->mbq.MK);
+  }
+  catch (...)
+  {
+    delete W;
+    return 4;
+  }
+
+  *workspace_impl_out = (void*)W;
+  return 0;
+}
+
+template<int D>
+static inline int jmult_apply_workspace_D(jmult_handle_t handle,
+                                          void* workspace_impl,
+                                          const double* q,
+                                          const double* c,
+                                          double* y_out)
+{
+  if (!handle || !workspace_impl || !q || !c || !y_out) return 1;
+
+  auto* H = (JMultHandle<D>*)handle;
+  auto* W = (JMultWorkspaceHandle<D>*)workspace_impl;
+
+  if (!W->workspace.compatible(H->mbq.p, H->mbq.MK)) return 2;
+
+  H->mbq.apply(q, c, y_out, W->workspace);
+  return 0;
+}
+
+template<int D>
+static inline void jmult_workspace_destroy_D(void* workspace_impl)
+{
+  auto* W = (JMultWorkspaceHandle<D>*)workspace_impl;
+  delete W;
+}
+
+static inline double jmult_case_value(double base,
+                                      int trial,
+                                      int index,
+                                      int salt)
+{
+  // Integer-only pattern generation keeps serial and parallel test inputs
+  // identical without relying on a random-number generator or shared state.
+  const int pattern = (((trial + 1) * (index + 3 + salt)) % 19) - 9;
+  const double scale = 1.0e-3 * (double)pattern;
+  return base + scale * (1.0 + std::abs(base));
+}
+
+template<int D>
+static inline int jmult_test_concurrency_D(jmult_handle_t handle,
+                                           const double* q,
+                                           const double* c,
+                                           int ntrials,
+                                           int nthreads,
+                                           double rtol,
+                                           double atol,
+                                           double* max_abs_error_out,
+                                           double* max_rel_error_out,
+                                           int* threads_used_out)
+{
+  if (max_abs_error_out) *max_abs_error_out = 0.0;
+  if (max_rel_error_out) *max_rel_error_out = 0.0;
+  if (threads_used_out) *threads_used_out = 0;
+
+  if (!handle || !q || !c) return 1;
+  if (ntrials <= 0 || nthreads < 0 || rtol < 0.0 || atol < 0.0) return 3;
+
+#ifndef _OPENMP
+  (void)nthreads;
+  return 7;
+#else
+  auto* H = (JMultHandle<D>*)handle;
+  const int Mp = H->mbq.Mp;
+  const int MK = H->mbq.MK;
+
+  int requested_threads = nthreads;
+  if (requested_threads <= 0) requested_threads = omp_get_max_threads();
+  requested_threads = std::max(1, requested_threads);
+  requested_threads = std::min(requested_threads, ntrials);
+
+  try
+  {
+    std::vector<double> q_cases((std::size_t)ntrials * (std::size_t)Mp);
+    std::vector<double> c_cases((std::size_t)ntrials * (std::size_t)MK);
+    std::vector<double> serial_results((std::size_t)ntrials * (std::size_t)MK);
+    std::vector<double> abs_errors((std::size_t)ntrials, 0.0);
+    std::vector<double> rel_errors((std::size_t)ntrials, 0.0);
+    std::vector<unsigned char> failed((std::size_t)ntrials, 0);
+
+    MultByQClenshawWorkspace<D,double> serial_workspace;
+    serial_workspace.init(H->mbq.p, H->mbq.MK);
+
+    for (int trial = 0; trial < ntrials; ++trial)
+    {
+      double* qt = q_cases.data() + (std::size_t)trial * (std::size_t)Mp;
+      double* ct = c_cases.data() + (std::size_t)trial * (std::size_t)MK;
+      double* yt = serial_results.data() + (std::size_t)trial * (std::size_t)MK;
+
+      for (int i = 0; i < Mp; ++i)
+        qt[i] = jmult_case_value(q[i], trial, i, 0);
+
+      for (int i = 0; i < MK; ++i)
+        ct[i] = jmult_case_value(c[i], trial, i, 7);
+
+      H->mbq.apply(qt, ct, yt, serial_workspace);
+    }
+
+    std::vector<MultByQClenshawWorkspace<D,double>> workspaces(
+      (std::size_t)requested_threads);
+    for (int t = 0; t < requested_threads; ++t)
+      workspaces[(std::size_t)t].init(H->mbq.p, H->mbq.MK);
+
+    int actual_threads = 1;
+
+#pragma omp parallel num_threads(requested_threads) shared(actual_threads)
+    {
+      const int tid = omp_get_thread_num();
+      std::vector<double> y((std::size_t)MK);
+
+#pragma omp single
+      actual_threads = omp_get_num_threads();
+
+#pragma omp for schedule(static)
+      for (int trial = 0; trial < ntrials; ++trial)
+      {
+        const double* qt = q_cases.data() + (std::size_t)trial * (std::size_t)Mp;
+        const double* ct = c_cases.data() + (std::size_t)trial * (std::size_t)MK;
+        const double* yr = serial_results.data() + (std::size_t)trial * (std::size_t)MK;
+
+        H->mbq.apply(qt, ct, y.data(), workspaces[(std::size_t)tid]);
+
+        double abs_error = 0.0;
+        double ref_norm = 0.0;
+        for (int i = 0; i < MK; ++i)
+        {
+          abs_error = std::max(abs_error, std::abs(y[(std::size_t)i] - yr[i]));
+          ref_norm = std::max(ref_norm, std::abs(yr[i]));
+        }
+
+        const double rel_error =
+          abs_error / std::max(1.0e-300, ref_norm);
+
+        abs_errors[(std::size_t)trial] = abs_error;
+        rel_errors[(std::size_t)trial] = rel_error;
+        failed[(std::size_t)trial] =
+          (abs_error > atol + rtol * ref_norm) ? 1 : 0;
+      }
+    }
+
+    double max_abs_error = 0.0;
+    double max_rel_error = 0.0;
+    bool any_failed = false;
+
+    for (int trial = 0; trial < ntrials; ++trial)
+    {
+      max_abs_error = std::max(max_abs_error, abs_errors[(std::size_t)trial]);
+      max_rel_error = std::max(max_rel_error, rel_errors[(std::size_t)trial]);
+      any_failed = any_failed || (failed[(std::size_t)trial] != 0);
+    }
+
+    if (max_abs_error_out) *max_abs_error_out = max_abs_error;
+    if (max_rel_error_out) *max_rel_error_out = max_rel_error;
+    if (threads_used_out) *threads_used_out = actual_threads;
+
+    return any_failed ? 6 : 0;
+  }
+  catch (...)
+  {
+    return 4;
+  }
+#endif
+}
+
+template<int D>
 static inline void jmult_destroy_D(jmult_handle_t handle)
 {
   auto* H = (JMultHandle<D>*)handle;
@@ -202,6 +435,61 @@ static int jmult_apply_opaque(void* impl,
                               double* y_out)
 {
   return jmult_apply_D<D>((jmult_handle_t)impl, q, c, y_out);
+}
+
+template<int D>
+static int jmult_workspace_create_opaque(void* impl,
+                                         void** workspace_impl_out)
+{
+  return jmult_workspace_create_D<D>(
+    (jmult_handle_t)impl,
+    workspace_impl_out);
+}
+
+template<int D>
+static int jmult_apply_workspace_opaque(void* impl,
+                                        void* workspace_impl,
+                                        const double* q,
+                                        const double* c,
+                                        double* y_out)
+{
+  return jmult_apply_workspace_D<D>(
+    (jmult_handle_t)impl,
+    workspace_impl,
+    q,
+    c,
+    y_out);
+}
+
+template<int D>
+static void jmult_workspace_destroy_opaque(void* workspace_impl)
+{
+  jmult_workspace_destroy_D<D>(workspace_impl);
+}
+
+template<int D>
+static int jmult_test_concurrency_opaque(void* impl,
+                                         const double* q,
+                                         const double* c,
+                                         int ntrials,
+                                         int nthreads,
+                                         double rtol,
+                                         double atol,
+                                         double* max_abs_error_out,
+                                         double* max_rel_error_out,
+                                         int* threads_used_out)
+{
+  return jmult_test_concurrency_D<D>(
+    (jmult_handle_t)impl,
+    q,
+    c,
+    ntrials,
+    nthreads,
+    rtol,
+    atol,
+    max_abs_error_out,
+    max_rel_error_out,
+    threads_used_out);
 }
 
 template<int D>
@@ -241,23 +529,68 @@ int jmult_clenshaw_create(const double* kappa,
   {
     case 1:
       ret = jmult_create_D<1>(kappa, p, K, alpha_p, Mp, assume_symmetric, &impl);
-      if (ret == 0) { W->impl = (void*)impl; W->apply = &jmult_apply_opaque<1>; W->destroy = &jmult_destroy_opaque<1>; }
+      if (ret == 0)
+      {
+        W->impl = (void*)impl;
+        W->apply = &jmult_apply_opaque<1>;
+        W->workspace_create = &jmult_workspace_create_opaque<1>;
+        W->apply_workspace = &jmult_apply_workspace_opaque<1>;
+        W->workspace_destroy = &jmult_workspace_destroy_opaque<1>;
+        W->test_concurrency = &jmult_test_concurrency_opaque<1>;
+        W->destroy = &jmult_destroy_opaque<1>;
+      }
       break;
     case 2:
       ret = jmult_create_D<2>(kappa, p, K, alpha_p, Mp, assume_symmetric, &impl);
-      if (ret == 0) { W->impl = (void*)impl; W->apply = &jmult_apply_opaque<2>; W->destroy = &jmult_destroy_opaque<2>; }
+      if (ret == 0)
+      {
+        W->impl = (void*)impl;
+        W->apply = &jmult_apply_opaque<2>;
+        W->workspace_create = &jmult_workspace_create_opaque<2>;
+        W->apply_workspace = &jmult_apply_workspace_opaque<2>;
+        W->workspace_destroy = &jmult_workspace_destroy_opaque<2>;
+        W->test_concurrency = &jmult_test_concurrency_opaque<2>;
+        W->destroy = &jmult_destroy_opaque<2>;
+      }
       break;
     case 3:
       ret = jmult_create_D<3>(kappa, p, K, alpha_p, Mp, assume_symmetric, &impl);
-      if (ret == 0) { W->impl = (void*)impl; W->apply = &jmult_apply_opaque<3>; W->destroy = &jmult_destroy_opaque<3>; }
+      if (ret == 0)
+      {
+        W->impl = (void*)impl;
+        W->apply = &jmult_apply_opaque<3>;
+        W->workspace_create = &jmult_workspace_create_opaque<3>;
+        W->apply_workspace = &jmult_apply_workspace_opaque<3>;
+        W->workspace_destroy = &jmult_workspace_destroy_opaque<3>;
+        W->test_concurrency = &jmult_test_concurrency_opaque<3>;
+        W->destroy = &jmult_destroy_opaque<3>;
+      }
       break;
     case 4:
       ret = jmult_create_D<4>(kappa, p, K, alpha_p, Mp, assume_symmetric, &impl);
-      if (ret == 0) { W->impl = (void*)impl; W->apply = &jmult_apply_opaque<4>; W->destroy = &jmult_destroy_opaque<4>; }
+      if (ret == 0)
+      {
+        W->impl = (void*)impl;
+        W->apply = &jmult_apply_opaque<4>;
+        W->workspace_create = &jmult_workspace_create_opaque<4>;
+        W->apply_workspace = &jmult_apply_workspace_opaque<4>;
+        W->workspace_destroy = &jmult_workspace_destroy_opaque<4>;
+        W->test_concurrency = &jmult_test_concurrency_opaque<4>;
+        W->destroy = &jmult_destroy_opaque<4>;
+      }
       break;
     case 5:
       ret = jmult_create_D<5>(kappa, p, K, alpha_p, Mp, assume_symmetric, &impl);
-      if (ret == 0) { W->impl = (void*)impl; W->apply = &jmult_apply_opaque<5>; W->destroy = &jmult_destroy_opaque<5>; }
+      if (ret == 0)
+      {
+        W->impl = (void*)impl;
+        W->apply = &jmult_apply_opaque<5>;
+        W->workspace_create = &jmult_workspace_create_opaque<5>;
+        W->apply_workspace = &jmult_apply_workspace_opaque<5>;
+        W->workspace_destroy = &jmult_workspace_destroy_opaque<5>;
+        W->test_concurrency = &jmult_test_concurrency_opaque<5>;
+        W->destroy = &jmult_destroy_opaque<5>;
+      }
       break;
     default:
       ret = 5;
@@ -274,7 +607,6 @@ int jmult_clenshaw_create(const double* kappa,
   return 0;
 }
 
-
 int jmult_clenshaw_apply(jmult_handle_t handle,
                          const double* q,
                          const double* c,
@@ -288,6 +620,99 @@ int jmult_clenshaw_apply(jmult_handle_t handle,
   return W->apply(W->impl, q, c, y_out);
 }
 
+int jmult_clenshaw_workspace_create(jmult_handle_t plan,
+                                    jmult_workspace_t* workspace_out)
+{
+  if (!workspace_out) return 1;
+  *workspace_out = nullptr;
+
+  if (!plan) return 1;
+
+  JMultOpaque* P = (JMultOpaque*)plan;
+  if (!P->impl || !P->workspace_create || !P->workspace_destroy) return 2;
+
+  void* workspace_impl = nullptr;
+  const int ret = P->workspace_create(P->impl, &workspace_impl);
+  if (ret != 0) return ret;
+  if (!workspace_impl) return 4;
+
+  JMultWorkspaceOpaque* W = nullptr;
+  try
+  {
+    W = new JMultWorkspaceOpaque();
+  }
+  catch (...)
+  {
+    P->workspace_destroy(workspace_impl);
+    return 4;
+  }
+
+  W->impl = workspace_impl;
+  W->owner_impl = P->impl;
+  W->destroy = P->workspace_destroy;
+
+  *workspace_out = (jmult_workspace_t)W;
+  return 0;
+}
+
+int jmult_clenshaw_apply_workspace(jmult_handle_t plan,
+                                   jmult_workspace_t workspace,
+                                   const double* q,
+                                   const double* c,
+                                   double* y_out)
+{
+  if (!plan || !workspace || !q || !c || !y_out) return 1;
+
+  JMultOpaque* P = (JMultOpaque*)plan;
+  JMultWorkspaceOpaque* W = (JMultWorkspaceOpaque*)workspace;
+
+  if (!P->impl || !P->apply_workspace || !W->impl) return 2;
+  if (W->owner_impl != P->impl) return 2;
+
+  return P->apply_workspace(P->impl, W->impl, q, c, y_out);
+}
+
+void jmult_clenshaw_workspace_destroy(jmult_workspace_t workspace)
+{
+  if (!workspace) return;
+
+  JMultWorkspaceOpaque* W = (JMultWorkspaceOpaque*)workspace;
+  if (W->destroy && W->impl)
+  {
+    W->destroy(W->impl);
+    W->impl = nullptr;
+  }
+  delete W;
+}
+
+int jmult_clenshaw_test_concurrency(jmult_handle_t plan,
+                                    const double* q,
+                                    const double* c,
+                                    int ntrials,
+                                    int nthreads,
+                                    double rtol,
+                                    double atol,
+                                    double* max_abs_error_out,
+                                    double* max_rel_error_out,
+                                    int* threads_used_out)
+{
+  if (!plan || !q || !c) return 1;
+
+  JMultOpaque* P = (JMultOpaque*)plan;
+  if (!P->impl || !P->test_concurrency) return 2;
+
+  return P->test_concurrency(
+    P->impl,
+    q,
+    c,
+    ntrials,
+    nthreads,
+    rtol,
+    atol,
+    max_abs_error_out,
+    max_rel_error_out,
+    threads_used_out);
+}
 
 void jmult_clenshaw_destroy(jmult_handle_t handle)
 {
@@ -302,5 +727,4 @@ void jmult_clenshaw_destroy(jmult_handle_t handle)
   delete W;
 }
 
-
-} // extern "C" 
+} // extern "C"

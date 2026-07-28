@@ -234,6 +234,80 @@ static inline void dense_upper_to_csr(const DenseMat<Real>& U, CSR<Real>& out, R
 }
 
 /* --------------------------
+   MultByQClenshaw workspace
+   -------------------------- */
+
+template<int D, class Real>
+struct MultByQClenshawWorkspace
+{
+  int p = -1;
+  int MK = 0;
+  std::size_t max_block_size = 0;
+
+  // Recurrence blocks v_j, j=1,...,p.  The two extra slots preserve the
+  // indexing used by the Clenshaw back substitution.
+  std::vector<std::vector<Real>> v;
+
+  // Reused level-j scratch.  Each vector is allocated to the largest
+  // homogeneous block m_p*MK, and apply() uses only the active prefix.
+  std::vector<Real> rj;
+  std::vector<Real> termA;
+  std::vector<Real> termJ;
+  std::vector<Real> s;
+  std::vector<Real> termC;
+
+  // Reused degree-zero scratch.
+  std::vector<Real> r0;
+  std::vector<Real> termA0;
+  std::vector<Real> termJ0;
+  std::vector<Real> v0;
+  std::vector<Real> termC0;
+
+  // Scratch for one J_fun coordinate matvec.
+  std::vector<Real> tmpJ;
+
+  void init(int p_in, int MK_in)
+  {
+    assert(p_in >= 0);
+    assert(MK_in >= 0);
+
+    p = p_in;
+    MK = MK_in;
+
+    v.clear();
+    v.resize((std::size_t)p + 3);
+    for (int j = 1; j <= p; ++j)
+    {
+      const std::size_t nj =
+        (std::size_t)m_hom(D, j) * (std::size_t)MK;
+      v[j].resize(nj);
+    }
+
+    max_block_size =
+      (std::size_t)m_hom(D, p) * (std::size_t)MK;
+
+    rj.resize(max_block_size);
+    termA.resize(max_block_size);
+    termJ.resize(max_block_size);
+    s.resize(max_block_size);
+    termC.resize(max_block_size);
+
+    const std::size_t n0 = (std::size_t)MK;
+    r0.resize(n0);
+    termA0.resize(n0);
+    termJ0.resize(n0);
+    v0.resize(n0);
+    termC0.resize(n0);
+    tmpJ.resize(n0);
+  }
+
+  bool compatible(int p_in, int MK_in) const
+  {
+    return p == p_in && MK == MK_in;
+  }
+};
+
+/* --------------------------
    MultByQClenshaw (ported)
    -------------------------- */
 
@@ -269,8 +343,11 @@ public:
   std::vector<std::vector<int>> sigma_b;
   std::vector<CSR<Real>> BT_csr;     // Bt = Beff[j]^T in CSR (upper-tri)
 
-  // temp buffer used in _apply_JT for J_fun matvec
-  mutable std::vector<Real> tmpJ;    // length MK
+  // Compatibility workspace used by the existing three-argument apply().
+  // External C++ callers may instead supply their own workspace to the
+  // four-argument overload, allowing one immutable plan per thread-shared
+  // coefficient structure and one mutable workspace per concurrent apply.
+  mutable MultByQClenshawWorkspace<D, Real> default_workspace;
 
   void init(int p_, int K_,
             const int* alpha_p_, int alpha_p_rows,
@@ -305,97 +382,110 @@ public:
     sigma_b.assign((std::size_t)p, std::vector<int>());
     BT_csr.assign((std::size_t)p, CSR<Real>());
 
-    tmpJ.assign((std::size_t)MK, (Real)0);
+    default_workspace.init(p, MK);
 
     for (int j = 0; j < p; ++j)
       precompute_level(j);
   }
 
-  /* apply(q_coeffs_p, c_coeffs_K) -> y_K (length MK) */
-  void apply(const Real* q_coeffs_p, const Real* c_coeffs_K, Real* y_out) const
+  /* apply(q_coeffs_p, c_coeffs_K) -> y_K (length MK)
+
+     This overload preserves the existing API and reuses the workspace owned
+     by the plan.  As before, simultaneous calls on the same plan are not
+     thread-safe.  Use the four-argument overload with one workspace per
+     concurrent caller when thread-safe shared-plan use is needed.
+  */
+  void apply(const Real* q_coeffs_p,
+             const Real* c_coeffs_K,
+             Real* y_out) const
   {
-    // p==0 returns r0 = q0 ⊗ cK which is scalar * cK
+    apply(q_coeffs_p, c_coeffs_K, y_out, default_workspace);
+  }
+
+  /* Workspace-explicit apply.  No dynamic allocation occurs after the
+     workspace has been initialized for this plan.
+  */
+  void apply(const Real* q_coeffs_p,
+             const Real* c_coeffs_K,
+             Real* y_out,
+             MultByQClenshawWorkspace<D, Real>& work) const
+  {
+    assert(q_coeffs_p);
+    assert(c_coeffs_K);
+    assert(y_out);
+    assert(work.compatible(p, MK));
+
+    // p==0 returns r0 = q0 tensor cK, i.e. scalar multiplication.
     if (p == 0)
     {
-      // r0: q_coeffs_p[0] * cK
       const Real q0 = q_coeffs_p[0];
       for (int k = 0; k < MK; ++k) y_out[k] = q0 * c_coeffs_K[k];
       return;
     }
 
-    // We avoid storing all r[j] explicitly: build on demand into a buffer rj.
-    // v[j] is length m_j*MK for j>=1; v0 is MK.
-    std::vector<std::vector<Real>> v((std::size_t)p + 3);
-    v[p + 1].assign(0, (Real)0);
-    v[p + 2].assign(0, (Real)0);
-
-    // Build r_p and solve for v_p
+    // Highest-degree initialization: build r_p directly in v_p, then solve.
     {
-      const int mj = m_hom(D, p);
-      std::vector<Real> rp((std::size_t)mj * MK);
-      build_r_block(p, q_coeffs_p, c_coeffs_K, rp.data());
-      v[p] = rp; // will be overwritten by solve
-      solve_BT_kronI(p - 1, v[p].data()); // in-place
+      Real* vp = work.v[p].data();
+      build_r_block(p, q_coeffs_p, c_coeffs_K, vp);
+      solve_BT_kronI(p - 1, vp);
     }
 
-    // for j=p-1..1
+    // Descending back substitution for j=p-1,...,1.
     for (int j = p - 1; j >= 1; --j)
     {
-      const int mj = m_hom(D, j);
-      const int mj1 = m_hom(D, j + 1);
+      const std::size_t nblock =
+        (std::size_t)m_hom(D, j) * (std::size_t)MK;
 
-      std::vector<Real> rj((std::size_t)mj * MK);
-      build_r_block(j, q_coeffs_p, c_coeffs_K, rj.data());
+      Real* rj = work.rj.data();
+      Real* termA = work.termA.data();
+      Real* termJ = work.termJ.data();
+      Real* s = work.s.data();
+      Real* vj = work.v[j].data();
 
-      std::vector<Real> termA((std::size_t)mj * MK);
-      std::vector<Real> termJ((std::size_t)mj * MK);
-      apply_AkronI_T(j, v[j + 1].data(), termA.data());
-      apply_JT(j, v[j + 1].data(), termJ.data());
+      build_r_block(j, q_coeffs_p, c_coeffs_K, rj);
+      apply_AkronI_T(j, work.v[j + 1].data(), termA);
+      apply_JT(j, work.v[j + 1].data(), termJ, work.tmpJ.data());
 
-      // s = r[j] - (termA - termJ)
-      std::vector<Real> s = rj;
-      for (std::size_t t = 0; t < s.size(); ++t)
+      // s = r_j - (termA - termJ)
+      std::memcpy(s, rj, nblock * sizeof(Real));
+      for (std::size_t t = 0; t < nblock; ++t)
         s[t] -= (termA[t] - termJ[t]);
 
-      // if j+1 <= p-1 and (j+1)>=1: subtract C term
+      // Subtract the C contribution when v_{j+2} is present.
       if (j + 1 <= p - 1)
       {
-        // (j+1)>=1 always here
-        std::vector<Real> termC((std::size_t)mj * MK);
-        apply_CkronI_T(j + 1, v[j + 2].data(), termC.data());
-        for (std::size_t t = 0; t < s.size(); ++t) s[t] -= termC[t];
+        Real* termC = work.termC.data();
+        apply_CkronI_T(j + 1, work.v[j + 2].data(), termC);
+        for (std::size_t t = 0; t < nblock; ++t) s[t] -= termC[t];
       }
 
-      v[j] = std::move(s);
-      solve_BT_kronI(j - 1, v[j].data());
+      std::memcpy(vj, s, nblock * sizeof(Real));
+      solve_BT_kronI(j - 1, vj);
     }
 
-    // v0
+    // Final degree-zero block.
     {
-      const int mj0 = m_hom(D, 0); // =1
-      (void)mj0;
+      Real* r0 = work.r0.data();
+      Real* termA0 = work.termA0.data();
+      Real* termJ0 = work.termJ0.data();
+      Real* v0 = work.v0.data();
 
-      std::vector<Real> r0((std::size_t)MK);
-      build_r0(q_coeffs_p, c_coeffs_K, r0.data());
+      build_r0(q_coeffs_p, c_coeffs_K, r0);
+      apply_AkronI_T(0, work.v[1].data(), termA0);
+      apply_JT(0, work.v[1].data(), termJ0, work.tmpJ.data());
 
-      std::vector<Real> termA0((std::size_t)MK);
-      std::vector<Real> termJ0((std::size_t)MK);
-      apply_AkronI_T(0, v[1].data(), termA0.data());
-      apply_JT(0, v[1].data(), termJ0.data());
-
-      // v0 = r0 - (termA0 - termJ0)
-      std::vector<Real> v0 = r0;
+      std::memcpy(v0, r0, (std::size_t)MK * sizeof(Real));
       for (int k = 0; k < MK; ++k)
         v0[k] -= (termA0[k] - termJ0[k]);
 
       if (p >= 2)
       {
-        std::vector<Real> termC0((std::size_t)MK);
-        apply_CkronI_T(1, v[2].data(), termC0.data());
+        Real* termC0 = work.termC0.data();
+        apply_CkronI_T(1, work.v[2].data(), termC0);
         for (int k = 0; k < MK; ++k) v0[k] -= termC0[k];
       }
 
-      std::memcpy(y_out, v0.data(), (std::size_t)MK * sizeof(Real));
+      std::memcpy(y_out, v0, (std::size_t)MK * sizeof(Real));
     }
   }
 
@@ -571,7 +661,7 @@ private:
 
   // J_j^T w using sigma maps:
   // out[b,:] += J_fun[i] * W[ell,:]
-  void apply_JT(int j, const Real* w, Real* out) const
+  void apply_JT(int j, const Real* w, Real* out, Real* tmpJ) const
   {
     const int mj = m_hom(D, j);
     const int mj1 = (int)sigma_i[j].size();
@@ -584,7 +674,7 @@ private:
       const Real* Well = w + (std::size_t)ell * MK;
 
       // tmpJ = J_fun[i] @ Well
-      csc_matvec(J_fun[i], Well, tmpJ.data());
+      csc_matvec(J_fun[i], Well, tmpJ);
 
       Real* outb = out + (std::size_t)b * MK;
       for (int k = 0; k < MK; ++k) outb[k] += tmpJ[k];

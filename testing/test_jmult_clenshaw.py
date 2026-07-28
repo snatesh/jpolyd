@@ -153,7 +153,39 @@ def run_smoke():
 
   print("\nAll C-backend eq212 backsub smoke tests passed.")
 
+def run_concurrency_smoke():
+  D = 3
+  kappa = np.array([0.8, 1.7, 2.3, 1.1], dtype=np.float64)
+  p, N = 10, 8
+  K = N + p
+  nquad = K + p + 1
+
+  f_fun = lambda X: X[:, 0]**4
+  q_fun = lambda X: np.sin(X[:, 0] + X[:, 1] + 0.5*X[:, 2])
+
+  c_fN, _ = project_to_coeffs(D, N, kappa, nquad, f_fun)
+  q_cp, _ = project_to_coeffs(D, p, kappa, nquad, q_fun)
+  alpha_p, _, _, _ = build_basis_structs(D, p, kappa)
+  _, _, _, MK = build_basis_structs(D, K, kappa)
+  c_fK = embed_coeffs_prefix(c_fN, MK)
+
+  solver_c = JMultClenshaw(D, p, K, kappa, alpha_p, assume_symmetric=True)
+  concurrency = solver_c.test_concurrency(
+    q_cp,
+    c_fK,
+    ntrials=64,
+    nthreads=0,
+    rtol=1e-12,
+    atol=1e-12,
+  )
+  print(
+    "[jmult OpenMP concurrency] "
+    f"threads={concurrency['threads_used']} "
+    f"max_abs={concurrency['max_abs_error']:.3e} "
+    f"max_rel={concurrency['max_rel_error']:.3e}"
+  )
+  solver_c.close()
 
 if __name__ == "__main__":
   run_smoke()
-
+  run_concurrency_smoke()
