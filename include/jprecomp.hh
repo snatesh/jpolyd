@@ -36,6 +36,7 @@ public:
   int nq_face = 0;
 
   std::array<Real, D + 1> kappa{};
+  std::array<Real, D + 1> kappa_res{};
   std::array<Real, D> kappa_face{};
 
   // Volume quadrature/basis in source-kappa convention.
@@ -43,6 +44,13 @@ public:
   std::vector<Real> W_vol;     // nq_vol
   std::vector<Real> V_vol;     // col-major nq_vol x M
   std::vector<Real> V_vol_int; // col-major nq_vol x m_int
+
+  // Volume quadrature/basis in PDE-residual kappa+2 convention.
+  // The full degree-n basis is stored so the same data can test/build
+  // second-, first-, and zero-order residual operators.
+  std::vector<Real> X_res;      // row-major nq_vol x D
+  std::vector<Real> W_res;      // nq_vol
+  std::vector<Real> V_res;      // col-major nq_vol x M
 
   // Canonical face quadrature/basis. For D=1, Y_face is empty, W_face=[1], V_face=[1].
   std::vector<Real> Y_face;    // row-major nq_face x (D-1) (for basis evaluator)
@@ -78,9 +86,13 @@ public:
     q_face = (q_face_in > 0) ? q_face_in : q_vol;
     if (q_face > q_vol) { throw std::invalid_argument("RefSimplexPrecomp: require q_face <= q_vol"); }
 
-    for (int i = 0; i <= D; ++i) { kappa[(std::size_t)i] = kappa_in[i]; }
+    for (int i = 0; i <= D; ++i)
+    {
+      kappa[(std::size_t)i] = kappa_in[i];
+      kappa_res[(std::size_t)i] = kappa_in[i] + Real(2);
+    }
 
-    // Current common-face convention: all faces use kappa[0:D].
+    // Current common-face convention: all faces use source kappa[0:D].
     dsimplex_common_face_kappa<D,Real>(kappa.data(), kappa_face.data());
 
     M = Basis<D,Real>::dim_Pi(n);
@@ -98,6 +110,7 @@ public:
     nq_vol = (int)QuadMapped<D,Real>::npoints((unsigned int)q_vol);
 
     build_volume_data();
+    build_residual_data();
     build_face_data();
     build_second_partials();
     build_face_operator_data();
@@ -129,6 +142,30 @@ private:
     Basis<D,Real>::eval_all(
       X_vol.data(), D, 1, nq_vol, kappa.data(), n - 2,
       alpha_i.data(), tail_i.data(), invh_i.data(), V_vol_int.data(), nq_vol, nullptr);
+  }
+
+  void build_residual_data()
+  {
+    X_res.assign((std::size_t)nq_vol * D, (Real)0);
+    W_res.assign((std::size_t)nq_vol, (Real)0);
+    const int built = QuadMapped<D,Real>::build_kappa(
+      (unsigned int)q_vol, kappa_res.data(), X_res.data(), W_res.data());
+    if (built != nq_vol)
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: residual quadrature build failed");
+    }
+
+    std::vector<int> alpha_res, tail_res;
+    std::vector<Real> invh_res;
+    Basis<D,Real>::build_structures(
+      n, kappa_res.data(), alpha_res, tail_res, invh_res);
+
+    V_res.assign((std::size_t)nq_vol * M, (Real)0);
+    Basis<D,Real>::eval_all(
+      X_res.data(), D, 1, nq_vol, kappa_res.data(), n,
+      alpha_res.data(), tail_res.data(), invh_res.data(),
+      V_res.data(), nq_vol, nullptr);
   }
 
   void build_face_data()
@@ -224,7 +261,8 @@ private:
           &Lij_ref[(std::size_t)M * M * ((std::size_t)i + (std::size_t)D * j)];
         
         std::vector<Real> K((std::size_t)M * M, (Real)0);
-        KMat<D,Real>::build_tprod_pruned_dense(n, (unsigned int)q_vol, k2.data(), kappa.data(), K.data());
+        KMat<D,Real>::build_tprod_pruned_dense(
+          n, (unsigned int)q_vol, k2.data(), kappa_res.data(), K.data());
 
   
         // Lij_block = K * Draw_col

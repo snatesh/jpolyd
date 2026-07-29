@@ -27,6 +27,7 @@ struct JPrecompBase
   virtual int nq_vol() const = 0;
   virtual int nq_face() const = 0;
   virtual const double* face_ref_scale() const = 0;
+  virtual const double* kappa_res() const = 0;
   virtual const double* Lij_ref() const = 0;
   virtual const double* T_ref() const = 0;
   virtual const double* Fgrad_ref() const = 0;
@@ -34,6 +35,9 @@ struct JPrecompBase
   virtual const double* X_vol() const = 0;
   virtual const double* W_vol() const = 0;
   virtual const double* V_vol() const = 0;
+  virtual const double* X_res() const = 0;
+  virtual const double* W_res() const = 0;
+  virtual const double* V_res() const = 0;
   virtual const double* Y_face() const = 0;
   virtual const double* W_face() const = 0;
   virtual const double* V_face() const = 0;
@@ -60,6 +64,7 @@ struct JPrecompHandle final : JPrecompBase
   int nq_vol() const override { return ref.nq_vol; }
   int nq_face() const override { return ref.nq_face; }
   const double* face_ref_scale() const override { return ref.face_ref_scale.data(); }
+  const double* kappa_res() const override { return ref.kappa_res.data(); }
   const double* Lij_ref() const override { return ref.Lij_ref.data(); }
   const double* T_ref() const override { return ref.T_ref.data(); }
   const double* Fgrad_ref() const override { return ref.Fgrad_ref.data(); }
@@ -67,6 +72,9 @@ struct JPrecompHandle final : JPrecompBase
   const double* X_vol() const override { return ref.X_vol.data(); }
   const double* W_vol() const override { return ref.W_vol.data(); }
   const double* V_vol() const override { return ref.V_vol.data(); }
+  const double* X_res() const override { return ref.X_res.data(); }
+  const double* W_res() const override { return ref.W_res.data(); }
+  const double* V_res() const override { return ref.V_res.data(); }
   const double* Y_face() const override { return ref.Y_face.data(); }
   const double* W_face() const override { return ref.W_face.data(); }
   const double* V_face() const override { return ref.V_face.data(); }
@@ -172,6 +180,14 @@ int jprecomp_get_face_ref_scale(void* handle, double* scale_out)
   return 0;
 }
 
+int jprecomp_get_kappa_res(void* handle, double* kappa_res_out)
+{
+  if (check_handle(handle) || !kappa_res_out) { return 1; }
+  const JPrecompBase* h = as_base(handle);
+  std::copy(h->kappa_res(), h->kappa_res() + h->D() + 1, kappa_res_out);
+  return 0;
+}
+
 int jprecomp_get_Lij_ref(void* handle, double* Lij_out)
 {
   if (check_handle(handle) || !Lij_out) { return 1; }
@@ -223,6 +239,24 @@ int jprecomp_get_volume_basis(void* handle, double* V_out)
   const JPrecompBase* h = as_base(handle);
   const std::size_t n = (std::size_t)h->nq_vol() * h->M();
   std::copy(h->V_vol(), h->V_vol() + n, V_out);
+  return 0;
+}
+
+int jprecomp_get_residual_quad(void* handle, double* X_out, double* W_out)
+{
+  if (check_handle(handle) || !X_out || !W_out) { return 1; }
+  const JPrecompBase* h = as_base(handle);
+  std::copy(h->X_res(), h->X_res() + (std::size_t)h->nq_vol() * h->D(), X_out);
+  std::copy(h->W_res(), h->W_res() + h->nq_vol(), W_out);
+  return 0;
+}
+
+int jprecomp_get_residual_basis(void* handle, double* V_out)
+{
+  if (check_handle(handle) || !V_out) { return 1; }
+  const JPrecompBase* h = as_base(handle);
+  const std::size_t n = (std::size_t)h->nq_vol() * h->M();
+  std::copy(h->V_res(), h->V_res() + n, V_out);
   return 0;
 }
 

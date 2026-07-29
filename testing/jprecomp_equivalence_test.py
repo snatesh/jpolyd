@@ -58,7 +58,7 @@ def build_reference_second_partials_old(D, n, q_vol, kappa):
     for j in range(D):
       Dj = dmat_build_tprod_natural_pruned(D, n, q_vol, k1[i], j)
       k2 = k1[i] + dk_natural(D, j)
-      K = kmat_build_tprod(D, n, q_vol, k2, kappa)
+      K = kmat_build_tprod(D, n, q_vol, k2, kappa+2)
       Lij[:, :, i, j] = dense(K @ (Dj @ D1[i]))
   return Lij
 

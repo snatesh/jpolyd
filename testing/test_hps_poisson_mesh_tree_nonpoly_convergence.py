@@ -228,8 +228,8 @@ def project_source_elementmajor(
   simplices: np.ndarray,
   f_fun: ScalarPointFun,
 ) -> np.ndarray:
-  Xhat, weights = pc.volume_quad()
-  V_int = pc.volume_basis()[:, :pc.m_int]
+  Xhat, weights = pc.residual_quad()
+  V_int = pc.residual_basis()[:, :pc.m_int]
   out = np.empty((simplices.shape[0], pc.m_int), dtype=np.float64)
 
   for element_id, simplex in enumerate(simplices):

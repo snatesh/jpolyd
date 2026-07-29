@@ -228,8 +228,8 @@ def project_source_elementmajor(
   simplices: np.ndarray,
   f_fun: ScalarPointFun,
 ) -> np.ndarray:
-  Xhat, weights = pc.volume_quad()
-  V_int = pc.volume_basis()[:, :pc.m_int]
+  Xhat, weights = pc.residual_quad()
+  V_int = pc.residual_basis()[:, :pc.m_int]
   out = np.empty((simplices.shape[0], pc.m_int), dtype=np.float64)
 
   for element_id, simplex in enumerate(simplices):
@@ -473,8 +473,8 @@ def main() -> None:
   parser.add_argument("--min-n", type=int, default=2)
   parser.add_argument("--max-n", type=int, default=6)
   parser.add_argument("--q-pad", type=int, default=1)
-  parser.add_argument("--q-data-pad", type=int, default=8)
-  parser.add_argument("--q-eval-pad", type=int, default=8)
+  parser.add_argument("--q-data-pad", type=int, default=3)
+  parser.add_argument("--q-eval-pad", type=int, default=3)
   parser.add_argument("--alpha", type=float, default=1.0)
   parser.add_argument("--beta", type=float, default=2.3)
   parser.add_argument("--tau-C", type=float, default=10.0)

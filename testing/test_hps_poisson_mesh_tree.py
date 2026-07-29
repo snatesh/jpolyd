@@ -187,8 +187,8 @@ def project_source_elementmajor(
   simplices: np.ndarray,
   f_fun: ScalarFun,
 ) -> np.ndarray:
-  Xhat, What = pc.volume_quad()
-  V_int = pc.volume_basis()[:, :pc.m_int]
+  Xhat, What = pc.residual_quad()
+  V_int = pc.residual_basis()[:, :pc.m_int]
   out = np.empty((simplices.shape[0], pc.m_int), dtype=np.float64)
 
   for e, simplex in enumerate(simplices):

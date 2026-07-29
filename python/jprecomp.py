@@ -27,6 +27,9 @@ libjpolyd.jprecomp_dims.restype = ctypes.c_int
 libjpolyd.jprecomp_get_face_ref_scale.argtypes = [ctypes.c_void_p, _double_p]
 libjpolyd.jprecomp_get_face_ref_scale.restype = ctypes.c_int
 
+libjpolyd.jprecomp_get_kappa_res.argtypes = [ctypes.c_void_p, _double_p]
+libjpolyd.jprecomp_get_kappa_res.restype = ctypes.c_int
+
 libjpolyd.jprecomp_get_Lij_ref.argtypes = [ctypes.c_void_p, _double_p]
 libjpolyd.jprecomp_get_Lij_ref.restype = ctypes.c_int
 
@@ -44,6 +47,12 @@ libjpolyd.jprecomp_get_volume_quad.restype = ctypes.c_int
 
 libjpolyd.jprecomp_get_volume_basis.argtypes = [ctypes.c_void_p, _double_p]
 libjpolyd.jprecomp_get_volume_basis.restype = ctypes.c_int
+
+libjpolyd.jprecomp_get_residual_quad.argtypes = [ctypes.c_void_p, _double_p, _double_p]
+libjpolyd.jprecomp_get_residual_quad.restype = ctypes.c_int
+
+libjpolyd.jprecomp_get_residual_basis.argtypes = [ctypes.c_void_p, _double_p]
+libjpolyd.jprecomp_get_residual_basis.restype = ctypes.c_int
 
 libjpolyd.jprecomp_get_face_quad.argtypes = [ctypes.c_void_p, _double_p, _double_p]
 libjpolyd.jprecomp_get_face_quad.restype = ctypes.c_int
@@ -107,6 +116,7 @@ class RefSimplexPrecomp:
     _check(ret, "jprecomp_create")
     self._handle = h
     self._load_dims()
+    self.kappa_res = self._load_kappa_res()
 
   def __del__(self):
     h = getattr(self, "_handle", None)
@@ -120,6 +130,12 @@ class RefSimplexPrecomp:
     _check(ret, "jprecomp_dims")
     (self.D, self.n, self.q_vol, self.q_face, self.M, self.m_int,
      self.kf, self.nface, self.nsigma, self.nq_vol, self.nq_face) = [int(v.value) for v in vals]
+
+  def _load_kappa_res(self):
+    out = np.empty(self.D + 1, dtype=np.float64)
+    ret = libjpolyd.jprecomp_get_kappa_res(self._handle, _ptr_f64(out))
+    _check(ret, "jprecomp_get_kappa_res")
+    return out
 
   def dims(self):
     return {
@@ -178,6 +194,26 @@ class RefSimplexPrecomp:
     ret = libjpolyd.jprecomp_get_volume_basis(self._handle, _ptr_f64(V))
     _check(ret, "jprecomp_get_volume_basis")
     return V
+
+  def residual_quad(self):
+    X = np.empty((self.nq_vol, self.D), dtype=np.float64, order="C")
+    W = np.empty(self.nq_vol, dtype=np.float64)
+    ret = libjpolyd.jprecomp_get_residual_quad(
+      self._handle, _ptr_f64(X), _ptr_f64(W)
+    )
+    _check(ret, "jprecomp_get_residual_quad")
+    return X, W
+
+  def residual_basis(self):
+    V = np.empty((self.nq_vol, self.M), dtype=np.float64, order="F")
+    ret = libjpolyd.jprecomp_get_residual_basis(self._handle, _ptr_f64(V))
+    _check(ret, "jprecomp_get_residual_basis")
+    return V
+
+  def residual_quad_basis(self):
+    X, W = self.residual_quad()
+    V = self.residual_basis()
+    return X, W, V
 
   def face_quad(self):
     Y = np.empty((self.nq_face, max(self.D - 1, 0)), dtype=np.float64, order="C")

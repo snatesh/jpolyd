@@ -40,7 +40,11 @@ int jprecomp_dims(void* handle,
 
 int jprecomp_get_face_ref_scale(void* handle, double* scale_out);
 
-/* Lij_ref shape: (M,M,D,D), Fortran order. */
+/* PDE residual Jacobi parameters, length D+1: kappa_res = kappa + 2. */
+int jprecomp_get_kappa_res(void* handle, double* kappa_res_out);
+
+/* Lij_ref shape: (M,M,D,D), Fortran order.
+   Rows are coefficients in the kappa_res = kappa+2 residual basis. */
 int jprecomp_get_Lij_ref(void* handle, double* Lij_out);
 
 /* T_ref shape: (kf,M,nsigma,nface), Fortran order. */
@@ -56,6 +60,13 @@ int jprecomp_get_Mface_ref(void* handle, double* Mface_out);
    X_vol: row-major (nq_vol,D), W_vol length nq_vol, V_vol Fortran (nq_vol,M). */
 int jprecomp_get_volume_quad(void* handle, double* X_out, double* W_out);
 int jprecomp_get_volume_basis(void* handle, double* V_out);
+
+/* PDE-residual quadrature/basis accessors in the kappa_res=kappa+2 family.
+   X_res: row-major (nq_vol,D), W_res length nq_vol,
+   V_res: Fortran/column-major (nq_vol,M). */
+int jprecomp_get_residual_quad(void* handle, double* X_out, double* W_out);
+int jprecomp_get_residual_basis(void* handle, double* V_out);
+
 /* Face quadrature/basis accessors for RHS boundary projection.
    Y_face: row-major (nq_face,D-1). For D=1 this has zero columns.
    W_face: length nq_face.

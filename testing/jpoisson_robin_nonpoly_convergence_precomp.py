@@ -290,8 +290,8 @@ def assemble_boundary_from_precomp(pc, geom, V_phys, global_vids):
 
 
 def project_source_int_from_precomp(pc, V_phys, f_fun, detBabs):
-  Xhat, What = pc.volume_quad()
-  V = pc.volume_basis()
+  Xhat, What = pc.residual_quad()
+  V = pc.residual_basis()
   P = affine_map_ref_to_phys(V_phys, Xhat)
   vals = eval_scalar_D(f_fun, P)
   V_int = V[:, :pc.m_int]
