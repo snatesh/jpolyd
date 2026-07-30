@@ -63,10 +63,14 @@ public:
 
   // Dense reference operator blocks, all Fortran/column-major in public layout.
   // Lij_ref:    M  x M x D x D
+  // Li_ref:     M  x M x D
+  // L0_ref:     M  x M
   // T_ref:      kf x M x nsigma x nface
   // Fgrad_ref:  kf x M x D x nsigma x nface
   // Mface_ref:  kf x kf x nface
   std::vector<Real> Lij_ref;
+  std::vector<Real> Li_ref;
+  std::vector<Real> L0_ref;
   std::vector<Real> T_ref;
   std::vector<Real> Fgrad_ref;
   std::vector<Real> Mface_ref;
@@ -113,6 +117,8 @@ public:
     build_residual_data();
     build_face_data();
     build_second_partials();
+    build_first_partials();
+    build_zero_partials();
     build_face_operator_data();
   }
 
@@ -285,6 +291,80 @@ private:
           Lij_block,
           M
         );
+      }
+    }
+  }
+
+  void build_first_partials()
+  {
+    Li_ref.assign((std::size_t)M * M * D, (Real)0);
+
+    for (int i = 0; i < D; ++i)
+    {
+      std::array<Real, D + 1> k1{};
+      Basis<D,Real>::derivative_kappa_shift(
+        kappa.data(), i, k1.data());
+
+      // Natural first derivative:
+      //   Pi_n(kappa) -> Pi_{n-1}(k1).
+      // DMat returns the actual matrix in row-major storage, padded to M x M.
+      std::vector<Real> Di((std::size_t)M * M, (Real)0);
+      DMat<D,Real>::build_tprod_natural_pruned_dense(
+        n, (unsigned int)q_vol, kappa.data(), i, Di.data());
+
+      // Sparse promotion into the common PDE residual family:
+      //   Pi_n(k1) -> Pi_n(kappa_res),  kappa_res = kappa + 2.
+      // Only the degree <= n-1 range of Di contributes.
+      // KMat returns the actual matrix in row-major storage.
+      std::vector<Real> K((std::size_t)M * M, (Real)0);
+      KMat<D,Real>::build_tprod_pruned_dense(
+        n, (unsigned int)q_vol, k1.data(), kappa_res.data(), K.data());
+
+      // Public output block is column-major M x M.
+      Real* Li_block =
+        Li_ref.data() + (std::size_t)M * M * i;
+
+      // Li_block = K * Di.
+      // Row-major actual matrices appear transposed when interpreted as
+      // column-major, hence trans/trans recovers the actual operands.
+      detail::BlasGemm<Real>::run(
+        CblasColMajor,
+        CblasTrans,
+        CblasTrans,
+        M,
+        M,
+        M,
+        Real(1),
+        K.data(),
+        M,
+        Di.data(),
+        M,
+        Real(0),
+        Li_block,
+        M
+      );
+    }
+  }
+
+  void build_zero_partials()
+  {
+    L0_ref.assign((std::size_t)M * M, (Real)0);
+
+    // Zero derivatives followed by sparse promotion into the common PDE
+    // residual family:
+    //   Pi_n(kappa) -> Pi_n(kappa_res),  kappa_res = kappa + 2.
+    // KMat returns the actual matrix in row-major storage.
+    std::vector<Real> K((std::size_t)M * M, (Real)0);
+    KMat<D,Real>::build_tprod_pruned_dense(
+      n, (unsigned int)q_vol, kappa.data(), kappa_res.data(), K.data());
+
+    // Convert row-major actual K into the public column-major layout.
+    for (int col = 0; col < M; ++col)
+    {
+      for (int row = 0; row < M; ++row)
+      {
+        L0_ref[(std::size_t)row + (std::size_t)M * col] =
+          K[(std::size_t)row * M + col];
       }
     }
   }

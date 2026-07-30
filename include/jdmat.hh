@@ -183,7 +183,7 @@ struct DMat
 
     // ---- Assemble: Dout = Vrng^T * diag(wq) * (d/dx_axis Vsrc) ----
     // dVsrc axis slice: dVsrc[(p + j*ldV)*D + axis]
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int i = 0; i < M; ++i)
     {
       const Real* vi = Vrng + (std::size_t)i * (std::size_t)ldV;
@@ -265,7 +265,7 @@ struct DMat
     const int M_nm1 = Basis<D,Real>::dim_Pi(n - 1);
   
     // (1) Enforce exact degree-drop nullspace: rows for total degree n are zero.
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int i = M_nm1; i < M; ++i)
     {
       Real* row = Dout + (std::size_t)i * (std::size_t)M;
@@ -295,7 +295,7 @@ struct DMat
     const Real abs_floor  = abs_factor * (max_abs > Real(0) ? max_abs : Real(1));
   
     // (2) Prune active rows.
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int i = 0; i < M_nm1; ++i)
     {
       Real* row = Dout + (std::size_t)i * (std::size_t)M;

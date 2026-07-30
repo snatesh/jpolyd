@@ -33,6 +33,12 @@ libjpolyd.jprecomp_get_kappa_res.restype = ctypes.c_int
 libjpolyd.jprecomp_get_Lij_ref.argtypes = [ctypes.c_void_p, _double_p]
 libjpolyd.jprecomp_get_Lij_ref.restype = ctypes.c_int
 
+libjpolyd.jprecomp_get_Li_ref.argtypes = [ctypes.c_void_p, _double_p]
+libjpolyd.jprecomp_get_Li_ref.restype = ctypes.c_int
+
+libjpolyd.jprecomp_get_L0_ref.argtypes = [ctypes.c_void_p, _double_p]
+libjpolyd.jprecomp_get_L0_ref.restype = ctypes.c_int
+
 libjpolyd.jprecomp_get_T_ref.argtypes = [ctypes.c_void_p, _double_p]
 libjpolyd.jprecomp_get_T_ref.restype = ctypes.c_int
 
@@ -162,6 +168,18 @@ class RefSimplexPrecomp:
     out = np.empty((self.M, self.M, self.D, self.D), dtype=np.float64, order="F")
     ret = libjpolyd.jprecomp_get_Lij_ref(self._handle, _ptr_f64(out))
     _check(ret, "jprecomp_get_Lij_ref")
+    return out
+
+  def Li_ref(self):
+    out = np.empty((self.M, self.M, self.D), dtype=np.float64, order="F")
+    ret = libjpolyd.jprecomp_get_Li_ref(self._handle, _ptr_f64(out))
+    _check(ret, "jprecomp_get_Li_ref")
+    return out
+
+  def L0_ref(self):
+    out = np.empty((self.M, self.M), dtype=np.float64, order="F")
+    ret = libjpolyd.jprecomp_get_L0_ref(self._handle, _ptr_f64(out))
+    _check(ret, "jprecomp_get_L0_ref")
     return out
 
   def T_ref(self):

@@ -161,7 +161,7 @@ struct KMat
     // K = Vtgt^T * diag(wq) * Vsrc
     // K[i,j] = sum_p Vtgt[p+i*npts] * wq[p] * Vsrc[p+j*npts]
     
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int i = 0; i < M; ++i)
     {
       const Real* vt_i = Vtgt + (std::size_t)i * (std::size_t)npts;
@@ -311,7 +311,7 @@ struct KMat
     constexpr Real KMAT_PRUNE_TOL =
       Real(1000) * std::numeric_limits<Real>::epsilon();
     
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int i = 0; i < M; ++i)
     {
       const Real* vt_i = Vtgt + (std::size_t)i * (std::size_t)npts;

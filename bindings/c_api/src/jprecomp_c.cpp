@@ -29,6 +29,8 @@ struct JPrecompBase
   virtual const double* face_ref_scale() const = 0;
   virtual const double* kappa_res() const = 0;
   virtual const double* Lij_ref() const = 0;
+  virtual const double* Li_ref() const = 0;
+  virtual const double* L0_ref() const = 0;
   virtual const double* T_ref() const = 0;
   virtual const double* Fgrad_ref() const = 0;
   virtual const double* Mface_ref() const = 0;
@@ -66,6 +68,8 @@ struct JPrecompHandle final : JPrecompBase
   const double* face_ref_scale() const override { return ref.face_ref_scale.data(); }
   const double* kappa_res() const override { return ref.kappa_res.data(); }
   const double* Lij_ref() const override { return ref.Lij_ref.data(); }
+  const double* Li_ref() const override { return ref.Li_ref.data(); }
+  const double* L0_ref() const override { return ref.L0_ref.data(); }
   const double* T_ref() const override { return ref.T_ref.data(); }
   const double* Fgrad_ref() const override { return ref.Fgrad_ref.data(); }
   const double* Mface_ref() const override { return ref.Mface_ref.data(); }
@@ -194,6 +198,24 @@ int jprecomp_get_Lij_ref(void* handle, double* Lij_out)
   const JPrecompBase* h = as_base(handle);
   const std::size_t n = (std::size_t)h->M() * h->M() * h->D() * h->D();
   std::copy(h->Lij_ref(), h->Lij_ref() + n, Lij_out);
+  return 0;
+}
+
+int jprecomp_get_Li_ref(void* handle, double* Li_out)
+{
+  if (check_handle(handle) || !Li_out) { return 1; }
+  const JPrecompBase* h = as_base(handle);
+  const std::size_t n = (std::size_t)h->M() * h->M() * h->D();
+  std::copy(h->Li_ref(), h->Li_ref() + n, Li_out);
+  return 0;
+}
+
+int jprecomp_get_L0_ref(void* handle, double* L0_out)
+{
+  if (check_handle(handle) || !L0_out) { return 1; }
+  const JPrecompBase* h = as_base(handle);
+  const std::size_t n = (std::size_t)h->M() * h->M();
+  std::copy(h->L0_ref(), h->L0_ref() + n, L0_out);
   return 0;
 }
 

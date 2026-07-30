@@ -280,7 +280,7 @@ struct Basis
     const Real eps_face     = Real(1e-14);
     const Real eps_tol_over = Real(1e-14);
   
-    #pragma omp parallel for schedule(static)
+    //#pragma omp parallel for schedule(static)
     for (int p = 0; p < npts; ++p)
     {
       Real xloc[D];

@@ -47,6 +47,14 @@ int jprecomp_get_kappa_res(void* handle, double* kappa_res_out);
    Rows are coefficients in the kappa_res = kappa+2 residual basis. */
 int jprecomp_get_Lij_ref(void* handle, double* Lij_out);
 
+/* Li_ref shape: (M,M,D), Fortran order.
+   Rows are coefficients in the kappa_res = kappa+2 residual basis. */
+int jprecomp_get_Li_ref(void* handle, double* Li_out);
+
+/* L0_ref shape: (M,M), Fortran order.
+   This is the promotion kappa -> kappa_res = kappa+2. */
+int jprecomp_get_L0_ref(void* handle, double* L0_out);
+
 /* T_ref shape: (kf,M,nsigma,nface), Fortran order. */
 int jprecomp_get_T_ref(void* handle, double* T_out);
 
