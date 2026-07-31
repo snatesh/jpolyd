@@ -212,6 +212,104 @@ int jhps_poisson_mesh_tree_solve(
   int* interface_nb_out
 );
 
+
+/*
+  Solve a variable-coefficient nondivergence-form elliptic problem on an
+  arbitrary conforming simplex mesh using an externally supplied bottom-up
+  HPS merge tree.
+
+  The volume operator is
+
+    L u = sum_{r,s=0}^{D-1} A_rs(x) d_{x_r x_s} u
+        + sum_{r=0}^{D-1} b_r(x) d_{x_r} u
+        + c(x) u,
+
+  and the leaf equation uses the existing convention
+
+    L u = -f.
+
+  The reference precompute is constructed once in C++ from
+    D,n,q_pad,q_vol,q_face,kappa.
+
+  Coefficient degrees:
+    p2 >= 0 is the common modal degree of every A_rs field.
+    p1 >= 0 is the common modal degree of every b_r field; use -1 to disable.
+    p0 >= 0 is the modal degree of c; use -1 to disable.
+
+  All coefficient vectors are modal coefficients of the affine element
+  pullbacks in the common residual Jacobi family kappa_res=kappa+2.
+  Storage is element-major with modal index fastest:
+
+    A_coeffs_elementmajor:
+      shape (nelem,D,D,Mp2),
+      A[(((e*D+r)*D+s)*Mp2) + alpha]
+
+    b_coeffs_elementmajor:
+      shape (nelem,D,Mp1),
+      b[((e*D+r)*Mp1) + alpha]
+      and may be nullptr only when p1==-1
+
+    c_coeffs_elementmajor:
+      shape (nelem,Mp0),
+      c[e*Mp0 + alpha]
+      and may be nullptr only when p0==-1
+
+  Here Mpk=dim Pi_{pk}^D.  The full D x D principal tensor is supplied even
+  when it is symmetric.  assume_symmetric controls the internal Clenshaw
+  multiplication-plan optimization; it does not change coefficient layout or
+  verify A=A^T.
+
+  The source, boundary, tree, Robin, and output conventions are identical to
+  jhps_poisson_mesh_tree_solve.  Artificial interfaces currently enforce
+  continuity of trace and ordinary normal derivative through the existing
+  augmented-flux merge.  Pure Neumann is not implemented in this entry point.
+
+  Leaf construction is parallelized with OpenMP.  One immutable EllipticPlan
+  is shared by the team and one EllipticWorkspace is allocated per possible
+  OpenMP worker.  leaf_threads_used_out, when non-null, receives the number of
+  distinct OpenMP threads that processed at least one leaf.
+*/
+int jhps_elliptic_mesh_tree_solve(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
 #ifdef __cplusplus
 }
 #endif

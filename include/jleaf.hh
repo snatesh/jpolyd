@@ -13,6 +13,7 @@
 #include <jdetail.hh>
 #include <jgeom.hh>
 #include <jlaplace.hh>
+#include <jelliptic.hh>
 #include <jperms.hh>
 #include <jprecomp.hh>
 #include <jlsmr.hh>
@@ -87,6 +88,28 @@ public:
     reset(pre_in, V_phys_colmajor, global_vids_in, tau_C_in, opts);
   }
 
+  Leaf(
+    const RefSimplexPrecomp<D,Real>& pre_in,
+    const Real* V_phys_colmajor,
+    const int* global_vids_in,
+    const EllipticPlan<D,Real>& elliptic_plan,
+    const EllipticElementCoefficientsView<D,Real>& coeffs,
+    EllipticWorkspace<D,Real>& elliptic_work,
+    Real tau_C_in = Real(10),
+    const LsmrOptions& opts = LsmrOptions())
+  {
+    reset(
+      pre_in,
+      V_phys_colmajor,
+      global_vids_in,
+      elliptic_plan,
+      coeffs,
+      elliptic_work,
+      tau_C_in,
+      opts);
+  }
+
+
   void reset(const RefSimplexPrecomp<D,Real>& pre_in,
              const Real* V_phys_colmajor,
              const int* global_vids_in,
@@ -113,6 +136,56 @@ public:
 
     build_geometry();
     assemble_LTF();
+    build_tau_from_face_diameters(tau_C);
+    build_A_tau();
+  }
+
+  void reset(
+    const RefSimplexPrecomp<D,Real>& pre_in,
+    const Real* V_phys_colmajor,
+    const int* global_vids_in,
+    const EllipticPlan<D,Real>& elliptic_plan,
+    const EllipticElementCoefficientsView<D,Real>& coeffs,
+    EllipticWorkspace<D,Real>& elliptic_work,
+    Real tau_C_in = Real(10),
+    const LsmrOptions& opts = LsmrOptions())
+  {
+    if (!V_phys_colmajor)
+    {
+      throw std::invalid_argument("Leaf: null V_phys");
+    }
+    if (!global_vids_in)
+    {
+      throw std::invalid_argument("Leaf: null global_vids");
+    }
+
+    pre = &pre_in;
+    n = pre->n;
+    M = pre->M;
+    m_int = pre->m_int;
+    kf = pre->kf;
+    nface = D + 1;
+    nb = nface * kf;
+    ntau_rows = m_int + nb;
+    tau_C = tau_C_in;
+    lsmr_options = opts;
+
+    V_phys.assign(
+      V_phys_colmajor,
+      V_phys_colmajor + (std::size_t)D * (D + 1));
+
+    for (int i = 0; i <= D; ++i)
+    {
+      global_vids[(std::size_t)i] = global_vids_in[i];
+    }
+
+    build_geometry();
+
+    assemble_LTF(
+      elliptic_plan,
+      coeffs,
+      elliptic_work);
+
     build_tau_from_face_diameters(tau_C);
     build_A_tau();
   }
@@ -482,7 +555,224 @@ private:
     for (int r = 0; r < D; ++r) { n_out[r] /= nrm; }
   }
 
+  /////
+  
+  void allocate_LTF_storage()
+  {
+    L.assign((std::size_t)m_int * M, Real(0));
+    T.assign((std::size_t)nb * M, Real(0));
+    F.assign((std::size_t)nb * M, Real(0));
+  }
+
   void assemble_LTF()
+  {
+    if (!pre)
+    {
+      throw std::runtime_error("Leaf::assemble_LTF: null precompute");
+    }
+  
+    // Poisson/Laplace compatibility case:
+    //
+    //   A(x) = I,
+    //   b(x) = 0,
+    //   c(x) = 0.
+    //
+    // The sole principal-part multiplier has degree zero.
+    EllipticDegreeSpec degree_spec;
+    degree_spec.p2 = 0;
+    degree_spec.p1 = -1;
+    degree_spec.p0 = -1;
+  
+    EllipticPlan<D,Real> elliptic_plan(
+      *pre,
+      degree_spec);
+  
+    EllipticWorkspace<D,Real> elliptic_work(
+      elliptic_plan);
+  
+    // For the orthonormal residual basis,
+    //
+    //   phi_0(x) = elliptic_plan.phi0_res,
+    //
+    // so the modal coefficient of the constant function 1 is
+    //
+    //   q_0 = 1 / phi_0.
+    const Real one_coeff =
+      Real(1) / elliptic_plan.phi0_res;
+  
+    // p2 = 0, so each physical A_rs field has one modal coefficient.
+    // Storage is component-major:
+    //
+    //   A[(r*D + s)*Mp2 + alpha],
+    //
+    // with Mp2 = 1.
+    std::array<Real, D * D> A_identity{};
+    for (int r = 0; r < D; ++r)
+    {
+      A_identity[
+        (std::size_t)r * (std::size_t)D
+        + (std::size_t)r
+      ] = one_coeff;
+    }
+  
+    EllipticElementCoefficientsView<D,Real> coeffs;
+    coeffs.A = A_identity.data();
+    coeffs.b = nullptr;
+    coeffs.c = nullptr;
+  
+    assemble_LTF(
+      elliptic_plan,
+      coeffs,
+      elliptic_work);
+  }
+
+  /*void assemble_LTF()
+  {
+    allocate_LTF_storage();
+
+    jdsimplex_assemble_L_int<D,Real>(
+      M,
+      m_int,
+      G.data(),
+      geom.detBabs,
+      pre->Lij_ref.data(),
+      L.data());
+
+    assemble_TF_blocks();
+
+    sL = row_rms_scale(
+      L.data(),
+      m_int,
+      M);
+  }*/
+
+  void assemble_LTF(
+    const EllipticPlan<D,Real>& elliptic_plan,
+    const EllipticElementCoefficientsView<D,Real>& coeffs,
+    EllipticWorkspace<D,Real>& elliptic_work)
+  {
+    allocate_LTF_storage();
+
+    jdsimplex_assemble_elliptic_L_int<D,Real>(
+      *pre,
+      geom,
+      elliptic_plan,
+      coeffs,
+      elliptic_work,
+      L.data());
+
+    assemble_TF_blocks();
+
+    sL = row_rms_scale(
+      L.data(),
+      m_int,
+      M);
+  }
+
+  void assemble_TF_blocks()
+  {
+    for (int f = 0; f < nface; ++f)
+    {
+      const int sigma = face_sigma_index[(std::size_t)f];
+      const Real ref_s = face_ref_scale[(std::size_t)f];
+
+      if (!(ref_s > Real(0)))
+      {
+        throw std::runtime_error(
+          "Leaf: bad reference face scale");
+      }
+
+      const Real trace_ratio =
+        face_scale[(std::size_t)f] / ref_s;
+
+      const int row0 = f * kf;
+
+      for (int col = 0; col < M; ++col)
+      {
+        for (int r = 0; r < kf; ++r)
+        {
+          const std::size_t ref_idx =
+            (std::size_t)r
+            + (std::size_t)kf
+            * (
+              (std::size_t)col
+              + (std::size_t)M
+              * (
+                (std::size_t)sigma
+                + (std::size_t)pre->nsigma
+                * (std::size_t)f
+              )
+            );
+
+          T[
+            (std::size_t)(row0 + r)
+            + (std::size_t)nb * (std::size_t)col
+          ] =
+            trace_ratio * pre->T_ref[ref_idx];
+        }
+      }
+
+      Real eta[D];
+
+      for (int a = 0; a < D; ++a)
+      {
+        Real ea = Real(0);
+
+        for (int i = 0; i < D; ++i)
+        {
+          const Real ns_i =
+            normal_scaled[
+              (std::size_t)f * D + (std::size_t)i
+            ] / ref_s;
+
+          ea +=
+            geom.BinvT[
+              (std::size_t)i
+              + (std::size_t)D * (std::size_t)a
+            ] * ns_i;
+        }
+
+        eta[a] = ea;
+      }
+
+      for (int col = 0; col < M; ++col)
+      {
+        for (int r = 0; r < kf; ++r)
+        {
+          Real acc = Real(0);
+
+          for (int a = 0; a < D; ++a)
+          {
+            const std::size_t ref_idx =
+              (std::size_t)r
+              + (std::size_t)kf
+              * (
+                (std::size_t)col
+                + (std::size_t)M
+                * (
+                  (std::size_t)a
+                  + (std::size_t)D
+                  * (
+                    (std::size_t)sigma
+                    + (std::size_t)pre->nsigma
+                    * (std::size_t)f
+                  )
+                )
+              );
+
+            acc += eta[a] * pre->Fgrad_ref[ref_idx];
+          }
+
+          F[
+            (std::size_t)(row0 + r)
+            + (std::size_t)nb * (std::size_t)col
+          ] = acc;
+        }
+      }
+    }
+  }
+
+  /*void assemble_LTF()
   {
     L.assign((std::size_t)m_int * M, Real(0));
     T.assign((std::size_t)nb * M, Real(0));
@@ -551,7 +841,7 @@ private:
     }
 
     sL = row_rms_scale(L.data(), m_int, M);
-  }
+  }*/
 
   void build_A_tau()
   {

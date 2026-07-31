@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes as ct
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -34,6 +35,26 @@ class HpsPoissonResult:
   kf: int
   root_nb: int
   interface_nb: int
+  root_robin_residual_inf: float
+  interface_flux_residual_inf: float
+  parent_consistency_residual_inf: float
+  leaf_coeffs: np.ndarray = field(repr=False)
+
+
+@dataclass
+class HpsEllipticResult:
+  D: int
+  n: int
+  nelem: int
+  M: int
+  m_int: int
+  kf: int
+  p2: int
+  p1: int
+  p0: int
+  root_nb: int
+  interface_nb: int
+  leaf_threads_used: int
   root_robin_residual_inf: float
   interface_flux_residual_inf: float
   parent_consistency_residual_inf: float
@@ -128,6 +149,51 @@ def _set_poisson_mesh_tree_signature(fn) -> None:
   fn.restype = ct.c_int
 
 
+def _set_elliptic_mesh_tree_signature(fn) -> None:
+  double_p = ct.POINTER(ct.c_double)
+  fn.argtypes = [
+    ct.c_int,       # D
+    ct.c_int,       # n
+    ct.c_int,       # q_pad
+    ct.c_int,       # q_vol
+    ct.c_int,       # q_face
+    _Float64C,      # kappa, D+1
+    ct.c_int,       # p2
+    ct.c_int,       # p1
+    ct.c_int,       # p0
+    ct.c_int,       # assume_symmetric
+    _Float64C,      # A_coeffs_elementmajor
+    double_p,       # b_coeffs_elementmajor, nullable when p1 == -1
+    double_p,       # c_coeffs_elementmajor, nullable when p0 == -1
+    ct.c_int,       # nverts
+    _Int32C,        # vertex_ids
+    _Float64C,      # coords_rowmajor
+    ct.c_int,       # nelem
+    _Int32C,        # simplices_rowmajor
+    ct.c_int,       # nmerge
+    _Int32C,        # merge_pairs_rowmajor
+    _Float64C,      # f_int_elementmajor
+    ct.c_int,       # nboundary_faces
+    _Int32C,        # boundary_face_keys_rowmajor
+    _Float64C,      # boundary_g_rowmajor
+    ct.c_double,    # tau_C
+    ct.c_double,    # alpha
+    ct.c_double,    # beta
+    ct.c_int,       # verbose
+    _Float64C,      # leaf_coeffs_elementmajor
+    ct.POINTER(ct.c_double),  # root residual
+    ct.POINTER(ct.c_double),  # interface residual
+    ct.POINTER(ct.c_double),  # parent residual
+    ct.POINTER(ct.c_int),     # M_out
+    ct.POINTER(ct.c_int),     # m_int_out
+    ct.POINTER(ct.c_int),     # kf_out
+    ct.POINTER(ct.c_int),     # root_nb_out
+    ct.POINTER(ct.c_int),     # interface_nb_out
+    ct.POINTER(ct.c_int),     # leaf_threads_used_out
+  ]
+  fn.restype = ct.c_int
+
+
 for _name in (
   "jhps_dummy_two_leaf_test",
   "jhps_dummy_three_leaf_chain_test",
@@ -137,6 +203,7 @@ for _name in (
 
 _set_mesh_tree_signature(libjpolyd.jhps_dummy_mesh_tree_test)
 _set_poisson_mesh_tree_signature(libjpolyd.jhps_poisson_mesh_tree_solve)
+_set_elliptic_mesh_tree_signature(libjpolyd.jhps_elliptic_mesh_tree_solve)
 
 
 def load_library() -> ct.CDLL:
@@ -198,6 +265,16 @@ def _validate_mesh_tree_arrays(
       )
 
   return vertex_ids, coords, simplices, merge_pairs
+
+
+def _dim_pi(D: int, p: int) -> int:
+  return math.comb(int(D) + int(p), int(D)) if int(p) >= 0 else 0
+
+
+def _optional_float64_pointer(values: np.ndarray | None):
+  if values is None:
+    return None
+  return values.ctypes.data_as(ct.POINTER(ct.c_double))
 
 
 def run_poisson_mesh_tree_solve(
@@ -344,6 +421,233 @@ def run_poisson_mesh_tree_solve(
     kf=kf_out.value,
     root_nb=root_nb.value,
     interface_nb=interface_nb.value,
+    root_robin_residual_inf=root_res.value,
+    interface_flux_residual_inf=iface_res.value,
+    parent_consistency_residual_inf=parent_res.value,
+    leaf_coeffs=leaf_coeffs,
+  )
+
+
+def run_elliptic_mesh_tree_solve(
+  pc,
+  vertex_ids: np.ndarray,
+  coords: np.ndarray,
+  simplices: np.ndarray,
+  merge_pairs: np.ndarray,
+  A_coeffs_elementmajor: np.ndarray,
+  b_coeffs_elementmajor: np.ndarray | None,
+  c_coeffs_elementmajor: np.ndarray | None,
+  f_int_elementmajor: np.ndarray,
+  boundary_face_keys: np.ndarray,
+  boundary_g: np.ndarray,
+  *,
+  p2: int,
+  p1: int = -1,
+  p0: int = -1,
+  assume_symmetric: bool = True,
+  tau_C: float = 10.0,
+  alpha: float = 1.0,
+  beta: float = 0.0,
+  verbose: bool = False,
+) -> HpsEllipticResult:
+  """Solve a variable-coefficient nondivergence-form elliptic problem.
+
+  The C++ leaf equation is
+
+    sum_rs A_rs d_rs u + sum_r b_r d_r u + c u = -f.
+
+  Coefficient fields are elementwise modal projections in the residual Jacobi
+  family ``pc.kappa_res``. Array layouts are C contiguous with modal index
+  fastest:
+
+    A_coeffs_elementmajor : (nelem, D, D, dimPi(D, p2))
+    b_coeffs_elementmajor : (nelem, D, dimPi(D, p1)), or None when p1 == -1
+    c_coeffs_elementmajor : (nelem, dimPi(D, p0)), or None when p0 == -1
+    f_int_elementmajor    : (nelem, pc.m_int)
+    boundary_face_keys    : (nboundary_faces, D)
+    boundary_g            : (nboundary_faces, pc.kf)
+
+  Artificial interfaces and the current Robin path use ordinary normal
+  derivative, not conormal flux. Pure Neumann is not implemented.
+  """
+  D = int(pc.D)
+  n = int(pc.n)
+  p2 = int(p2)
+  p1 = int(p1)
+  p0 = int(p0)
+
+  if D < 1 or D > 5:
+    raise ValueError("D must be in 1..5")
+  if n < 2:
+    raise ValueError("elliptic HPS requires n >= 2")
+  if p2 < 0:
+    raise ValueError("p2 must be nonnegative")
+  if p1 < -1 or p0 < -1:
+    raise ValueError("p1 and p0 must be at least -1")
+  if float(alpha) == 0.0:
+    raise ValueError(
+      "the current C wrapper requires alpha != 0; pure Neumann is not implemented"
+    )
+  if not np.isfinite(tau_C) or float(tau_C) <= 0.0:
+    raise ValueError("tau_C must be finite and positive")
+
+  vertex_ids, coords, simplices, merge_pairs = _validate_mesh_tree_arrays(
+    D, vertex_ids, coords, simplices, merge_pairs
+  )
+  nelem = int(simplices.shape[0])
+  nmerge = int(merge_pairs.shape[0])
+
+  kappa = np.ascontiguousarray(pc.kappa, dtype=np.float64)
+  if kappa.shape != (D + 1,):
+    raise ValueError(f"pc.kappa must have shape ({D + 1},)")
+
+  Mp2 = _dim_pi(D, p2)
+  A_coeffs = np.ascontiguousarray(A_coeffs_elementmajor, dtype=np.float64)
+  if A_coeffs.shape != (nelem, D, D, Mp2):
+    raise ValueError(
+      "A_coeffs_elementmajor must have shape "
+      f"({nelem}, {D}, {D}, {Mp2}), got {A_coeffs.shape}"
+    )
+
+  if p1 == -1:
+    if b_coeffs_elementmajor is not None:
+      raise ValueError("b_coeffs_elementmajor must be None when p1 == -1")
+    b_coeffs = None
+  else:
+    Mp1 = _dim_pi(D, p1)
+    if b_coeffs_elementmajor is None:
+      raise ValueError("b_coeffs_elementmajor is required when p1 >= 0")
+    b_coeffs = np.ascontiguousarray(
+      b_coeffs_elementmajor,
+      dtype=np.float64,
+    )
+    if b_coeffs.shape != (nelem, D, Mp1):
+      raise ValueError(
+        "b_coeffs_elementmajor must have shape "
+        f"({nelem}, {D}, {Mp1}), got {b_coeffs.shape}"
+      )
+
+  if p0 == -1:
+    if c_coeffs_elementmajor is not None:
+      raise ValueError("c_coeffs_elementmajor must be None when p0 == -1")
+    c_coeffs = None
+  else:
+    Mp0 = _dim_pi(D, p0)
+    if c_coeffs_elementmajor is None:
+      raise ValueError("c_coeffs_elementmajor is required when p0 >= 0")
+    c_coeffs = np.ascontiguousarray(
+      c_coeffs_elementmajor,
+      dtype=np.float64,
+    )
+    if c_coeffs.shape != (nelem, Mp0):
+      raise ValueError(
+        "c_coeffs_elementmajor must have shape "
+        f"({nelem}, {Mp0}), got {c_coeffs.shape}"
+      )
+
+  f_int = np.ascontiguousarray(f_int_elementmajor, dtype=np.float64)
+  if f_int.shape != (nelem, int(pc.m_int)):
+    raise ValueError(
+      f"f_int_elementmajor must have shape ({nelem}, {pc.m_int}), "
+      f"got {f_int.shape}"
+    )
+
+  boundary_face_keys = np.ascontiguousarray(boundary_face_keys, dtype=np.int32)
+  boundary_g = np.ascontiguousarray(boundary_g, dtype=np.float64)
+  if boundary_face_keys.ndim != 2 or boundary_face_keys.shape[1] != D:
+    raise ValueError(
+      f"boundary_face_keys must have shape (nboundary_faces, {D}), "
+      f"got {boundary_face_keys.shape}"
+    )
+  nboundary_faces = int(boundary_face_keys.shape[0])
+  if nboundary_faces < 1:
+    raise ValueError("boundary_face_keys must contain at least one boundary face")
+  if boundary_g.shape != (nboundary_faces, int(pc.kf)):
+    raise ValueError(
+      f"boundary_g must have shape ({nboundary_faces}, {pc.kf}), "
+      f"got {boundary_g.shape}"
+    )
+
+  canonical_keys = np.sort(boundary_face_keys, axis=1)
+  if np.unique(canonical_keys, axis=0).shape[0] != nboundary_faces:
+    raise ValueError("boundary_face_keys contains duplicate canonical face keys")
+  boundary_face_keys = np.ascontiguousarray(canonical_keys, dtype=np.int32)
+
+  leaf_coeffs = np.empty((nelem, int(pc.M)), dtype=np.float64, order="C")
+  root_res = ct.c_double()
+  iface_res = ct.c_double()
+  parent_res = ct.c_double()
+  M_out = ct.c_int()
+  m_int_out = ct.c_int()
+  kf_out = ct.c_int()
+  root_nb = ct.c_int()
+  interface_nb = ct.c_int()
+  leaf_threads_used = ct.c_int()
+
+  rc = libjpolyd.jhps_elliptic_mesh_tree_solve(
+    ct.c_int(D),
+    ct.c_int(n),
+    ct.c_int(int(pc.q_pad)),
+    ct.c_int(int(pc.q_vol)),
+    ct.c_int(int(pc.q_face)),
+    kappa,
+    ct.c_int(p2),
+    ct.c_int(p1),
+    ct.c_int(p0),
+    ct.c_int(1 if assume_symmetric else 0),
+    A_coeffs,
+    _optional_float64_pointer(b_coeffs),
+    _optional_float64_pointer(c_coeffs),
+    ct.c_int(vertex_ids.size),
+    vertex_ids,
+    coords,
+    ct.c_int(nelem),
+    simplices,
+    ct.c_int(nmerge),
+    merge_pairs,
+    f_int,
+    ct.c_int(nboundary_faces),
+    boundary_face_keys,
+    boundary_g,
+    ct.c_double(float(tau_C)),
+    ct.c_double(float(alpha)),
+    ct.c_double(float(beta)),
+    ct.c_int(1 if verbose else 0),
+    leaf_coeffs,
+    ct.byref(root_res),
+    ct.byref(iface_res),
+    ct.byref(parent_res),
+    ct.byref(M_out),
+    ct.byref(m_int_out),
+    ct.byref(kf_out),
+    ct.byref(root_nb),
+    ct.byref(interface_nb),
+    ct.byref(leaf_threads_used),
+  )
+  if rc != 0:
+    raise RuntimeError(f"jhps_elliptic_mesh_tree_solve failed with rc={rc}")
+
+  returned_dims = (M_out.value, m_int_out.value, kf_out.value)
+  expected_dims = (int(pc.M), int(pc.m_int), int(pc.kf))
+  if returned_dims != expected_dims:
+    raise RuntimeError(
+      "Python/C++ RefSimplexPrecomp dimension mismatch: "
+      f"C++ returned {returned_dims}, Python has {expected_dims}"
+    )
+
+  return HpsEllipticResult(
+    D=D,
+    n=n,
+    nelem=nelem,
+    M=M_out.value,
+    m_int=m_int_out.value,
+    kf=kf_out.value,
+    p2=p2,
+    p1=p1,
+    p0=p0,
+    root_nb=root_nb.value,
+    interface_nb=interface_nb.value,
+    leaf_threads_used=leaf_threads_used.value,
     root_robin_residual_inf=root_res.value,
     interface_flux_residual_inf=iface_res.value,
     parent_consistency_residual_inf=parent_res.value,

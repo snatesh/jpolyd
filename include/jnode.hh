@@ -11,6 +11,7 @@
 #include <vector>
 
 #include <jdetail.hh>
+#include <jelliptic.hh>
 #include <jmesh.hh>
 #include <jleaf.hh>
 
@@ -123,6 +124,146 @@ struct Node
   }
 };
 
+namespace node_detail {
+
+template<int D, class Real>
+inline Node<D,Real> materialize_homogeneous_leaf_node(
+  const Mesh<D,Real>& mesh,
+  int element_id,
+  const Leaf<D,Real>& leaf)
+{
+  const auto& elem = mesh.element(element_id);
+
+  Node<D,Real> node;
+  node.kf = leaf.kf;
+  node.boundary_faces.assign(elem.face_keys.begin(), elem.face_keys.end());
+  node.is_leaf = true;
+  node.leaf_element_id = element_id;
+  node.vol_dim = leaf.M;
+
+  const int nb = node.nb();
+  const int M = node.vol_dim;
+  if (nb != leaf.nb)
+  {
+    throw std::runtime_error(
+      "materialize_homogeneous_leaf_node: Node/Leaf boundary size mismatch");
+  }
+  for (int f = 0; f < leaf.nface; ++f)
+  {
+    if (node.boundary_faces[(std::size_t)f] != leaf.face_key(f))
+    {
+      throw std::runtime_error(
+        "materialize_homogeneous_leaf_node: Mesh/Leaf face ordering mismatch");
+    }
+  }
+
+  node.S.assign((std::size_t)nb * nb, Real(0));
+  node.b.assign((std::size_t)nb, Real(0));
+  node.Ulam.assign((std::size_t)M * nb, Real(0));
+  node.cf.assign((std::size_t)M, Real(0));
+
+  std::vector<Real> lambda((std::size_t)nb, Real(0));
+  std::vector<Real> c((std::size_t)M, Real(0));
+  std::vector<Real> trace((std::size_t)nb, Real(0));
+  std::vector<Real> raw_flux((std::size_t)nb, Real(0));
+  std::vector<Real> aug_flux((std::size_t)nb, Real(0));
+
+  // Leaf::apply requires a non-null source pointer even when m_int=0.
+  std::vector<Real> f0((std::size_t)std::max(1, leaf.m_int), Real(0));
+
+  for (int j = 0; j < nb; ++j)
+  {
+    std::fill(lambda.begin(), lambda.end(), Real(0));
+    lambda[(std::size_t)j] = Real(1);
+
+    std::fill(c.begin(), c.end(), Real(0));
+    leaf.apply(
+      lambda.data(),
+      f0.data(),
+      c.data(),
+      trace.data(),
+      raw_flux.data(),
+      aug_flux.data());
+
+    for (int i = 0; i < M; ++i)
+    {
+      node.Ulam[(std::size_t)i + (std::size_t)M * j] = c[(std::size_t)i];
+    }
+    for (int i = 0; i < nb; ++i)
+    {
+      node.S[(std::size_t)i + (std::size_t)nb * j] = aug_flux[(std::size_t)i];
+    }
+  }
+
+  node.validate();
+  return node;
+}
+
+} // namespace node_detail
+
+/*
+  Materialize source-independent elliptic leaf maps
+
+    c(lambda,0)       = Ulam lambda,
+    mu_hat(lambda,0)  = S lambda,
+
+  using a caller-owned shared elliptic plan and caller-owned mutable workspace.
+  The coefficient view is consumed only while Leaf materializes its dense local
+  operator; neither Leaf nor Node retains the coefficient pointers.
+*/
+template<int D, class Real>
+inline Node<D,Real> make_elliptic_homogeneous_leaf_node(
+  const Mesh<D,Real>& mesh,
+  int element_id,
+  const RefSimplexPrecomp<D,Real>& pre,
+  const EllipticPlan<D,Real>& elliptic_plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticWorkspace<D,Real>& elliptic_work,
+  Leaf<D,Real>& leaf_out,
+  Real tau_C = Real(10),
+  Real atol = Real(1e-14),
+  Real btol = Real(1e-14),
+  int itnlim = 5000)
+{
+  if (!(tau_C > Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: tau_C must be positive");
+  }
+  if (!(atol >= Real(0)) || !(btol >= Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: tolerances must be nonnegative");
+  }
+  if (itnlim <= 0)
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: itnlim must be positive");
+  }
+
+  const auto& elem = mesh.element(element_id);
+
+  typename Leaf<D,Real>::LsmrOptions opts{};
+  opts.atol = atol;
+  opts.btol = btol;
+  opts.itnlim = itnlim;
+
+  leaf_out.reset(
+    pre,
+    elem.V_phys.data(),
+    elem.global_vids.data(),
+    elliptic_plan,
+    coeffs,
+    elliptic_work,
+    tau_C,
+    opts);
+
+  return node_detail::materialize_homogeneous_leaf_node<D,Real>(
+    mesh,
+    element_id,
+    leaf_out);
+}
+
 /*
   Materialize the source-independent Poisson leaf maps
 
@@ -133,9 +274,9 @@ struct Node
 
     mu_hat = F c + tau (T c - lambda).
 
-  leaf_out is initialized here and is intended to be retained by the caller so
-  that set_poisson_leaf_source() can reuse the same geometry, local operators,
-  tau scaling, and LSMR configuration for multiple right-hand sides.
+  This compatibility path preserves the existing caller interface.  The
+  no-elliptic-arguments Leaf::reset currently assembles A=I, b=0, c=0 through
+  the elliptic implementation.
 */
 template<int D, class Real>
 inline Node<D,Real> make_poisson_homogeneous_leaf_node(
@@ -178,74 +319,15 @@ inline Node<D,Real> make_poisson_homogeneous_leaf_node(
     tau_C,
     opts);
 
-  Node<D,Real> node;
-  node.kf = leaf_out.kf;
-  node.boundary_faces.assign(elem.face_keys.begin(), elem.face_keys.end());
-  node.is_leaf = true;
-  node.leaf_element_id = element_id;
-  node.vol_dim = leaf_out.M;
-
-  const int nb = node.nb();
-  const int M = node.vol_dim;
-  if (nb != leaf_out.nb)
-  {
-    throw std::runtime_error(
-      "make_poisson_homogeneous_leaf_node: node/Leaf boundary size mismatch");
-  }
-  for (int f = 0; f < leaf_out.nface; ++f)
-  {
-    if (node.boundary_faces[(std::size_t)f] != leaf_out.face_key(f))
-    {
-      throw std::runtime_error(
-        "make_poisson_homogeneous_leaf_node: Mesh/Leaf face ordering mismatch");
-    }
-  }
-
-  node.S.assign((std::size_t)nb * nb, Real(0));
-  node.b.assign((std::size_t)nb, Real(0));
-  node.Ulam.assign((std::size_t)M * nb, Real(0));
-  node.cf.assign((std::size_t)M, Real(0));
-
-  std::vector<Real> lambda((std::size_t)nb, Real(0));
-  std::vector<Real> c((std::size_t)M, Real(0));
-  std::vector<Real> trace((std::size_t)nb, Real(0));
-  std::vector<Real> raw_flux((std::size_t)nb, Real(0));
-  std::vector<Real> aug_flux((std::size_t)nb, Real(0));
-
-  // Leaf::apply currently requires a non-null f_int pointer even when m_int=0.
-  std::vector<Real> f0((std::size_t)std::max(1, leaf_out.m_int), Real(0));
-
-  for (int j = 0; j < nb; ++j)
-  {
-    std::fill(lambda.begin(), lambda.end(), Real(0));
-    lambda[(std::size_t)j] = Real(1);
-
-    std::fill(c.begin(), c.end(), Real(0));
-    leaf_out.apply(
-      lambda.data(),
-      f0.data(),
-      c.data(),
-      trace.data(),
-      raw_flux.data(),
-      aug_flux.data());
-
-    for (int i = 0; i < M; ++i)
-    {
-      node.Ulam[(std::size_t)i + (std::size_t)M * j] = c[(std::size_t)i];
-    }
-    for (int i = 0; i < nb; ++i)
-    {
-      node.S[(std::size_t)i + (std::size_t)nb * j] = aug_flux[(std::size_t)i];
-    }
-  }
-
-  node.validate();
-  return node;
+  return node_detail::materialize_homogeneous_leaf_node<D,Real>(
+    mesh,
+    element_id,
+    leaf_out);
 }
 
 /*
   Set the source-dependent affine terms on an already materialized homogeneous
-  Poisson leaf:
+  leaf:
 
     c(0,f)       = cf,
     mu_hat(0,f)  = b.
@@ -254,7 +336,7 @@ inline Node<D,Real> make_poisson_homogeneous_leaf_node(
   offsets must subsequently be recomputed by the source upward pass.
 */
 template<int D, class Real>
-inline void set_poisson_leaf_source(
+inline void set_leaf_source(
   Node<D,Real>& node,
   const Leaf<D,Real>& leaf,
   const Real* f_int)
@@ -263,30 +345,30 @@ inline void set_poisson_leaf_source(
   if (!node.is_leaf)
   {
     throw std::invalid_argument(
-      "set_poisson_leaf_source: node is not a leaf");
+      "set_leaf_source: node is not a leaf");
   }
   if (node.kf != leaf.kf || node.nb() != leaf.nb || node.vol_dim != leaf.M)
   {
     throw std::invalid_argument(
-      "set_poisson_leaf_source: Node/Leaf dimension mismatch");
+      "set_leaf_source: Node/Leaf dimension mismatch");
   }
   if (node.nfaces() != leaf.nface)
   {
     throw std::invalid_argument(
-      "set_poisson_leaf_source: Node/Leaf face-count mismatch");
+      "set_leaf_source: Node/Leaf face-count mismatch");
   }
   for (int f = 0; f < leaf.nface; ++f)
   {
     if (node.boundary_faces[(std::size_t)f] != leaf.face_key(f))
     {
       throw std::invalid_argument(
-        "set_poisson_leaf_source: Node/Leaf face ordering mismatch");
+        "set_leaf_source: Node/Leaf face ordering mismatch");
     }
   }
   if (!f_int && leaf.m_int > 0)
   {
     throw std::invalid_argument(
-      "set_poisson_leaf_source: null f_int");
+      "set_leaf_source: null f_int");
   }
 
   const int nb = node.nb();
@@ -314,6 +396,16 @@ inline void set_poisson_leaf_source(
   node.cf.swap(cf_new);
   node.b.swap(b_new);
   node.validate();
+}
+
+/* Preserve the current Poisson calling path. */
+template<int D, class Real>
+inline void set_poisson_leaf_source(
+  Node<D,Real>& node,
+  const Leaf<D,Real>& leaf,
+  const Real* f_int)
+{
+  set_leaf_source<D,Real>(node, leaf, f_int);
 }
 
 template<class Real>
