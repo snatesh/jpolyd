@@ -58,7 +58,7 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
   # Promote kappa -> kappa+1 (all components)
   #kappa_src = np.full(D + 1, a, dtype=np.float64)
   #dkappa = np.full(D+1, 0, dtype=np.float64)
-  kappa_src = -0.25 + (5.0 + 0.25) * np.random.rand(D + 1)
+  kappa_src = 0 + 0*(5.0 + 0.25) * np.random.rand(D + 1)
   kappa_tgt = kappa_src.copy()
   kappa_tgt[-1] = kappa_tgt[-1]+1 
 
@@ -91,7 +91,7 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
   # Basis eval for src and tgt spaces at the same points
   alpha_s, tail_s, invh_s = jbasis_build_structures(D, n, kappa_src)
   alpha_t, tail_t, invh_t = jbasis_build_structures(D, n, kappa_tgt)
-
+  print(invh_s[0])
   Vsrc = jbasis_eval_all(X, kappa_src, n, alpha_s, tail_s, invh_s, D)  # shape (npts,M), Fortran order 
   Vtgt = jbasis_eval_all(X, kappa_tgt, n, alpha_t, tail_t, invh_t, D)
 
@@ -103,6 +103,7 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
 
   c_tgt = K @ c_src
 
+  print(Vsrc[:,0])
   # Evaluate u(x) in both representations
   u_src = Vsrc @ c_src
   u_tgt = Vtgt @ c_tgt
@@ -122,7 +123,7 @@ def test_kmat(D, n, a=0.0, tol_spy=1e-12, seed=123, q=None):
 
 if __name__ == "__main__":
   # D=2 test
-  n = 3
+  n = 10
   q = n + 1
   test_kmat(D=1, n=n, a=0.5, tol_spy=1e-14, seed=1, q=q)
   test_kmat(D=2, n=n, a=0.5, tol_spy=1e-14, seed=1, q=q)

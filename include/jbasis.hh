@@ -138,12 +138,13 @@ struct Basis
     {
       return Real(0.0);
     }
-    for (int j = 0; j < D; ++j)
+    for (int j = 0; j <= D; ++j)
     {
-      if (kappa[j] < -0.5)
+      const double kappa_j = static_cast<double>(kappa[j]);
+      if (!std::isfinite(kappa_j) || !(kappa[j] > Real(-0.5)))
       {
-        throw std::runtime_error("Jacobi simplex params kappa must be > -1/2");
-        exit(1);
+        throw std::runtime_error(
+          "Jacobi simplex params kappa must be finite and > -1/2");
       }
     }
 
@@ -205,18 +206,35 @@ struct Basis
         contrib -= static_cast<Real>(std::lgamma(arg));
       }
 
-      Real t5 = Real(2.0)
-                * (aj + kappa_j + static_cast<Real>(alpha_j))
-                + Real(1.0);
-      Real t6 = Real(2.0)
-                * (aj + kappa_j + static_cast<Real>(2 * alpha_j))
-                + Real(1.0);
-      assert(t5 > Real(0) && "jbasis.hh: inv_h_alpha: t5 must be > 0 (check kappa range)");
-      assert(t6 > Real(0) && "jbasis.hh: inv_h_alpha: t6 must be > 0 (check kappa range)");
-      contrib += static_cast<Real>(
-        std::log(static_cast<double>(t5))
-        - std::log(static_cast<double>(t6))
-      );
+      /*
+       * The final norm factor is t5/t6. When alpha_j == 0,
+       * t5 == t6 identically, so this factor is exactly one and
+       * its logarithmic contribution is exactly zero.
+       *
+       * For kappa == 0, the last collapsed coordinate has
+       * aj = -1/2 and kappa_j = 0. If alpha_j == 0, this
+       * representation gives t5 = t6 = 0 and the old code forms
+       * log(0) - log(0), even though the underlying ratio is one.
+       */
+      if (alpha_j > 0)
+      {
+        Real t5 = Real(2.0)
+                  * (aj + kappa_j + static_cast<Real>(alpha_j))
+                  + Real(1.0);
+        Real t6 = Real(2.0)
+                  * (aj + kappa_j + static_cast<Real>(2 * alpha_j))
+                  + Real(1.0);
+
+        assert(t5 > Real(0) &&
+               "jbasis.hh: inv_h_alpha: t5 must be > 0");
+        assert(t6 > Real(0) &&
+               "jbasis.hh: inv_h_alpha: t6 must be > 0");
+
+        contrib += static_cast<Real>(
+          std::log(static_cast<double>(t5))
+          - std::log(static_cast<double>(t6))
+        );
+      }
 
       log_h2 += contrib;
     }

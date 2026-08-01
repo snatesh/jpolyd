@@ -90,6 +90,22 @@ add_executable(generate_glass_bowl_mesh
 add_executable(assemble_cn_step 
   src/assemble_cn_step.cpp)
 
+add_executable(kmat_stencil_test
+  src/test_jkmat_delta_stencil_kappa_invariance.cpp)
+
+target_include_directories(kmat_stencil_test PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(kmat_stencil_test PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  blas
+  lapack
+)
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse
