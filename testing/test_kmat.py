@@ -132,4 +132,6 @@ if __name__ == "__main__":
   
   # D=4 test (keep n smaller to avoid big dense K)
   test_kmat(D=4, n=n, a=0.5, tol_spy=1e-14, seed=2, q=q)
+  # D=4 test (keep n smaller to avoid big dense K)
+  test_kmat(D=5, n=n, a=0.5, tol_spy=1e-14, seed=2, q=q)
 
