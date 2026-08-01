@@ -106,6 +106,24 @@ target_link_libraries(kmat_stencil_test PRIVATE
   blas
   lapack
 )
+
+add_executable(dmat_kmat_stencil_cache_test
+  src/test_dmat_kmat_stencil_cache.cpp)
+
+target_include_directories(dmat_kmat_stencil_cache_test PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(dmat_kmat_stencil_cache_test PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  blas
+  lapack
+)
+
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse

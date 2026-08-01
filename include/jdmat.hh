@@ -8,6 +8,15 @@
 #include <limits>
 #include <unordered_map>
 #include <array>
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <vector>
 #include "jbasis.hh"
 #include "jquad_tprod.hh"   // QuadMapped<D,Real>
 
@@ -339,34 +348,52 @@ struct DMat
        Then evaluate dmat entries only where indicated by non-zero stencil */
   static void build_tprod_natural_pruned(int n,
                                          unsigned int q,
-                                         const Real* kappa_src,  // length D+1
-                                         int axis,               // 0..D-1
-                                         Real* Dout)             // (M*M) row-major
+                                         const Real* kappa_src,
+                                         int axis,
+                                         Real* Dout)
   {
-    if (n < 0) { std::cerr << "n must be non-negative\n"; exit(1); }
+    build_tprod_natural_pruned(
+      n, q, kappa_src, axis, Dout, default_stencil_folder());
+  }
+
+  static void build_tprod_natural_pruned(int n,
+                                         unsigned int q,
+                                         const Real* kappa_src,
+                                         int axis,
+                                         Real* Dout,
+                                         const std::string& stencil_folder)
+  {
+    if (!kappa_src || !Dout)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned: null input\n";
+      std::exit(1);
+    }
+    if (n < 0)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned: n must be non-negative\n";
+      std::exit(1);
+    }
+    if (q == 0)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned: require q >= 1\n";
+      std::exit(1);
+    }
+    if (axis < 0 || axis >= D)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned: axis out of range\n";
+      std::exit(1);
+    }
     if (n == 0)
     {
-      const int M = 1;//Basis<D,Real>::dim_pi(n);
-      std::memset(Dout, 0, (std::size_t)M * (std::size_t)M * sizeof(Real));
+      Dout[0] = Real(0);
       return;
     }
-    const int stencil_min = D+1;
-    const int stencil_max = 4*D;
 
-    if (n < stencil_min)
-    {
-      build_tprod_natural_pruned_dense(n, q, kappa_src, axis, Dout);
-      return;
-    }
-    std::cout << "USING STENCIL\n" << std::endl;
-    // 1) Discover degree-invariant delta stencil (small-n exploration)
     DMatStencil S;
     std::memset(&S, 0, sizeof(S));
-    discover_stencil_stable(q, kappa_src, axis, stencil_min, stencil_max, &S);
-
-    // 2) Build using stencil (still dense output for testing)
+    load_or_discover_natural_stencil(
+      q, kappa_src, axis, &S, stencil_folder);
     build_tprod_from_deltas(n, q, kappa_src, axis, S, Dout);
-    // 4) Cleanup
     S.clear();
   }
 
@@ -483,6 +510,285 @@ struct DMat
     if (A.ndelta != B.ndelta) return false;
     if (A.ndelta == 0) return true;
     return std::memcmp(A.keys, B.keys, (std::size_t)A.ndelta * sizeof(uint64_t)) == 0;
+  }
+
+
+  static constexpr int stencil_cache_version()
+  {
+    return 1;
+  }
+
+  static constexpr int default_stencil_min_degree()
+  {
+    return D + 1;
+  }
+
+  static constexpr int default_stencil_max_degree()
+  {
+    return 4 * D;
+  }
+
+  static std::string default_stencil_folder()
+  {
+    return "stencils";
+  }
+
+  /* Canonical structural signature used by jprecomp for interning.
+     The derivative axis is intentionally omitted: two axes with identical
+     delta lists should intern to one shared structural stencil. */
+  static std::string stencil_signature(const DMatStencil& S)
+  {
+    std::ostringstream out;
+    out << "DMat:D=" << D << ":ndelta=" << S.ndelta << ":keys=";
+    out << std::hex << std::setfill('0');
+    for (int k = 0; k < S.ndelta; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keys[k];
+    }
+    return out.str();
+  }
+
+  static bool stencil_valid(const DMatStencil& S, int expected_axis = -1)
+  {
+    if (expected_axis >= 0 && S.axis != expected_axis) return false;
+    if (S.axis < 0 || S.axis >= D) return false;
+    if (S.ndelta < 0) return false;
+    if (S.ndelta > 0 && !S.keys) return false;
+    for (int k = 1; k < S.ndelta; ++k)
+    {
+      if (!(S.keys[k - 1] < S.keys[k])) return false;
+    }
+    return true;
+  }
+
+  static void copy_stencil(const DMatStencil& src, DMatStencil* dst)
+  {
+    if (!dst || !stencil_valid(src))
+    {
+      std::cerr << "DMat::copy_stencil: invalid input\n";
+      std::exit(1);
+    }
+    dst->clear();
+    dst->axis = src.axis;
+    dst->ndelta = src.ndelta;
+    if (src.ndelta == 0)
+    {
+      dst->keys = nullptr;
+      return;
+    }
+    dst->keys = static_cast<uint64_t*>(
+      std::malloc(static_cast<std::size_t>(src.ndelta) * sizeof(uint64_t)));
+    if (!dst->keys)
+    {
+      std::cerr << "DMat::copy_stencil: allocation failed\n";
+      std::exit(1);
+    }
+    std::memcpy(
+      dst->keys,
+      src.keys,
+      static_cast<std::size_t>(src.ndelta) * sizeof(uint64_t));
+  }
+
+  static std::filesystem::path stencil_cache_path(
+    int axis,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (axis < 0 || axis >= D)
+    {
+      std::cerr << "DMat::stencil_cache_path: axis out of range\n";
+      std::exit(1);
+    }
+    const std::filesystem::path folder =
+      stencil_folder.empty() ? std::filesystem::path(".")
+                             : std::filesystem::path(stencil_folder);
+    std::ostringstream name;
+    name << "dmat_D" << D
+         << "_axis" << axis
+         << "_v" << stencil_cache_version()
+         << ".stencil";
+    return folder / name.str();
+  }
+
+  /* Return false only when the keyed file is absent.  A present but invalid
+     file is a hard error so stale/corrupt cache data is never used silently. */
+  static bool load_stencil_file(
+    int axis,
+    DMatStencil* S_out,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!S_out)
+    {
+      std::cerr << "DMat::load_stencil_file: null output\n";
+      std::exit(1);
+    }
+    const std::filesystem::path path =
+      stencil_cache_path(axis, stencil_folder);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+    {
+      if (ec)
+      {
+        std::cerr << "DMat::load_stencil_file: exists failed for "
+                  << path << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+      return false;
+    }
+
+    std::ifstream in(path);
+    std::string magic;
+    std::string kind;
+    std::string basis_tag;
+    int version = 0;
+    int file_D = -1;
+    int file_axis = -1;
+    int ndelta = -1;
+    if (!(in >> magic >> version >> kind >> basis_tag
+             >> file_D >> file_axis >> ndelta))
+    {
+      std::cerr << "DMat::load_stencil_file: malformed header in "
+                << path << '\n';
+      std::exit(1);
+    }
+    if (magic != "JPOLYD_STENCIL" ||
+        version != stencil_cache_version() ||
+        kind != "DMAT" ||
+        basis_tag != "KAPPA_MINUS_HALF" ||
+        file_D != D || file_axis != axis || ndelta < 0)
+    {
+      std::cerr << "DMat::load_stencil_file: incompatible cache file "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    DMatStencil loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    loaded.axis = axis;
+    loaded.ndelta = ndelta;
+    if (ndelta > 0)
+    {
+      loaded.keys = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(ndelta) * sizeof(uint64_t)));
+      if (!loaded.keys)
+      {
+        std::cerr << "DMat::load_stencil_file: allocation failed\n";
+        std::exit(1);
+      }
+      for (int k = 0; k < ndelta; ++k)
+      {
+        if (!(in >> loaded.keys[k]))
+        {
+          loaded.clear();
+          std::cerr << "DMat::load_stencil_file: truncated key list in "
+                    << path << '\n';
+          std::exit(1);
+        }
+      }
+    }
+    std::string end_token;
+    if (!(in >> end_token) || end_token != "END" ||
+        !stencil_valid(loaded, axis))
+    {
+      loaded.clear();
+      std::cerr << "DMat::load_stencil_file: invalid stencil in "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    S_out->clear();
+    *S_out = loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    return true;
+  }
+
+  static void save_stencil_file(
+    int axis,
+    const DMatStencil& S,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!stencil_valid(S, axis))
+    {
+      std::cerr << "DMat::save_stencil_file: invalid stencil\n";
+      std::exit(1);
+    }
+    const std::filesystem::path path =
+      stencil_cache_path(axis, stencil_folder);
+    const std::filesystem::path folder = path.parent_path();
+    std::error_code ec;
+    if (!folder.empty())
+    {
+      std::filesystem::create_directories(folder, ec);
+      if (ec)
+      {
+        std::cerr << "DMat::save_stencil_file: cannot create "
+                  << folder << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+    }
+
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    {
+      std::ofstream out(temporary, std::ios::trunc);
+      if (!out)
+      {
+        std::cerr << "DMat::save_stencil_file: cannot open "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+      out << "JPOLYD_STENCIL " << stencil_cache_version()
+          << " DMAT KAPPA_MINUS_HALF "
+          << D << ' ' << axis << ' ' << S.ndelta << '\n';
+      for (int k = 0; k < S.ndelta; ++k)
+      {
+        out << S.keys[k] << '\n';
+      }
+      out << "END\n";
+      out.flush();
+      if (!out)
+      {
+        std::cerr << "DMat::save_stencil_file: write failed for "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+    }
+
+    std::filesystem::rename(temporary, path, ec);
+    if (ec)
+    {
+      std::error_code remove_ec;
+      std::filesystem::remove(path, remove_ec);
+      ec.clear();
+      std::filesystem::rename(temporary, path, ec);
+    }
+    if (ec)
+    {
+      std::cerr << "DMat::save_stencil_file: rename failed for "
+                << path << ": " << ec.message() << '\n';
+      std::exit(1);
+    }
+  }
+
+  /* Main persistent path.  Returns true when loaded and false when newly
+     discovered and written. */
+  static bool load_or_discover_natural_stencil(
+    unsigned int q,
+    const Real* kappa_src,
+    int axis,
+    DMatStencil* S_out,
+    const std::string& stencil_folder = "stencils",
+    int n_min = default_stencil_min_degree(),
+    int n_max = default_stencil_max_degree())
+  {
+    if (!kappa_src || !S_out)
+    {
+      std::cerr << "DMat::load_or_discover_natural_stencil: null input\n";
+      std::exit(1);
+    }
+    if (load_stencil_file(axis, S_out, stencil_folder)) return true;
+    discover_stencil_stable(q, kappa_src, axis, n_min, n_max, S_out);
+    save_stencil_file(axis, *S_out, stencil_folder);
+    return false;
   }
 
   static int cmp_u64(const void* a, const void* b)
@@ -854,387 +1160,331 @@ struct DMat
     std::free(dVsrc);
   }
 
-  static std::size_t build_tprod_natural_pruned_csc(int n,
-                                                    unsigned int q,
-                                                    const Real* kappa_src,
-                                                    int axis,
-                                                    int** colptr_out,
-                                                    int** rowind_out,
-                                                    Real** x_out)
+  /* Build only the finite-degree CSC structure obtained by truncating a
+     degree-independent delta stencil.  No quadrature or parameter values are
+     used. */
+  static std::size_t build_natural_csc_pattern_from_stencil(
+    int n,
+    const DMatStencil& S,
+    int** colptr_out,
+    int** rowind_out)
   {
-    const int stencil_min = 5;
-    const int stencil_max = 12;
-  
-    if (!colptr_out || !rowind_out || !x_out)
+    if (!colptr_out || !rowind_out || !stencil_valid(S))
     {
-      std::cerr << "build_tprod_natural_pruned_csc: null output ptr\n";
+      std::cerr << "DMat::build_natural_csc_pattern_from_stencil: invalid input\n";
       std::exit(1);
     }
     *colptr_out = nullptr;
     *rowind_out = nullptr;
-    *x_out = nullptr;
-  
     if (n < 0)
     {
-      std::cerr << "build_tprod_natural_pruned_csc: n < 0\n";
+      std::cerr << "DMat::build_natural_csc_pattern_from_stencil: n < 0\n";
       std::exit(1);
     }
+
+    const int ncol = Basis<D,Real>::dim_Pi(n);
+    const int nrow = (n == 0) ? 0 : Basis<D,Real>::dim_Pi(n - 1);
+    int* colptr = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(ncol + 1) * sizeof(int)));
+    if (!colptr)
+    {
+      std::cerr << "DMat::build_natural_csc_pattern_from_stencil: allocation failed\n";
+      std::exit(1);
+    }
+    colptr[0] = 0;
     if (n == 0)
     {
-      // Operator Π0 -> Π-1 (empty range). Return a 0x1 matrix: nrow=0, ncol=1.
-      const int ncol = Basis<D,Real>::dim_Pi(0); // 1
-      int* colptr = (int*) std::malloc((std::size_t)(ncol + 1) * sizeof(int));
-      if (!colptr) { std::cerr << "alloc failed\n"; std::exit(1); }
-      colptr[0] = 0;
       colptr[1] = 0;
       *colptr_out = colptr;
-      *rowind_out = nullptr;
-      *x_out = nullptr;
       return 0;
     }
-  
+
+    const int M = ncol;
+    int* alpha_table = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    if (!alpha_table)
+    {
+      std::free(colptr);
+      std::cerr << "DMat::build_natural_csc_pattern_from_stencil: allocation failed\n";
+      std::exit(1);
+    }
+    Basis<D,Real>::build_alpha_table(n, alpha_table);
+
+    std::vector<int> rows;
+    rows.reserve(static_cast<std::size_t>(ncol) *
+                 static_cast<std::size_t>(S.ndelta));
+    int dvec[8];
+    int dst_alpha[8];
+
+    for (int jdeg = 0; jdeg <= n; ++jdeg)
+    {
+      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
+      const int cdeg = Basis<D,Real>::dim_Hom(jdeg);
+      for (int jloc = 0; jloc < cdeg; ++jloc)
+      {
+        const int jg = col0 + jloc;
+        if (jdeg >= 1)
+        {
+          const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
+          const int row0 = Basis<D,Real>::dim_Pi(jdeg - 2);
+          const int r = Basis<D,Real>::dim_Hom(jdeg - 1);
+          for (int t = 0; t < S.ndelta; ++t)
+          {
+            unpack_delta8(S.keys[t], dvec);
+            bool ok = true;
+            int sum = 0;
+            for (int dim = 0; dim < D; ++dim)
+            {
+              dst_alpha[dim] = src[dim] + dvec[dim];
+              if (dst_alpha[dim] < 0) { ok = false; break; }
+              sum += dst_alpha[dim];
+            }
+            if (!ok || sum != jdeg - 1) continue;
+            const int iloc = hom_encode_rank_fast(jdeg - 1, dst_alpha);
+            if (iloc < 0 || iloc >= r) continue;
+            const int row = row0 + iloc;
+            if (row >= 0 && row < nrow) rows.push_back(row);
+          }
+        }
+        colptr[jg + 1] = static_cast<int>(rows.size());
+      }
+    }
+
+    int* rowind = nullptr;
+    if (!rows.empty())
+    {
+      rowind = static_cast<int*>(
+        std::malloc(rows.size() * sizeof(int)));
+      if (!rowind)
+      {
+        std::free(alpha_table);
+        std::free(colptr);
+        std::cerr << "DMat::build_natural_csc_pattern_from_stencil: allocation failed\n";
+        std::exit(1);
+      }
+      std::memcpy(rowind, rows.data(), rows.size() * sizeof(int));
+    }
+    std::free(alpha_table);
+    *colptr_out = colptr;
+    *rowind_out = rowind;
+    return rows.size();
+  }
+
+  /* Fill numerical values on an already supplied CSC structure.  The pattern
+     may be an exact stencil or a union stencil; structurally absent entries
+     simply receive their numerical (usually zero) quadrature value. */
+  static void fill_tprod_natural_csc_values(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int axis,
+    const int* colptr,
+    const int* rowind,
+    Real* values)
+  {
+    if (!kappa_src || !colptr)
+    {
+      std::cerr << "DMat::fill_tprod_natural_csc_values: null input\n";
+      std::exit(1);
+    }
+    if (n < 0 || q == 0 || axis < 0 || axis >= D)
+    {
+      std::cerr << "DMat::fill_tprod_natural_csc_values: invalid argument\n";
+      std::exit(1);
+    }
     const int ncol = Basis<D,Real>::dim_Pi(n);
-    const int nrow = Basis<D,Real>::dim_Pi(n - 1);
-  
-    // ---- Discover delta stencil (pattern) ----
-    DMatStencil S;
-    std::memset(&S, 0, sizeof(S));
-  
-    if (n < stencil_min)
+    const int nrow = (n == 0) ? 0 : Basis<D,Real>::dim_Pi(n - 1);
+    if (colptr[0] != 0)
     {
-      Real* Ddense = (Real*) std::malloc((std::size_t)ncol * (std::size_t)ncol * sizeof(Real));
-      if (!Ddense) { std::cerr << "alloc failed\n"; std::exit(1); }
-      build_tprod_natural_pruned_dense(n, q, kappa_src, axis, Ddense);
-  
-      // Compress dense -> CSC over active rows [0..nrow).
-      // Count nnz per column first
-      int* colnnz = (int*) std::malloc((std::size_t)ncol * sizeof(int));
-      if (!colnnz) { std::cerr << "alloc failed\n"; std::exit(1); }
-      for (int j = 0; j < ncol; ++j) colnnz[j] = 0;
-  
-      for (int j = 0; j < ncol; ++j)
+      std::cerr << "DMat::fill_tprod_natural_csc_values: colptr[0] != 0\n";
+      std::exit(1);
+    }
+    for (int j = 0; j < ncol; ++j)
+    {
+      if (colptr[j + 1] < colptr[j])
       {
-        int cnt = 0;
-        for (int i = 0; i < nrow; ++i)
-        {
-          if (Ddense[(std::size_t)i * (std::size_t)ncol + (std::size_t)j] != Real(0)) ++cnt;
-        }
-        colnnz[j] = cnt;
+        std::cerr << "DMat::fill_tprod_natural_csc_values: invalid colptr\n";
+        std::exit(1);
       }
-  
-      int* colptr = (int*) std::malloc((std::size_t)(ncol + 1) * sizeof(int));
-      if (!colptr) { std::cerr << "alloc failed\n"; std::exit(1); }
-      colptr[0] = 0;
-      for (int j = 0; j < ncol; ++j) colptr[j + 1] = colptr[j] + colnnz[j];
-      const int nnz = colptr[ncol];
-  
-      int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
-      Real* x = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
-      if ((!rowind && nnz) || (!x && nnz)) { std::cerr << "alloc failed\n"; std::exit(1); }
-  
-      int* wpos = (int*) std::malloc((std::size_t)ncol * sizeof(int));
-      if (!wpos) { std::cerr << "alloc failed\n"; std::exit(1); }
-      for (int j = 0; j < ncol; ++j) wpos[j] = colptr[j];
-  
-      for (int j = 0; j < ncol; ++j)
+    }
+    const int nnz = colptr[ncol];
+    if (nnz > 0 && (!rowind || !values))
+    {
+      std::cerr << "DMat::fill_tprod_natural_csc_values: null nnz arrays\n";
+      std::exit(1);
+    }
+    for (int p = 0; p < nnz; ++p)
+    {
+      if (rowind[p] < 0 || rowind[p] >= nrow)
       {
-        for (int i = 0; i < nrow; ++i)
-        {
-          const Real a = Ddense[(std::size_t)i * (std::size_t)ncol + (std::size_t)j];
-          if (a == Real(0)) continue;
-          const int p = wpos[j]++;
-          rowind[p] = i;
-          x[p] = a;
-        }
+        std::cerr << "DMat::fill_tprod_natural_csc_values: row out of range\n";
+        std::exit(1);
       }
-  
-      std::free(wpos);
-      std::free(colnnz);
-      std::free(Ddense);
-  
-      *colptr_out = colptr;
-      *rowind_out = rowind;
-      *x_out = x;
-      return (std::size_t)nnz;
     }
-  
-    discover_stencil_stable(q, kappa_src, axis, stencil_min, stencil_max, &S);
-  
-    if (!kappa_src)
-    {
-      std::cerr << "DMat::build_tprod_natural_pruned: null input\n";
-      std::exit(1);
-    }
-    if (n < 1)
-    {
-      std::cerr << "DMat::build_tprod_natural_pruned: require n >= 1\n";
-      std::exit(1);
-    }
-    if (q == 0)
-    {
-      std::cerr << "DMat::build_tprod_natural_pruned: require q >= 1\n";
-      std::exit(1);
-    }
-    if (axis < 0 || axis >= D)
-    {
-      std::cerr << "DMat::build_tprod_natural_pruned: axis out of range\n";
-      std::exit(1);
-    }
-  
-    // Build kappa_rng = kappa_src + e_axis + e_last
+    if (n == 0) return;
+
     Real kappa_rng[D + 1];
-    for (int i = 0; i < D + 1; ++i)
-    {
-      kappa_rng[i] = kappa_src[i];
-    }
+    for (int r = 0; r < D + 1; ++r) kappa_rng[r] = kappa_src[r];
     kappa_rng[axis] += Real(1);
-    kappa_rng[D]    += Real(1);
-    
-    const int M = Basis<D,Real>::dim_Pi(n);
+    kappa_rng[D] += Real(1);
 
-    // ---- Build κ-aware mapped quadrature for the range weight ----
-    const unsigned int npts_u = QuadMapped<D,Real>::npoints(q);
-    const int npts = (int)npts_u;
-
-    Real* X  = (Real*) std::malloc((std::size_t)npts * (std::size_t)D * sizeof(Real));
-    Real* wq = (Real*) std::malloc((std::size_t)npts * sizeof(Real));
-    if (!X || !wq)
+    const int M = ncol;
+    const int npts = static_cast<int>(QuadMapped<D,Real>::npoints(q));
+    Real* X = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * D * sizeof(Real)));
+    Real* wq = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * sizeof(Real)));
+    int* alpha_table = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    int* tail_deg = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    Real* invh_src = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(M) * sizeof(Real)));
+    Real* invh_rng = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(M) * sizeof(Real)));
+    Real* Vrng = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * M * sizeof(Real)));
+    Real* Vsrc = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * M * sizeof(Real)));
+    Real* dVsrc = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * M * D * sizeof(Real)));
+    if (!X || !wq || !alpha_table || !tail_deg || !invh_src ||
+        !invh_rng || !Vrng || !Vsrc || !dVsrc)
     {
-      std::cerr << "DMat::build_tprod: malloc quad failed\n";
+      std::cerr << "DMat::fill_tprod_natural_csc_values: allocation failed\n";
       std::exit(1);
     }
 
-    const int built = QuadMapped<D,Real>::build_kappa(q, kappa_rng, X, wq);
-    if (built != npts)
+    if (QuadMapped<D,Real>::build_kappa(q, kappa_rng, X, wq) != npts)
     {
-      std::cerr << "DMat::build_tprod: build_kappa failed\n";
+      std::cerr << "DMat::fill_tprod_natural_csc_values: quadrature failed\n";
       std::exit(1);
     }
-
-    Real sw = Real(0);
-    for (int p = 0; p < npts; ++p)
+    Real sum_w = Real(0);
+    for (int p = 0; p < npts; ++p) sum_w += wq[p];
+    if (sum_w != Real(0))
     {
-      sw += wq[p];
-    }
-    if (sw != Real(0))
-    {
-      const Real inv_sw = Real(1) / sw;
-      for (int p = 0; p < npts; ++p)
-      {
-        wq[p] *= inv_sw;
-      }
-    }
-
-    // ---- Basis tables for degree n ----
-    int* alpha_table = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    int* tail_deg    = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    Real* invh_src   = (Real*) std::malloc((std::size_t)M * sizeof(Real));
-    Real* invh_rng   = (Real*) std::malloc((std::size_t)M * sizeof(Real));
-
-    if (!alpha_table || !tail_deg || !invh_src || !invh_rng)
-    {
-      std::cerr << "DMat::build_tprod: malloc tables failed\n";
-      std::exit(1);
+      const Real inv_sum_w = Real(1) / sum_w;
+      for (int p = 0; p < npts; ++p) wq[p] *= inv_sum_w;
     }
 
     Basis<D,Real>::build_alpha_table(n, alpha_table);
     Basis<D,Real>::build_tail_deg(n, alpha_table, tail_deg);
-
     for (int m = 0; m < M; ++m)
     {
-      const int* a = alpha_table + m * D;
-      invh_src[m] = Basis<D,Real>::inv_h_alpha(a, kappa_src);
-      invh_rng[m] = Basis<D,Real>::inv_h_alpha(a, kappa_rng);
+      const int* alpha = alpha_table + static_cast<std::size_t>(m) * D;
+      invh_src[m] = Basis<D,Real>::inv_h_alpha(alpha, kappa_src);
+      invh_rng[m] = Basis<D,Real>::inv_h_alpha(alpha, kappa_rng);
     }
-
-    // ---- Evaluate values and gradients ----
-    // Layout:
-    //   V[p + m*ldV], ldV = npts
-    //   dV[(p + m*ldV)*D + ell], ell=0..D-1
-    const int ldV = npts;
-
-    Real* Vrng  = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * sizeof(Real));
-    Real* Vsrc  = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * sizeof(Real));
-    Real* dVsrc = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * (std::size_t)D * sizeof(Real));
-
-    if (!Vrng || !Vsrc || !dVsrc)
-    {
-      std::cerr << "DMat::build_tprod: malloc V/dV failed\n";
-      std::exit(1);
-    }
-
-    // Range values
     Basis<D,Real>::eval_all(
-      X,
-      D, 1,     // ld_point, ld_dim for AoS X[p*D + j]
-      npts,
-      kappa_rng,
-      n,
-      alpha_table,
-      tail_deg,
-      invh_rng,
-      Vrng,
-      ldV,
-      nullptr
-    );
-
-    // Source values + analytic gradients
+      X, D, 1, npts, kappa_rng, n, alpha_table, tail_deg,
+      invh_rng, Vrng, npts, nullptr);
     Basis<D,Real>::eval_all(
-      X,
-      D, 1,
-      npts,
-      kappa_src,
-      n,
-      alpha_table,
-      tail_deg,
-      invh_src,
-      Vsrc,
-      ldV,
-      dVsrc
-    );
-  
+      X, D, 1, npts, kappa_src, n, alpha_table, tail_deg,
+      invh_src, Vsrc, npts, dVsrc);
 
-    Real* dVsrc_axis = (Real*) std::malloc((std::size_t)ncol * (std::size_t)npts * sizeof(Real));
-    if (!dVsrc_axis) { std::cerr << "alloc failed\n"; std::exit(1); }
-    
-    for (int jg = 0; jg < ncol; ++jg)
+    for (int j = 0; j < ncol; ++j)
     {
-      for (int p = 0; p < npts; ++p)
+      const Real* dVj = dVsrc +
+        static_cast<std::size_t>(j) * npts * D;
+      for (int pos = colptr[j]; pos < colptr[j + 1]; ++pos)
       {
-        dVsrc_axis[(std::size_t)jg * (std::size_t)npts + (std::size_t)p] =
-          dVsrc[((std::size_t)jg * (std::size_t)npts + (std::size_t)p) * (std::size_t)D + (std::size_t)axis];
-      }
-    }
-  
-    // ---- Pass 1: count nnz per column ----
-    int* colnnz = (int*) std::malloc((std::size_t)ncol * sizeof(int));
-    if (!colnnz) { std::cerr << "alloc failed\n"; std::exit(1); }
-    for (int j = 0; j < ncol; ++j) colnnz[j] = 0;
-  
-    int dvec[8];
-    int dst_alpha[8];
-  
-    for (int jdeg = 1; jdeg <= n; ++jdeg)
-    {
-      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int cdeg = Basis<D,Real>::dim_Hom(jdeg);
-  
-      for (int jloc = 0; jloc < cdeg; ++jloc)
-      {
-        const int jg = col0 + jloc; // global column in Π_n
-        const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-  
-        int cnt = 0;
-        for (int t = 0; t < S.ndelta; ++t)
+        const int i = rowind[pos];
+        const Real* vi = Vrng + static_cast<std::size_t>(i) * npts;
+        Real value = Real(0);
+        for (int p = 0; p < npts; ++p)
         {
-          unpack_delta8(S.keys[t], dvec);
-  
-          bool ok = true;
-          int sum = 0;
-          for (int d = 0; d < D; ++d)
-          {
-            dst_alpha[d] = src[d] + dvec[d];
-            if (dst_alpha[d] < 0) { ok = false; break; }
-            sum += dst_alpha[d];
-          }
-          if (!ok) continue;
-          if (sum != jdeg - 1) continue;
-  
-          // local row in Hom(jdeg-1)
-          const int iloc = hom_encode_rank_fast(jdeg - 1, dst_alpha);
-          // global row in Π_{n-1}
-          const int ig = Basis<D,Real>::dim_Pi(jdeg - 2) + iloc;
-  
-          if ((unsigned)ig < (unsigned)nrow) { ++cnt; }
+          value += vi[p] * wq[p] *
+            dVj[static_cast<std::size_t>(p) * D + axis];
         }
-  
-        colnnz[jg] = cnt;
+        values[pos] = value;
       }
     }
-  
-    // prefix sum -> colptr
-    int* colptr = (int*) std::malloc((std::size_t)(ncol + 1) * sizeof(int));
-    if (!colptr) { std::cerr << "alloc failed\n"; std::exit(1); }
-    colptr[0] = 0;
-    for (int j = 0; j < ncol; ++j) colptr[j + 1] = colptr[j] + colnnz[j];
-    const int nnz = colptr[ncol];
-  
-    int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
-    Real* x = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
-    if ((!rowind && nnz) || (!x && nnz)) { std::cerr << "alloc failed\n"; std::exit(1); }
-  
-    // working write positions
-    int* wpos = (int*) std::malloc((std::size_t)ncol * sizeof(int));
-    if (!wpos) { std::cerr << "alloc failed\n"; std::exit(1); }
-    for (int j = 0; j < ncol; ++j) wpos[j] = colptr[j];
-  
-    // ---- Pass 2: fill rowind and x ----
-    for (int jdeg = 1; jdeg <= n; ++jdeg)
-    {
-      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int cdeg = Basis<D,Real>::dim_Hom(jdeg);
-      const int row0 = Basis<D,Real>::dim_Pi(jdeg - 2);
-  
-      for (int jloc = 0; jloc < cdeg; ++jloc)
-      {
-        const int jg = col0 + jloc;
-        const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-  
-        // pointer to derivative samples for this column jg
-        const Real* dVj = dVsrc_axis + (std::size_t)jg * (std::size_t)npts;
-  
-        for (int t = 0; t < S.ndelta; ++t)
-        {
-          unpack_delta8(S.keys[t], dvec);
-  
-          bool ok = true;
-          int sum = 0;
-          for (int d = 0; d < D; ++d)
-          {
-            dst_alpha[d] = src[d] + dvec[d];
-            if (dst_alpha[d] < 0) { ok = false; break; }
-            sum += dst_alpha[d];
-          }
-          if (!ok) continue;
-          if (sum != jdeg - 1) continue;
-  
-          const int iloc = hom_encode_rank_fast(jdeg - 1, dst_alpha);
-          const int ig = row0 + iloc;
-          if ((unsigned)ig >= (unsigned)nrow) continue;
-  
-          // Compute entry: ∫ phi_i * (∂axis phi_j) w
-          const Real* vi = Vrng + (std::size_t)ig * (std::size_t)npts;
-  
-          Real s = Real(0);
-          for (int p = 0; p < npts; ++p)
-          {
-            s += vi[p] * wq[p] * dVj[p];
-          }
 
-          const int pos = wpos[jg]++;
-          rowind[pos] = ig;
-          x[pos] = s;
-        }
-      }
-    }
-  
-    std::free(wpos);
-    std::free(colnnz);
-    std::free(alpha_table);
-    S.clear();
     std::free(X);
     std::free(wq);
+    std::free(alpha_table);
     std::free(tail_deg);
     std::free(invh_src);
     std::free(invh_rng);
     std::free(Vrng);
     std::free(Vsrc);
     std::free(dVsrc);
-    std::free(dVsrc_axis);  
-    *colptr_out = colptr;
-    *rowind_out = rowind;
-    *x_out = x;
-    return (std::size_t)nnz;
+  }
+
+  static std::size_t build_tprod_natural_pruned_csc_from_stencil(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int axis,
+    const DMatStencil& S,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    if (!values_out)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned_csc_from_stencil: null output\n";
+      std::exit(1);
+    }
+    *values_out = nullptr;
+    const std::size_t nnz = build_natural_csc_pattern_from_stencil(
+      n, S, colptr_out, rowind_out);
+    if (nnz > 0)
+    {
+      *values_out = static_cast<Real*>(std::malloc(nnz * sizeof(Real)));
+      if (!*values_out)
+      {
+        std::free(*colptr_out);
+        std::free(*rowind_out);
+        *colptr_out = nullptr;
+        *rowind_out = nullptr;
+        std::cerr << "DMat::build_tprod_natural_pruned_csc_from_stencil: allocation failed\n";
+        std::exit(1);
+      }
+    }
+    fill_tprod_natural_csc_values(
+      n, q, kappa_src, axis, *colptr_out, *rowind_out, *values_out);
+    return nnz;
+  }
+
+  static std::size_t build_tprod_natural_pruned_csc(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int axis,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    return build_tprod_natural_pruned_csc(
+      n, q, kappa_src, axis, colptr_out, rowind_out, values_out,
+      default_stencil_folder());
+  }
+
+  static std::size_t build_tprod_natural_pruned_csc(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int axis,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out,
+    const std::string& stencil_folder)
+  {
+    if (!kappa_src || !colptr_out || !rowind_out || !values_out)
+    {
+      std::cerr << "DMat::build_tprod_natural_pruned_csc: null input\n";
+      std::exit(1);
+    }
+    DMatStencil S;
+    std::memset(&S, 0, sizeof(S));
+    load_or_discover_natural_stencil(
+      q, kappa_src, axis, &S, stencil_folder);
+    const std::size_t nnz = build_tprod_natural_pruned_csc_from_stencil(
+      n, q, kappa_src, axis, S, colptr_out, rowind_out, values_out);
+    S.clear();
+    return nnz;
   }
 
 

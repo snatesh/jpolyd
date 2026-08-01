@@ -6,6 +6,15 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <vector>
 #include <jbasis.hh>
 #include <jquad_tprod.hh>
 
@@ -426,398 +435,248 @@ struct KMat
      otherwise
        Compute stable stencil pattern for n between stencil_min,stencil_max 
        Then evaluate kmat entries only where indicated by non-zero stencil */
-  static void build_tprod_natural_pruned(int n,
-                                         unsigned int q,
-                                         const Real* kappa_src,  // length D+1
-                                         const Real* kappa_tgt,
-                                         Real* K)             // (M*M) row-major
+  static void build_tprod_natural_pruned(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    const Real* kappa_tgt,
+    Real* K)
   {
-    if (n < 0) { std::cerr << "n must be non-negative\n"; exit(1); }
+    build_tprod_natural_pruned(
+      n, q, kappa_src, kappa_tgt, K, default_stencil_folder());
+  }
 
-    const int stencil_min = D+1;
-    const int stencil_max = 4*D;
-
-    if (n < stencil_min)
+  static void build_tprod_natural_pruned(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    const Real* kappa_tgt,
+    Real* K,
+    const std::string& stencil_folder)
+  {
+    if (!kappa_src || !kappa_tgt || !K || n < 0 || q == 0)
     {
-      build_tprod_natural_pruned_dense(n, q, kappa_src, kappa_tgt, K);
-      return;
+      std::cerr << "KMat::build_tprod_natural_pruned: invalid input\n";
+      std::exit(1);
     }
-    std::cout << "USING STENCIL\n" << std::endl;
-    // 1) Discover degree-invariant delta stencil (small-n exploration)
+    const int promoted_parameter = natural_promoted_parameter(
+      kappa_src, kappa_tgt);
     KMatStencil S;
     std::memset(&S, 0, sizeof(S));
-    discover_stencil_stable(q, kappa_src, kappa_tgt, stencil_min, stencil_max, &S);
-
-    // 2) Build using stencil (still dense output for testing)
+    load_or_discover_natural_stencil(
+      q, kappa_src, promoted_parameter, &S, stencil_folder);
     build_tprod_from_deltas(n, q, kappa_src, kappa_tgt, S, K);
-    // 4) Cleanup
     S.clear();
   }
 
 
-  static std::size_t build_tprod_pruned_csc(int n,
-                                            unsigned int q,
-                                            const Real* kappa_src,
-                                            const Real* kappa_tgt,
-                                            int** colptr_out,
-                                            int** rowind_out,
-                                            Real** x_out)
+  static std::size_t build_natural_csc_pattern_from_stencil(
+    int n,
+    const KMatStencil& S,
+    int** colptr_out,
+    int** rowind_out)
   {
-    if (!kappa_src || !kappa_tgt || !colptr_out || !rowind_out || !x_out)
+    if (!colptr_out || !rowind_out || !stencil_valid(S) || n < 0)
     {
-      std::cerr << "KMat::build_tprod_pruned_csc: null input\n";
+      std::cerr << "KMat::build_natural_csc_pattern_from_stencil: invalid input\n";
       std::exit(1);
     }
     *colptr_out = nullptr;
     *rowind_out = nullptr;
-    *x_out      = nullptr;
-  
-    if (n < 0)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: require n >= 0\n";
-      std::exit(1);
-    }
-    if (q == 0)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: require q >= 1\n";
-      std::exit(1);
-    }
-  
     const int M = Basis<D,Real>::dim_Pi(n);
-    const int stencil_min = D + 1;
-    const int stencil_max = 4 * D;
-    if (n < stencil_min)
+    int* colptr = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M + 1) * sizeof(int)));
+    int* alpha_table = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    if (!colptr || !alpha_table)
     {
-      Real* Kdense = (Real*) std::malloc((std::size_t)M * (std::size_t)M * sizeof(Real));
-      if (!Kdense) { std::cerr << "alloc failed\n"; std::exit(1); }
-      build_tprod_natural_pruned_dense(n, q, kappa_src, kappa_tgt, Kdense);
-      const std::size_t nnz = detail::compress_dense_to_csc(M, Kdense, colptr_out, rowind_out, x_out);
-      free(Kdense);
-      return nnz;
-    } 
-    // ---- Enforce: kappa_tgt = kappa_src + e_j (exactly one +1) ----
-    {
-      const Real tol = Real(1e-14);
-      int idx_plus1 = -1;
-      for (int i = 0; i < D + 1; ++i)
-      {
-        const Real dk = kappa_tgt[i] - kappa_src[i];
-        if (std::abs(dk) <= tol) continue;
-  
-        if (std::abs(dk - Real(1)) <= tol)
-        {
-          if (idx_plus1 != -1)
-          {
-            std::cerr << "KMat::build_tprod_pruned_csc: dk != e_j (multiple +1)\n";
-            std::exit(1);
-          }
-          idx_plus1 = i;
-          continue;
-        }
-  
-        std::cerr << "KMat::build_tprod_pruned_csc: dk != e_j\n";
-        std::exit(1);
-      }
-      if (idx_plus1 == -1)
-      {
-        std::cerr << "KMat::build_tprod_pruned_csc: dk != e_j (no +1)\n";
-        std::exit(1);
-      }
-    }
-  
-
-    // ---- Discover stable stencil (two key sets) ----
-    KMatStencil S;
-    std::memset(&S, 0, sizeof(S));
-    discover_stencil_stable(q, kappa_src, kappa_tgt, stencil_min, stencil_max, &S);
-  
-    // ---- Quadrature (target weight) ----
-    const unsigned int npts_u = QuadMapped<D,Real>::npoints(q);
-    const int npts = (int)npts_u;
-    const int ldV = npts;
-  
-    Real* X  = (Real*) std::malloc((std::size_t)npts * (std::size_t)D * sizeof(Real));
-    Real* wq = (Real*) std::malloc((std::size_t)npts * sizeof(Real));
-    if (!X || !wq)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: malloc quad failed\n";
+      std::free(colptr);
+      std::free(alpha_table);
+      std::cerr << "KMat::build_natural_csc_pattern_from_stencil: allocation failed\n";
       std::exit(1);
     }
-  
-    const int built = QuadMapped<D,Real>::build_kappa(q, kappa_tgt, X, wq);
-    if (built != npts)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: build_kappa failed\n";
-      std::exit(1);
-    }
-  
-    // ---- Basis tables ----
-    int* alpha_table = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    int* tail_deg    = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    Real* invh_src   = (Real*) std::malloc((std::size_t)M * sizeof(Real));
-    Real* invh_tgt   = (Real*) std::malloc((std::size_t)M * sizeof(Real));
-    if (!alpha_table || !tail_deg || !invh_src || !invh_tgt)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: malloc tables failed\n";
-      std::exit(1);
-    }
-  
     Basis<D,Real>::build_alpha_table(n, alpha_table);
-    Basis<D,Real>::build_tail_deg(n, alpha_table, tail_deg);
-  
-    for (int m = 0; m < M; ++m)
-    {
-      const int* a = alpha_table + (std::size_t)m * (std::size_t)D;
-      invh_src[m] = Basis<D,Real>::inv_h_alpha(a, kappa_src);
-      invh_tgt[m] = Basis<D,Real>::inv_h_alpha(a, kappa_tgt);
-    }
-  
-    // ---- Evaluate basis values ----
-    Real* Vsrc = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * sizeof(Real));
-    Real* Vtgt = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * sizeof(Real));
-    if (!Vsrc || !Vtgt)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: malloc V failed\n";
-      std::exit(1);
-    }
-  
-    Basis<D,Real>::eval_all(
-      X, D, 1,
-      npts,
-      kappa_src,
-      n,
-      alpha_table,
-      tail_deg,
-      invh_src,
-      Vsrc,
-      ldV,
-      nullptr
-    );
-  
-    Basis<D,Real>::eval_all(
-      X, D, 1,
-      npts,
-      kappa_tgt,
-      n,
-      alpha_table,
-      tail_deg,
-      invh_tgt,
-      Vtgt,
-      ldV,
-      nullptr
-    );
-  
-    // ---- Pass 1: count nnz per column ----
-    int* colnnz = (int*) std::malloc((std::size_t)M * sizeof(int));
-    if (!colnnz)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: alloc colnnz failed\n";
-      std::exit(1);
-    }
-    for (int j = 0; j < M; ++j) colnnz[j] = 0;
-  
+    colptr[0] = 0;
+
+    std::vector<int> rows;
+    rows.reserve(static_cast<std::size_t>(M) *
+      static_cast<std::size_t>(S.ndelta0 + S.ndeltam1));
     int dvec[8];
     int dst_alpha[8];
-  
+
     for (int jdeg = 0; jdeg <= n; ++jdeg)
     {
       const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int c    = Basis<D,Real>::dim_Hom(jdeg);
-  
-      for (int jloc = 0; jloc < c; ++jloc)
+      const int cdeg = Basis<D,Real>::dim_Hom(jdeg);
+      for (int jloc = 0; jloc < cdeg; ++jloc)
       {
         const int jg = col0 + jloc;
         const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-  
-        int cnt = 0;
-  
-        // keys0: target degree = jdeg
+
+        const int row0_same = Basis<D,Real>::dim_Pi(jdeg - 1);
+        const int r_same = Basis<D,Real>::dim_Hom(jdeg);
         for (int t = 0; t < S.ndelta0; ++t)
         {
           unpack_delta8(S.keys0[t], dvec);
-  
           bool ok = true;
           int sum = 0;
-          for (int d = 0; d < D; ++d)
+          for (int dim = 0; dim < D; ++dim)
           {
-            dst_alpha[d] = src[d] + dvec[d];
-            if (dst_alpha[d] < 0) { ok = false; break; }
-            sum += dst_alpha[d];
+            dst_alpha[dim] = src[dim] + dvec[dim];
+            if (dst_alpha[dim] < 0) { ok = false; break; }
+            sum += dst_alpha[dim];
           }
-          if (!ok) continue;
-          if (sum != jdeg) continue;
-  
+          if (!ok || sum != jdeg) continue;
           const int iloc = hom_encode_rank_fast(jdeg, dst_alpha);
-          const int r    = Basis<D,Real>::dim_Hom(jdeg);
-          if (iloc < 0 || iloc >= r) continue;
-  
-          ++cnt;
+          if (iloc < 0 || iloc >= r_same) continue;
+          rows.push_back(row0_same + iloc);
         }
-  
-        // keysm1: target degree = jdeg-1 (if jdeg>=1)
+
         if (jdeg >= 1)
         {
           const int ideg = jdeg - 1;
-          const int r    = Basis<D,Real>::dim_Hom(ideg);
-  
+          const int row0_down = Basis<D,Real>::dim_Pi(ideg - 1);
+          const int r_down = Basis<D,Real>::dim_Hom(ideg);
           for (int t = 0; t < S.ndeltam1; ++t)
           {
             unpack_delta8(S.keysm1[t], dvec);
-  
             bool ok = true;
             int sum = 0;
-            for (int d = 0; d < D; ++d)
+            for (int dim = 0; dim < D; ++dim)
             {
-              dst_alpha[d] = src[d] + dvec[d];
-              if (dst_alpha[d] < 0) { ok = false; break; }
-              sum += dst_alpha[d];
+              dst_alpha[dim] = src[dim] + dvec[dim];
+              if (dst_alpha[dim] < 0) { ok = false; break; }
+              sum += dst_alpha[dim];
             }
-            if (!ok) continue;
-            if (sum != ideg) continue;
-  
+            if (!ok || sum != ideg) continue;
             const int iloc = hom_encode_rank_fast(ideg, dst_alpha);
-            if (iloc < 0 || iloc >= r) continue;
-  
-            ++cnt;
+            if (iloc < 0 || iloc >= r_down) continue;
+            rows.push_back(row0_down + iloc);
           }
         }
-  
-        colnnz[jg] = cnt;
+        colptr[jg + 1] = static_cast<int>(rows.size());
       }
     }
-  
-    int* colptr = (int*) std::malloc((std::size_t)(M + 1) * sizeof(int));
-    if (!colptr)
+
+    int* rowind = nullptr;
+    if (!rows.empty())
     {
-      std::cerr << "KMat::build_tprod_pruned_csc: alloc colptr failed\n";
-      std::exit(1);
-    }
-  
-    colptr[0] = 0;
-    for (int j = 0; j < M; ++j)
-    {
-      colptr[j + 1] = colptr[j] + colnnz[j];
-    }
-    const int nnz = colptr[M];
-  
-    int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
-    Real* x     = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
-    if ((!rowind && nnz) || (!x && nnz))
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: alloc nnz arrays failed\n";
-      std::exit(1);
-    }
-  
-    int* wpos = (int*) std::malloc((std::size_t)M * sizeof(int));
-    if (!wpos)
-    {
-      std::cerr << "KMat::build_tprod_pruned_csc: alloc wpos failed\n";
-      std::exit(1);
-    }
-    for (int j = 0; j < M; ++j) wpos[j] = colptr[j];
-  
-    // ---- Pass 2: fill CSC ----
-    for (int jdeg = 0; jdeg <= n; ++jdeg)
-    {
-      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int c    = Basis<D,Real>::dim_Hom(jdeg);
-  
-      for (int jloc = 0; jloc < c; ++jloc)
+      rowind = static_cast<int*>(std::malloc(rows.size() * sizeof(int)));
+      if (!rowind)
       {
-        const int jg = col0 + jloc;
-        const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-        const Real* vj = Vsrc + (std::size_t)jg * (std::size_t)ldV;
-  
-        // keys0 -> target degree jdeg
-        {
-          const int row0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-          const int r    = Basis<D,Real>::dim_Hom(jdeg);
-  
-          for (int t = 0; t < S.ndelta0; ++t)
-          {
-            unpack_delta8(S.keys0[t], dvec);
-  
-            bool ok = true;
-            int sum = 0;
-            for (int d = 0; d < D; ++d)
-            {
-              dst_alpha[d] = src[d] + dvec[d];
-              if (dst_alpha[d] < 0) { ok = false; break; }
-              sum += dst_alpha[d];
-            }
-            if (!ok) continue;
-            if (sum != jdeg) continue;
-  
-            const int iloc = hom_encode_rank_fast(jdeg, dst_alpha);
-            if (iloc < 0 || iloc >= r) continue;
-  
-            const int ig = row0 + iloc;
-            const Real* vi = Vtgt + (std::size_t)ig * (std::size_t)ldV;
-  
-            Real s = Real(0);
-            for (int p = 0; p < npts; ++p)
-            {
-              s += vi[p] * wq[p] * vj[p];
-            }
-  
-            const int pos = wpos[jg]++;
-            rowind[pos] = ig;
-            x[pos] = s;
-          }
-        }
-  
-        // keysm1 -> target degree jdeg-1
-        if (jdeg >= 1)
-        {
-          const int ideg = jdeg - 1;
-          const int row0 = Basis<D,Real>::dim_Pi(ideg - 1);
-          const int r    = Basis<D,Real>::dim_Hom(ideg);
-  
-          for (int t = 0; t < S.ndeltam1; ++t)
-          {
-            unpack_delta8(S.keysm1[t], dvec);
-  
-            bool ok = true;
-            int sum = 0;
-            for (int d = 0; d < D; ++d)
-            {
-              dst_alpha[d] = src[d] + dvec[d];
-              if (dst_alpha[d] < 0) { ok = false; break; }
-              sum += dst_alpha[d];
-            }
-            if (!ok) continue;
-            if (sum != ideg) continue;
-  
-            const int iloc = hom_encode_rank_fast(ideg, dst_alpha);
-            if (iloc < 0 || iloc >= r) continue;
-  
-            const int ig = row0 + iloc;
-            const Real* vi = Vtgt + (std::size_t)ig * (std::size_t)ldV;
-  
-            Real s = Real(0);
-            for (int p = 0; p < npts; ++p)
-            {
-              s += vi[p] * wq[p] * vj[p];
-            }
-  
-            const int pos = wpos[jg]++;
-            rowind[pos] = ig;
-            x[pos] = s;
-          }
-        }
+        std::free(colptr);
+        std::free(alpha_table);
+        std::cerr << "KMat::build_natural_csc_pattern_from_stencil: allocation failed\n";
+        std::exit(1);
       }
+      std::memcpy(rowind, rows.data(), rows.size() * sizeof(int));
     }
-  
-    // ---- output ----
+    std::free(alpha_table);
     *colptr_out = colptr;
     *rowind_out = rowind;
-    *x_out      = x;
-  
-    // ---- cleanup temporaries ----
-    S.clear();
-    std::free(colnnz);
-    std::free(wpos);
-  
+    return rows.size();
+  }
+
+  static void fill_tprod_csc_values(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    const Real* kappa_tgt,
+    const int* colptr,
+    const int* rowind,
+    Real* values)
+  {
+    if (!kappa_src || !kappa_tgt || !colptr || n < 0 || q == 0)
+    {
+      std::cerr << "KMat::fill_tprod_csc_values: invalid input\n";
+      std::exit(1);
+    }
+    const int M = Basis<D,Real>::dim_Pi(n);
+    if (colptr[0] != 0)
+    {
+      std::cerr << "KMat::fill_tprod_csc_values: colptr[0] != 0\n";
+      std::exit(1);
+    }
+    for (int j = 0; j < M; ++j)
+    {
+      if (colptr[j + 1] < colptr[j])
+      {
+        std::cerr << "KMat::fill_tprod_csc_values: invalid colptr\n";
+        std::exit(1);
+      }
+    }
+    const int nnz = colptr[M];
+    if (nnz > 0 && (!rowind || !values))
+    {
+      std::cerr << "KMat::fill_tprod_csc_values: null nnz arrays\n";
+      std::exit(1);
+    }
+    for (int p = 0; p < nnz; ++p)
+    {
+      if (rowind[p] < 0 || rowind[p] >= M)
+      {
+        std::cerr << "KMat::fill_tprod_csc_values: row out of range\n";
+        std::exit(1);
+      }
+    }
+
+    const int npts = static_cast<int>(QuadMapped<D,Real>::npoints(q));
+    Real* X = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * D * sizeof(Real)));
+    Real* wq = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * sizeof(Real)));
+    int* alpha_table = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    int* tail_deg = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) * D * sizeof(int)));
+    Real* invh_src = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(M) * sizeof(Real)));
+    Real* invh_tgt = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(M) * sizeof(Real)));
+    Real* Vsrc = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * M * sizeof(Real)));
+    Real* Vtgt = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * M * sizeof(Real)));
+    if (!X || !wq || !alpha_table || !tail_deg || !invh_src ||
+        !invh_tgt || !Vsrc || !Vtgt)
+    {
+      std::cerr << "KMat::fill_tprod_csc_values: allocation failed\n";
+      std::exit(1);
+    }
+    if (QuadMapped<D,Real>::build_kappa(q, kappa_tgt, X, wq) != npts)
+    {
+      std::cerr << "KMat::fill_tprod_csc_values: quadrature failed\n";
+      std::exit(1);
+    }
+    Basis<D,Real>::build_alpha_table(n, alpha_table);
+    Basis<D,Real>::build_tail_deg(n, alpha_table, tail_deg);
+    for (int m = 0; m < M; ++m)
+    {
+      const int* alpha = alpha_table + static_cast<std::size_t>(m) * D;
+      invh_src[m] = Basis<D,Real>::inv_h_alpha(alpha, kappa_src);
+      invh_tgt[m] = Basis<D,Real>::inv_h_alpha(alpha, kappa_tgt);
+    }
+    Basis<D,Real>::eval_all(
+      X, D, 1, npts, kappa_src, n, alpha_table, tail_deg,
+      invh_src, Vsrc, npts, nullptr);
+    Basis<D,Real>::eval_all(
+      X, D, 1, npts, kappa_tgt, n, alpha_table, tail_deg,
+      invh_tgt, Vtgt, npts, nullptr);
+
+    for (int j = 0; j < M; ++j)
+    {
+      const Real* vj = Vsrc + static_cast<std::size_t>(j) * npts;
+      for (int pos = colptr[j]; pos < colptr[j + 1]; ++pos)
+      {
+        const int i = rowind[pos];
+        const Real* vi = Vtgt + static_cast<std::size_t>(i) * npts;
+        Real value = Real(0);
+        for (int p = 0; p < npts; ++p)
+          value += vi[p] * wq[p] * vj[p];
+        values[pos] = value;
+      }
+    }
+
     std::free(X);
     std::free(wq);
     std::free(alpha_table);
@@ -826,7 +685,139 @@ struct KMat
     std::free(invh_tgt);
     std::free(Vsrc);
     std::free(Vtgt);
-    return (std::size_t)nnz;
+  }
+
+  static void fill_tprod_natural_csc_values(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int promoted_parameter,
+    const int* colptr,
+    const int* rowind,
+    Real* values)
+  {
+    Real kappa_tgt[D + 1];
+    make_natural_target(kappa_src, promoted_parameter, kappa_tgt);
+    fill_tprod_csc_values(
+      n, q, kappa_src, kappa_tgt, colptr, rowind, values);
+  }
+
+  static std::size_t build_tprod_natural_pruned_csc_from_stencil(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    int promoted_parameter,
+    const KMatStencil& S,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    if (!values_out)
+    {
+      std::cerr << "KMat::build_tprod_natural_pruned_csc_from_stencil: null output\n";
+      std::exit(1);
+    }
+    *values_out = nullptr;
+    const std::size_t nnz = build_natural_csc_pattern_from_stencil(
+      n, S, colptr_out, rowind_out);
+    if (nnz > 0)
+    {
+      *values_out = static_cast<Real*>(std::malloc(nnz * sizeof(Real)));
+      if (!*values_out)
+      {
+        std::free(*colptr_out);
+        std::free(*rowind_out);
+        *colptr_out = nullptr;
+        *rowind_out = nullptr;
+        std::cerr << "KMat::build_tprod_natural_pruned_csc_from_stencil: allocation failed\n";
+        std::exit(1);
+      }
+    }
+    fill_tprod_natural_csc_values(
+      n, q, kappa_src, promoted_parameter,
+      *colptr_out, *rowind_out, *values_out);
+    return nnz;
+  }
+
+  static std::size_t build_tprod_pruned_csc(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    const Real* kappa_tgt,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    return build_tprod_pruned_csc(
+      n, q, kappa_src, kappa_tgt, colptr_out, rowind_out, values_out,
+      default_stencil_folder());
+  }
+
+  static std::size_t build_tprod_pruned_csc(
+    int n,
+    unsigned int q,
+    const Real* kappa_src,
+    const Real* kappa_tgt,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out,
+    const std::string& stencil_folder)
+  {
+    if (!kappa_src || !kappa_tgt || !colptr_out || !rowind_out ||
+        !values_out || n < 0 || q == 0)
+    {
+      std::cerr << "KMat::build_tprod_pruned_csc: invalid input\n";
+      std::exit(1);
+    }
+
+    /* Preserve the general promotion path: non-natural shifts use the dense
+       pruned builder.  Natural one-parameter shifts use the persistent
+       stencil cache at every degree. */
+    const Real tol = Real(1e-14);
+    int promoted_parameter = -1;
+    bool natural = true;
+    for (int r = 0; r < D + 1; ++r)
+    {
+      const Real shift = kappa_tgt[r] - kappa_src[r];
+      if (std::abs(shift) <= tol) continue;
+      if (std::abs(shift - Real(1)) <= tol && promoted_parameter < 0)
+      {
+        promoted_parameter = r;
+      }
+      else
+      {
+        natural = false;
+        break;
+      }
+    }
+    if (promoted_parameter < 0) natural = false;
+
+    if (!natural)
+    {
+      const int M = Basis<D,Real>::dim_Pi(n);
+      Real* dense = static_cast<Real*>(
+        std::malloc(static_cast<std::size_t>(M) * M * sizeof(Real)));
+      if (!dense)
+      {
+        std::cerr << "KMat::build_tprod_pruned_csc: allocation failed\n";
+        std::exit(1);
+      }
+      build_tprod_pruned_dense(n, q, kappa_src, kappa_tgt, dense);
+      const std::size_t nnz = detail::compress_dense_to_csc(
+        M, dense, colptr_out, rowind_out, values_out);
+      std::free(dense);
+      return nnz;
+    }
+
+    KMatStencil S;
+    std::memset(&S, 0, sizeof(S));
+    load_or_discover_natural_stencil(
+      q, kappa_src, promoted_parameter, &S, stencil_folder);
+    const std::size_t nnz = build_tprod_natural_pruned_csc_from_stencil(
+      n, q, kappa_src, promoted_parameter, S,
+      colptr_out, rowind_out, values_out);
+    S.clear();
+    return nnz;
   }
 
 
@@ -1047,6 +1038,389 @@ struct KMat
   
     return true;
   }
+
+  static constexpr int stencil_cache_version()
+  {
+    return 1;
+  }
+
+  static constexpr int default_stencil_min_degree()
+  {
+    return D + 1;
+  }
+
+  static constexpr int default_stencil_max_degree()
+  {
+    return 4 * D;
+  }
+
+  static std::string default_stencil_folder()
+  {
+    return "stencils";
+  }
+
+  static int natural_promoted_parameter(
+    const Real* kappa_src,
+    const Real* kappa_tgt)
+  {
+    if (!kappa_src || !kappa_tgt)
+    {
+      std::cerr << "KMat::natural_promoted_parameter: null input\n";
+      std::exit(1);
+    }
+    const Real tol = Real(1e-14);
+    int promoted_parameter = -1;
+    for (int r = 0; r < D + 1; ++r)
+    {
+      const Real shift = kappa_tgt[r] - kappa_src[r];
+      if (std::abs(shift) <= tol) continue;
+      if (std::abs(shift - Real(1)) <= tol && promoted_parameter < 0)
+      {
+        promoted_parameter = r;
+        continue;
+      }
+      std::cerr << "KMat::natural_promoted_parameter: target-source is not e_r\n";
+      std::exit(1);
+    }
+    if (promoted_parameter < 0)
+    {
+      std::cerr << "KMat::natural_promoted_parameter: no promoted parameter\n";
+      std::exit(1);
+    }
+    return promoted_parameter;
+  }
+
+  static void make_natural_target(
+    const Real* kappa_src,
+    int promoted_parameter,
+    Real* kappa_tgt)
+  {
+    if (!kappa_src || !kappa_tgt ||
+        promoted_parameter < 0 || promoted_parameter > D)
+    {
+      std::cerr << "KMat::make_natural_target: invalid input\n";
+      std::exit(1);
+    }
+    for (int r = 0; r < D + 1; ++r) kappa_tgt[r] = kappa_src[r];
+    kappa_tgt[promoted_parameter] += Real(1);
+  }
+
+  /* Canonical structural signature used for automatic interning.  The
+     promoted parameter and representative degree are intentionally omitted. */
+  static std::string stencil_signature(const KMatStencil& S)
+  {
+    std::ostringstream out;
+    out << "KMat:D=" << D
+        << ":ndelta0=" << S.ndelta0 << ":keys0=";
+    out << std::hex << std::setfill('0');
+    for (int k = 0; k < S.ndelta0; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keys0[k];
+    }
+    out << ":ndeltam1=" << std::dec << S.ndeltam1 << ":keysm1=";
+    out << std::hex;
+    for (int k = 0; k < S.ndeltam1; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keysm1[k];
+    }
+    return out.str();
+  }
+
+  static bool stencil_valid(const KMatStencil& S)
+  {
+    if (S.ndelta0 < 0 || S.ndeltam1 < 0) return false;
+    if (S.ndelta0 > 0 && !S.keys0) return false;
+    if (S.ndeltam1 > 0 && !S.keysm1) return false;
+    for (int k = 1; k < S.ndelta0; ++k)
+    {
+      if (!(S.keys0[k - 1] < S.keys0[k])) return false;
+    }
+    for (int k = 1; k < S.ndeltam1; ++k)
+    {
+      if (!(S.keysm1[k - 1] < S.keysm1[k])) return false;
+    }
+    return true;
+  }
+
+  static void copy_stencil(const KMatStencil& src, KMatStencil* dst)
+  {
+    if (!dst || !stencil_valid(src))
+    {
+      std::cerr << "KMat::copy_stencil: invalid input\n";
+      std::exit(1);
+    }
+    dst->clear();
+    dst->j_rep = src.j_rep;
+    dst->ndelta0 = src.ndelta0;
+    dst->ndeltam1 = src.ndeltam1;
+    if (src.ndelta0 > 0)
+    {
+      dst->keys0 = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(src.ndelta0) * sizeof(uint64_t)));
+      if (!dst->keys0)
+      {
+        std::cerr << "KMat::copy_stencil: allocation failed\n";
+        std::exit(1);
+      }
+      std::memcpy(dst->keys0, src.keys0,
+        static_cast<std::size_t>(src.ndelta0) * sizeof(uint64_t));
+    }
+    if (src.ndeltam1 > 0)
+    {
+      dst->keysm1 = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(src.ndeltam1) * sizeof(uint64_t)));
+      if (!dst->keysm1)
+      {
+        dst->clear();
+        std::cerr << "KMat::copy_stencil: allocation failed\n";
+        std::exit(1);
+      }
+      std::memcpy(dst->keysm1, src.keysm1,
+        static_cast<std::size_t>(src.ndeltam1) * sizeof(uint64_t));
+    }
+  }
+
+  static std::filesystem::path stencil_cache_path(
+    int promoted_parameter,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (promoted_parameter < 0 || promoted_parameter > D)
+    {
+      std::cerr << "KMat::stencil_cache_path: promoted parameter out of range\n";
+      std::exit(1);
+    }
+    const std::filesystem::path folder =
+      stencil_folder.empty() ? std::filesystem::path(".")
+                             : std::filesystem::path(stencil_folder);
+    std::ostringstream name;
+    name << "kmat_D" << D
+         << "_parameter" << promoted_parameter
+         << "_v" << stencil_cache_version()
+         << ".stencil";
+    return folder / name.str();
+  }
+
+  static bool load_stencil_file(
+    int promoted_parameter,
+    KMatStencil* S_out,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!S_out)
+    {
+      std::cerr << "KMat::load_stencil_file: null output\n";
+      std::exit(1);
+    }
+    const std::filesystem::path path =
+      stencil_cache_path(promoted_parameter, stencil_folder);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+    {
+      if (ec)
+      {
+        std::cerr << "KMat::load_stencil_file: exists failed for "
+                  << path << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+      return false;
+    }
+
+    std::ifstream in(path);
+    std::string magic;
+    std::string kind;
+    std::string basis_tag;
+    int version = 0;
+    int file_D = -1;
+    int file_parameter = -1;
+    int j_rep = 0;
+    int ndelta0 = -1;
+    int ndeltam1 = -1;
+    if (!(in >> magic >> version >> kind >> basis_tag
+             >> file_D >> file_parameter >> j_rep
+             >> ndelta0 >> ndeltam1))
+    {
+      std::cerr << "KMat::load_stencil_file: malformed header in "
+                << path << '\n';
+      std::exit(1);
+    }
+    if (magic != "JPOLYD_STENCIL" ||
+        version != stencil_cache_version() ||
+        kind != "KMAT" || basis_tag != "KAPPA_MINUS_HALF" ||
+        file_D != D || file_parameter != promoted_parameter ||
+        ndelta0 < 0 || ndeltam1 < 0)
+    {
+      std::cerr << "KMat::load_stencil_file: incompatible cache file "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    KMatStencil loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    loaded.j_rep = j_rep;
+    loaded.ndelta0 = ndelta0;
+    loaded.ndeltam1 = ndeltam1;
+    if (ndelta0 > 0)
+    {
+      loaded.keys0 = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(ndelta0) * sizeof(uint64_t)));
+      if (!loaded.keys0)
+      {
+        std::cerr << "KMat::load_stencil_file: allocation failed\n";
+        std::exit(1);
+      }
+      for (int i = 0; i < ndelta0; ++i)
+      {
+        if (!(in >> loaded.keys0[i]))
+        {
+          loaded.clear();
+          std::cerr << "KMat::load_stencil_file: truncated keys0 in "
+                    << path << '\n';
+          std::exit(1);
+        }
+      }
+    }
+    if (ndeltam1 > 0)
+    {
+      loaded.keysm1 = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(ndeltam1) * sizeof(uint64_t)));
+      if (!loaded.keysm1)
+      {
+        loaded.clear();
+        std::cerr << "KMat::load_stencil_file: allocation failed\n";
+        std::exit(1);
+      }
+      for (int i = 0; i < ndeltam1; ++i)
+      {
+        if (!(in >> loaded.keysm1[i]))
+        {
+          loaded.clear();
+          std::cerr << "KMat::load_stencil_file: truncated keysm1 in "
+                    << path << '\n';
+          std::exit(1);
+        }
+      }
+    }
+    std::string end_token;
+    if (!(in >> end_token) || end_token != "END" ||
+        !stencil_valid(loaded))
+    {
+      loaded.clear();
+      std::cerr << "KMat::load_stencil_file: invalid stencil in "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    S_out->clear();
+    *S_out = loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    return true;
+  }
+
+  static void save_stencil_file(
+    int promoted_parameter,
+    const KMatStencil& S,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!stencil_valid(S))
+    {
+      std::cerr << "KMat::save_stencil_file: invalid stencil\n";
+      std::exit(1);
+    }
+    const std::filesystem::path path =
+      stencil_cache_path(promoted_parameter, stencil_folder);
+    const std::filesystem::path folder = path.parent_path();
+    std::error_code ec;
+    if (!folder.empty())
+    {
+      std::filesystem::create_directories(folder, ec);
+      if (ec)
+      {
+        std::cerr << "KMat::save_stencil_file: cannot create "
+                  << folder << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+    }
+
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    {
+      std::ofstream out(temporary, std::ios::trunc);
+      if (!out)
+      {
+        std::cerr << "KMat::save_stencil_file: cannot open "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+      out << "JPOLYD_STENCIL " << stencil_cache_version()
+          << " KMAT KAPPA_MINUS_HALF "
+          << D << ' ' << promoted_parameter << ' '
+          << S.j_rep << ' ' << S.ndelta0 << ' ' << S.ndeltam1 << '\n';
+      for (int i = 0; i < S.ndelta0; ++i) out << S.keys0[i] << '\n';
+      for (int i = 0; i < S.ndeltam1; ++i) out << S.keysm1[i] << '\n';
+      out << "END\n";
+      out.flush();
+      if (!out)
+      {
+        std::cerr << "KMat::save_stencil_file: write failed for "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+    }
+
+    std::filesystem::rename(temporary, path, ec);
+    if (ec)
+    {
+      std::error_code remove_ec;
+      std::filesystem::remove(path, remove_ec);
+      ec.clear();
+      std::filesystem::rename(temporary, path, ec);
+    }
+    if (ec)
+    {
+      std::cerr << "KMat::save_stencil_file: rename failed for "
+                << path << ": " << ec.message() << '\n';
+      std::exit(1);
+    }
+  }
+
+  static void discover_natural_stencil(
+    unsigned int q,
+    const Real* kappa_src,
+    int promoted_parameter,
+    int n_min,
+    int n_max,
+    KMatStencil* S_out)
+  {
+    Real kappa_tgt[D + 1];
+    make_natural_target(kappa_src, promoted_parameter, kappa_tgt);
+    discover_stencil_stable(
+      q, kappa_src, kappa_tgt, n_min, n_max, S_out);
+  }
+
+  /* Main persistent path.  Returns true when loaded and false when newly
+     discovered and written. */
+  static bool load_or_discover_natural_stencil(
+    unsigned int q,
+    const Real* kappa_src,
+    int promoted_parameter,
+    KMatStencil* S_out,
+    const std::string& stencil_folder = "stencils",
+    int n_min = default_stencil_min_degree(),
+    int n_max = default_stencil_max_degree())
+  {
+    if (!kappa_src || !S_out)
+    {
+      std::cerr << "KMat::load_or_discover_natural_stencil: null input\n";
+      std::exit(1);
+    }
+    if (load_stencil_file(promoted_parameter, S_out, stencil_folder))
+      return true;
+    discover_natural_stencil(
+      q, kappa_src, promoted_parameter, n_min, n_max, S_out);
+    save_stencil_file(promoted_parameter, *S_out, stencil_folder);
+    return false;
+  }
+
   
   static int cmp_u64(const void* a, const void* b)
   {
