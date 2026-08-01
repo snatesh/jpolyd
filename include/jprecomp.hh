@@ -4,6 +4,8 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
+#include <memory>
 #include <stdexcept>
 #include <vector>
 
@@ -22,6 +24,17 @@ class RefSimplexPrecomp
 {
 public:
   static_assert(D >= 1, "RefSimplexPrecomp requires D>=1");
+
+  struct CSCBlock
+  {
+    int rows = 0;
+    int cols = 0;
+    std::vector<int> colptr;
+    std::vector<int> rowind;
+    std::vector<Real> values;
+
+    std::size_t nnz() const { return values.size(); }
+  };
 
   int n = 0;
   int q_pad = 2;
@@ -75,6 +88,48 @@ public:
   std::vector<Real> Fgrad_ref;
   std::vector<Real> Mface_ref;
 
+  // Pruned CSC copies of the boundary reference blocks.  Dense storage and
+  // all existing dense interfaces remain unchanged.
+  //
+  // T_ref_csc block order:       sigma + nsigma * face
+  // Fgrad_ref_csc block order:   axis + D * (sigma + nsigma * face)
+  // Mface_ref_csc block order:   face
+  std::vector<CSCBlock> T_ref_csc;
+  std::vector<CSCBlock> Fgrad_ref_csc;
+  std::vector<CSCBlock> Mface_ref_csc;
+
+  // Relative Frobenius threshold used only for the boundary CSC copies.
+  Real boundary_csc_rel_prune = Real(1.0e-12);
+
+  const CSCBlock& T_ref_csc_block(int sigma, int face) const
+  {
+    if (sigma < 0 || sigma >= nsigma || face < 0 || face >= nface)
+    {
+      throw std::out_of_range("RefSimplexPrecomp: T_ref_csc block index");
+    }
+    return T_ref_csc[(std::size_t)sigma + (std::size_t)nsigma * face];
+  }
+
+  const CSCBlock& Fgrad_ref_csc_block(int axis, int sigma, int face) const
+  {
+    if (axis < 0 || axis >= D || sigma < 0 || sigma >= nsigma ||
+        face < 0 || face >= nface)
+    {
+      throw std::out_of_range("RefSimplexPrecomp: Fgrad_ref_csc block index");
+    }
+    return Fgrad_ref_csc[(std::size_t)axis + (std::size_t)D *
+      ((std::size_t)sigma + (std::size_t)nsigma * face)];
+  }
+
+  const CSCBlock& Mface_ref_csc_block(int face) const
+  {
+    if (face < 0 || face >= nface)
+    {
+      throw std::out_of_range("RefSimplexPrecomp: Mface_ref_csc block index");
+    }
+    return Mface_ref_csc[(std::size_t)face];
+  }
+
   RefSimplexPrecomp(int n_in,
                     int q_pad_in,
                     int q_vol_in,
@@ -120,6 +175,7 @@ public:
     build_first_partials();
     build_zero_partials();
     build_face_operator_data();
+    build_face_sparse_data();
   }
 
 private:
@@ -571,6 +627,99 @@ private:
             Real(0),
             &Fgrad_ref[idx_F(0, 0, a, sigma_index, face_id)],
             kf);
+        }
+      }
+    }
+  }
+
+  CSCBlock make_pruned_csc_block(int rows,
+                                 int cols,
+                                 const Real* A_colmajor) const
+  {
+    if (rows < 0 || cols < 0 || !A_colmajor)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: invalid dense block for CSC conversion");
+    }
+
+    long double norm2 = 0.0L;
+    const std::size_t count = (std::size_t)rows * cols;
+    for (std::size_t k = 0; k < count; ++k)
+    {
+      const long double v = static_cast<long double>(A_colmajor[k]);
+      norm2 += v * v;
+    }
+    const Real threshold = boundary_csc_rel_prune *
+      static_cast<Real>(std::sqrt(norm2));
+
+    std::vector<Real> pruned(count, Real(0));
+    for (std::size_t k = 0; k < count; ++k)
+    {
+      const Real v = A_colmajor[k];
+      if (std::abs(v) > threshold) pruned[k] = v;
+    }
+
+    int* colptr_raw = nullptr;
+    int* rowind_raw = nullptr;
+    Real* values_raw = nullptr;
+    const std::size_t nnz = detail::compress_dense_to_csc(
+      rows,
+      cols,
+      pruned.data(),
+      rows,
+      true,
+      &colptr_raw,
+      &rowind_raw,
+      &values_raw);
+
+    std::unique_ptr<int, decltype(&std::free)> colptr_guard(
+      colptr_raw, &std::free);
+    std::unique_ptr<int, decltype(&std::free)> rowind_guard(
+      rowind_raw, &std::free);
+    std::unique_ptr<Real, decltype(&std::free)> values_guard(
+      values_raw, &std::free);
+
+    CSCBlock out;
+    out.rows = rows;
+    out.cols = cols;
+    out.colptr.assign(colptr_raw, colptr_raw + (std::size_t)cols + 1);
+    if (nnz > 0)
+    {
+      out.rowind.assign(rowind_raw, rowind_raw + nnz);
+      out.values.assign(values_raw, values_raw + nnz);
+    }
+    return out;
+  }
+
+  void build_face_sparse_data()
+  {
+    T_ref_csc.resize((std::size_t)nsigma * nface);
+    Fgrad_ref_csc.resize((std::size_t)D * nsigma * nface);
+    Mface_ref_csc.resize((std::size_t)nface);
+
+    for (int face = 0; face < nface; ++face)
+    {
+      Mface_ref_csc[(std::size_t)face] = make_pruned_csc_block(
+        kf,
+        kf,
+        Mface_ref.data() + (std::size_t)kf * kf * face);
+
+      for (int sigma = 0; sigma < nsigma; ++sigma)
+      {
+        T_ref_csc[(std::size_t)sigma + (std::size_t)nsigma * face] =
+          make_pruned_csc_block(
+            kf,
+            M,
+            T_ref.data() + idx_T(0, 0, sigma, face));
+
+        for (int axis = 0; axis < D; ++axis)
+        {
+          Fgrad_ref_csc[(std::size_t)axis + (std::size_t)D *
+            ((std::size_t)sigma + (std::size_t)nsigma * face)] =
+            make_pruned_csc_block(
+              kf,
+              M,
+              Fgrad_ref.data() + idx_F(0, 0, axis, sigma, face));
         }
       }
     }

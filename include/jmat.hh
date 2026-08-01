@@ -274,19 +274,23 @@ struct JMat
     }
   }
   
-  static void build_pruned_dense(int n, const Real* kappa, unsigned int nquad, Real* J_all)
+  /* Prune one already-assembled coordinate matrix in place.
+     Keeping this separate lets the all-coordinate and one-coordinate builders
+     share exactly the same pruning policy. */
+  static void prune_dense_coordinate(int n, Real* Ji)
   {
+    if (!Ji || n < 0) { return; }
+
     const int N = Basis<D,Real>::dim_Pi(n);
-    // call dense builder and prune
-    build(n, kappa, nquad, J_all);
     constexpr Real JMAT_PRUNE_TOL =
       Real(1000) * std::numeric_limits<Real>::epsilon();
-    // degree sizes and offsets
+
     int* r   = (int*) std::malloc((std::size_t)(n + 1) * sizeof(int));
     int* off = (int*) std::malloc((std::size_t)(n + 1) * sizeof(int));
     if (!r || !off)
     {
-      std::free(r); std::free(off);
+      std::free(r);
+      std::free(off);
       return;
     }
 
@@ -297,55 +301,280 @@ struct JMat
       off[k] = acc;
       acc += r[k];
     }
-    // assemble each coordinate matrix
-    for (int coord = 0; coord < D; ++coord)
+
+    for (int k = 0; k <= n; ++k)
     {
-      Real* Ji = J_all + (std::size_t)coord * (std::size_t)N * (std::size_t)N;
-      for (int k = 0; k <= n; ++k)
+      const int rk = r[k];
+      const int ok = off[k];
+
+      // B_{k,coord}
+      for (int a = 0; a < rk; ++a)
       {
-        const int rk  = r[k];
-        const int ok  = off[k];
-    
-        // B_{k,coord}
-        for (int a = 0; a < rk; ++a)
+        Real* rowJi = Ji + (std::size_t)(ok + a) * (std::size_t)N;
+        for (int b = 0; b < rk; ++b)
         {
-          Real* rowJi = Ji + (ok + a) * N;
-          for (int b = 0; b < rk; ++b)
+          if (std::abs(rowJi[ok + b]) <= JMAT_PRUNE_TOL)
           {
-            if (std::abs(rowJi[ ok + b ]) <= JMAT_PRUNE_TOL)
-            {
-              rowJi[ ok + b ] = Real(0);
-            }
+            rowJi[ok + b] = Real(0);
           }
         }
-        // A_{k,coord} with k+1 and symmetric counterpart
-        if (k < n)
+      }
+
+      // A_{k,coord} and its symmetric counterpart.
+      if (k < n)
+      {
+        const int rkp1 = r[k + 1];
+        const int okp1 = off[k + 1];
+
+        for (int a = 0; a < rk; ++a)
         {
-          const int rkp1 = r[k + 1];
-          const int okp1 = off[k + 1];
-    
+          for (int b = 0; b < rkp1; ++b)
+          {
+            Real& upper =
+              Ji[(std::size_t)(ok + a) * (std::size_t)N
+                 + (std::size_t)(okp1 + b)];
+            Real& lower =
+              Ji[(std::size_t)(okp1 + b) * (std::size_t)N
+                 + (std::size_t)(ok + a)];
+
+            if (std::abs(upper) <= JMAT_PRUNE_TOL) { upper = Real(0); }
+            if (std::abs(lower) <= JMAT_PRUNE_TOL) { lower = Real(0); }
+          }
+        }
+      }
+    }
+
+    std::free(r);
+    std::free(off);
+  }
+
+  /* Build one coordinate Jacobi matrix only.
+
+     The former stencil discovery called build_pruned_dense(), which builds all
+     D coordinate matrices, and then retained only one block. Since the public
+     CSC builder is itself called once per coordinate, that produced D^2 dense
+     coordinate assemblies during stencil discovery. This helper preserves the
+     same quadrature, basis ordering, accumulation order, and output layout for
+     the requested coordinate while avoiding the unused D-1 matrices. */
+  static void build_dense_coordinate(int n,
+                                     const Real* kappa,
+                                     unsigned int nquad,
+                                     int coord,
+                                     Real* Ji)
+  {
+    if (!kappa || !Ji || n < 0 || coord < 0 || coord >= D) { return; }
+
+    if constexpr (D == 1)
+    {
+      build(n, kappa, nquad, Ji);
+      return;
+    }
+    else
+    {
+      const int N = Basis<D,Real>::dim_Pi(n);
+      std::memset(
+        Ji,
+        0,
+        (std::size_t)N * (std::size_t)N * sizeof(Real)
+      );
+
+      int* r   = (int*) std::malloc((std::size_t)(n + 1) * sizeof(int));
+      int* off = (int*) std::malloc((std::size_t)(n + 1) * sizeof(int));
+      if (!r || !off)
+      {
+        std::free(r);
+        std::free(off);
+        return;
+      }
+
+      int acc = 0;
+      for (int k = 0; k <= n; ++k)
+      {
+        r[k] = Basis<D,Real>::dim_R(k);
+        off[k] = acc;
+        acc += r[k];
+      }
+
+      const int M = N;
+      int* alphaTable =
+        (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
+      int* tailDeg =
+        (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
+      Real* invH =
+        (Real*) std::malloc((std::size_t)M * sizeof(Real));
+      if (!alphaTable || !tailDeg || !invH)
+      {
+        std::free(r);
+        std::free(off);
+        std::free(alphaTable);
+        std::free(tailDeg);
+        std::free(invH);
+        return;
+      }
+
+      Basis<D,Real>::build_alpha_table(n, alphaTable);
+      Basis<D,Real>::build_tail_deg(n, alphaTable, tailDeg);
+      for (int m = 0; m < M; ++m)
+      {
+        invH[m] =
+          Basis<D,Real>::inv_h_alpha(
+            alphaTable + (std::size_t)m * (std::size_t)D,
+            kappa
+          );
+      }
+
+      if (nquad == 0) { nquad = 1; }
+      unsigned long long Qll = 1ULL;
+      for (int i = 0; i < D; ++i)
+      {
+        Qll *= (unsigned long long)nquad;
+      }
+      const int Q = (int)Qll;
+
+      Real* points =
+        (Real*) std::malloc((std::size_t)Q * (std::size_t)D * sizeof(Real));
+      Real* weights =
+        (Real*) std::malloc((std::size_t)Q * sizeof(Real));
+      if (!points || !weights)
+      {
+        std::free(r);
+        std::free(off);
+        std::free(alphaTable);
+        std::free(tailDeg);
+        std::free(invH);
+        std::free(points);
+        std::free(weights);
+        return;
+      }
+
+      QuadMapped<D,Real>::build_kappa(nquad, kappa, points, weights);
+
+      Real* V =
+        (Real*) std::malloc((std::size_t)Q * (std::size_t)M * sizeof(Real));
+      Real* u =
+        (Real*) std::malloc((std::size_t)Q * sizeof(Real));
+      if (!V || !u)
+      {
+        std::free(r);
+        std::free(off);
+        std::free(alphaTable);
+        std::free(tailDeg);
+        std::free(invH);
+        std::free(points);
+        std::free(weights);
+        std::free(V);
+        std::free(u);
+        return;
+      }
+
+      Basis<D,Real>::eval_all(
+        points,
+        D,
+        1,
+        Q,
+        kappa,
+        n,
+        alphaTable,
+        tailDeg,
+        invH,
+        V,
+        Q
+      );
+
+      for (int p = 0; p < Q; ++p)
+      {
+        u[p] = weights[p] * points[(std::size_t)p * (std::size_t)D + coord];
+      }
+
+      for (int p = 0; p < Q; ++p)
+      {
+        const Real up = u[p];
+
+        for (int k = 0; k <= n; ++k)
+        {
+          const int rk = r[k];
+          const int ok = off[k];
+
           for (int a = 0; a < rk; ++a)
           {
-            for (int b = 0; b < rkp1; ++b)
+            const Real va = V[p + (std::size_t)(ok + a) * (std::size_t)Q];
+            const Real sca = up * va;
+            Real* rowJi =
+              Ji + (std::size_t)(ok + a) * (std::size_t)N;
+
+            for (int b = 0; b < rk; ++b)
             {
-              
-              if (std::abs(Ji[(ok + a)  * N + (okp1 + b)]) <= JMAT_PRUNE_TOL)
+              const Real vb =
+                V[p + (std::size_t)(ok + b) * (std::size_t)Q];
+              rowJi[ok + b] += sca * vb;
+            }
+          }
+
+          if (k < n)
+          {
+            const int rkp1 = r[k + 1];
+            const int okp1 = off[k + 1];
+
+            for (int a = 0; a < rk; ++a)
+            {
+              const Real va =
+                V[p + (std::size_t)(ok + a) * (std::size_t)Q];
+              const Real sca = up * va;
+
+              for (int b = 0; b < rkp1; ++b)
               {
-                Ji[(ok + a)  * N + (okp1 + b)] = Real(0);  // upper
-              }
-              if (std::abs(Ji[(okp1 + b)* N + (ok + a)]) <= JMAT_PRUNE_TOL)
-              {
-                Ji[(okp1 + b)* N + (ok + a)] = Real(0); // lower
+                const Real vb =
+                  V[p + (std::size_t)(okp1 + b) * (std::size_t)Q];
+                const Real contrib = sca * vb;
+
+                Ji[(std::size_t)(ok + a) * (std::size_t)N
+                   + (std::size_t)(okp1 + b)] += contrib;
+                Ji[(std::size_t)(okp1 + b) * (std::size_t)N
+                   + (std::size_t)(ok + a)] += contrib;
               }
             }
           }
         }
       }
+
+      std::free(V);
+      std::free(u);
+      std::free(points);
+      std::free(weights);
+      std::free(alphaTable);
+      std::free(tailDeg);
+      std::free(invH);
+      std::free(r);
+      std::free(off);
     }
-    std::free(r);
-    std::free(off); 
   }
-  
+
+  static void build_pruned_dense_coordinate(int n,
+                                            const Real* kappa,
+                                            unsigned int nquad,
+                                            int coord,
+                                            Real* Ji)
+  {
+    build_dense_coordinate(n, kappa, nquad, coord, Ji);
+    prune_dense_coordinate(n, Ji);
+  }
+
+  static void build_pruned_dense(int n, const Real* kappa, unsigned int nquad, Real* J_all)
+  {
+    const int N = Basis<D,Real>::dim_Pi(n);
+
+    // Keep the efficient all-coordinate path when all D matrices are wanted:
+    // quadrature and basis values are built only once.
+    build(n, kappa, nquad, J_all);
+
+    for (int coord = 0; coord < D; ++coord)
+    {
+      Real* Ji =
+        J_all + (std::size_t)coord * (std::size_t)N * (std::size_t)N;
+      prune_dense_coordinate(n, Ji);
+    }
+  }
+
   /* Multiplication-by-coordinate sparse ops.
      Build J_all as concatenation [J_0 J_1 ... J_{D-1}] where each J_i is MxM.
   
@@ -590,26 +819,36 @@ struct JMat
   
       const int M = Basis<D,Real>::dim_Pi(n_test);
   
-      // Dense pruned matrix
-      Real* Jdense = (Real*) std::malloc((std::size_t)M * (std::size_t)M * (std::size_t)D * sizeof(Real));
-      int* alpha_table = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
+      // Build only the requested coordinate. The former implementation
+      // assembled all D coordinate matrices here and discarded D-1 of them.
+      Real* Jdense =
+        (Real*) std::malloc((std::size_t)M * (std::size_t)M * sizeof(Real));
+      int* alpha_table =
+        (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
       if (!Jdense || !alpha_table)
       {
+        std::free(Jdense);
+        std::free(alpha_table);
         std::cerr << "discover_stencil_stable: alloc failed\n";
         std::exit(1);
       }
-  
-      // Build pruned dense (your existing routine)
-      build_pruned_dense(n_test, kappa, nquad, Jdense); 
-  
-      // Build alpha_table for this n_test
+
+      build_pruned_dense_coordinate(
+        n_test,
+        kappa,
+        nquad,
+        coord,
+        Jdense
+      );
+
       Basis<D,Real>::build_alpha_table(n_test, alpha_table);
- 
-      // select coord
-      Real* Jdense_i = Jdense + (std::size_t)coord * (std::size_t)M* (std::size_t)M; 
- 
-      // Extract delta set from block 
-      extract_deltas_from_block(n_test, Jdense_i, alpha_table, &S_cur);
+
+      extract_deltas_from_block(
+        n_test,
+        Jdense,
+        alpha_table,
+        &S_cur
+      );
   
       std::free(Jdense);
       std::free(alpha_table);
@@ -1091,23 +1330,13 @@ struct JMat
         std::exit(1);
       }
   
-      // Build only this coordinate in dense.
-      // Your existing build_pruned_dense builds ALL coords into J_all; we can reuse it
-      // by allocating D*M*M and slicing, OR (preferred) call build() and prune just this coord.
-      //
-      // Simplest reuse without refactor:
-      Real* Jall = (Real*) std::malloc((std::size_t)D * (std::size_t)M * (std::size_t)M * sizeof(Real));
-      if (!Jall)
-      {
-        std::free(Jdense);
-        std::cerr << "JMat::build_pruned_csc: alloc Jall failed\n";
-        std::exit(1);
-      }
-      build_pruned_dense(n, kappa, nquad, Jall);
-      std::memcpy(Jdense,
-                  Jall + (std::size_t)coord * (std::size_t)M * (std::size_t)M,
-                  (std::size_t)M * (std::size_t)M * sizeof(Real));
-      std::free(Jall);
+      build_pruned_dense_coordinate(
+        n,
+        kappa,
+        nquad,
+        coord,
+        Jdense
+      );
   
       const std::size_t nnz =
         detail::compress_dense_to_csc(M, Jdense, colptr_out, rowind_out, x_out);

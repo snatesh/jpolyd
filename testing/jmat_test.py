@@ -29,7 +29,7 @@ def test_jacobi_operator(D=3, n=5, kappa=None, nquad_test=None):
         kappa = np.array([0.5] * (D + 1), dtype=np.float64)
 
     if nquad_test is None:
-        nquad_test = n + 1   # slightly higher for testing
+        nquad_test = n + 1   # same used to compute jmat
 
     # build structures (alpha_table, tail_deg, inv_h)
     alpha_table, tail_deg, inv_h = jbasis_build_structures(D, n, kappa)
@@ -82,12 +82,16 @@ def test_jacobi_operator(D=3, n=5, kappa=None, nquad_test=None):
         # right side: projection via J_i
         Ji_c = J_all[i] @ c       # length M
         u_proj = V @ Ji_c         # length npts
-
+        sym_err = (J_all[i] - J_all[i].T).power(2).sum()**0.5 / \
+                   J_all[i].power(2).sum()**0.5
+        print("sym(J_%d) Fro:", i+1, sym_err)
+        
         r = xu - u_proj
         # approximate L2_kappa norm via quadrature
         # ||r||^2 ≈ sum w * r^2
         r2 = (r * r) * W_test
-        err_L2 = np.sqrt(r2.sum())
+        den = (xu * xu) * W_test
+        err_L2 = np.sqrt(r2.sum()) / (np.sqrt(den.sum()) + 1e-300)
 
         residuals.append(err_L2)
 
@@ -100,18 +104,18 @@ def test_jacobi_operator(D=3, n=5, kappa=None, nquad_test=None):
 
 
 if __name__ == "__main__":
-    print("=== nontrivial kappa, D=1, n=5 ===")
-    test_jacobi_operator(D=1, n=5, kappa=np.array([0.8, 1.7]))
-    print("=== nontrivial kappa, D=2, n=5 ===")
-    test_jacobi_operator(D=2, n=5, kappa=np.array([0.8, 1.7, 2.3]))
-    print("=== unit-ish weight, D=3, n=5 ===")
-    test_jacobi_operator(D=3, n=5, kappa=np.array([0.5, 0.5, 0.5, 0.5]))
+    print("=== nontrivial kappa, D=1, n=10 ===")
+    test_jacobi_operator(D=1, n=10, kappa=np.array([0.8, 1.7]))
+    print("=== nontrivial kappa, D=2, n=10 ===")
+    test_jacobi_operator(D=2, n=10, kappa=np.array([0.8, 1.7, 2.3]))
+    print("=== unit-ish weight, D=3, n=10 ===")
+    test_jacobi_operator(D=3, n=10, kappa=np.array([0.5, 0.5, 0.5, 0.5]))
 
-    print("\n=== nontrivial kappa, D=3")#, n=5 ===")
-    test_jacobi_operator(D=3, n=8,
+    print("\n=== nontrivial kappa, D=3, n=10 ===")
+    test_jacobi_operator(D=3, n=10,
                          kappa=np.array([1.7, 3.3, 2.8, 0.9]))
-    print("\n=== higher D annd n, D=4, n=8 ===")
-    test_jacobi_operator(D=4, n=14,
+    print("\n=== higher D annd n, D=4, n=10 ===")
+    test_jacobi_operator(D=4, n=10,
                          kappa=np.array([1.7, 3.3, 2.8, 0.9, 2.2]))
 
 

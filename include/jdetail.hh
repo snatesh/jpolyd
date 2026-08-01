@@ -2,6 +2,8 @@
 #define JDETAIL_H
 
 #include <type_traits>
+#include <cstddef>
+#include <cstdlib>
 #include <lapacke.h>
 #include <cblas.h>
 #include <iostream> 
@@ -592,6 +594,104 @@ static inline std::size_t compress_dense_to_csc(int M,
   *colptr_out = colptr;
   *rowind_out = rowind;
   *x_out      = x;
+
+  return (std::size_t)nnz;
+}
+
+/* Rectangular/layout-aware dense-to-CSC overload.  Existing square row-major
+   callers continue to use the original overload above unchanged. */
+template<class Real>
+static inline std::size_t compress_dense_to_csc(int nrows,
+                                                int ncols,
+                                                const Real* A,
+                                                int ld_A,
+                                                bool column_major,
+                                                int** colptr_out,
+                                                int** rowind_out,
+                                                Real** x_out)
+{
+  if (nrows < 0 || ncols < 0 || !A ||
+      ld_A < (column_major ? nrows : ncols) ||
+      !colptr_out || !rowind_out || !x_out)
+  {
+    std::cerr << "compress_dense_to_csc: invalid arguments\n";
+    std::exit(1);
+  }
+
+  int* colnnz = (int*) std::malloc((std::size_t)ncols * sizeof(int));
+  if (!colnnz && ncols)
+  {
+    std::cerr << "compress_dense_to_csc: alloc colnnz failed\n";
+    std::exit(1);
+  }
+  for (int j = 0; j < ncols; ++j) colnnz[j] = 0;
+
+  auto entry = [=](int i, int j) -> Real
+  {
+    return column_major
+      ? A[(std::size_t)i + (std::size_t)ld_A * j]
+      : A[(std::size_t)i * ld_A + (std::size_t)j];
+  };
+
+  for (int j = 0; j < ncols; ++j)
+  {
+    int cnt = 0;
+    for (int i = 0; i < nrows; ++i)
+    {
+      if (entry(i, j) != Real(0)) ++cnt;
+    }
+    colnnz[j] = cnt;
+  }
+
+  int* colptr = (int*) std::malloc((std::size_t)(ncols + 1) * sizeof(int));
+  if (!colptr)
+  {
+    std::cerr << "compress_dense_to_csc: alloc colptr failed\n";
+    std::exit(1);
+  }
+
+  colptr[0] = 0;
+  for (int j = 0; j < ncols; ++j)
+  {
+    colptr[j + 1] = colptr[j] + colnnz[j];
+  }
+
+  const int nnz = colptr[ncols];
+  int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
+  Real* x = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
+  if ((!rowind && nnz) || (!x && nnz))
+  {
+    std::cerr << "compress_dense_to_csc: alloc nnz arrays failed\n";
+    std::exit(1);
+  }
+
+  int* wpos = (int*) std::malloc((std::size_t)ncols * sizeof(int));
+  if (!wpos && ncols)
+  {
+    std::cerr << "compress_dense_to_csc: alloc wpos failed\n";
+    std::exit(1);
+  }
+  for (int j = 0; j < ncols; ++j) wpos[j] = colptr[j];
+
+  for (int j = 0; j < ncols; ++j)
+  {
+    for (int i = 0; i < nrows; ++i)
+    {
+      const Real v = entry(i, j);
+      if (v == Real(0)) continue;
+
+      const int pos = wpos[j]++;
+      rowind[pos] = i;
+      x[pos] = v;
+    }
+  }
+
+  std::free(colnnz);
+  std::free(wpos);
+
+  *colptr_out = colptr;
+  *rowind_out = rowind;
+  *x_out = x;
 
   return (std::size_t)nnz;
 }
