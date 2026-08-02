@@ -23,7 +23,7 @@ set(BLA_VENDOR OpenBLAS)
 find_package(BLAS   REQUIRED)
 find_package(LAPACK REQUIRED)
 find_library(LAPACKE_LIB lapacke REQUIRED)
-find_package(OpenMP REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX Fortran)
 find_package(OpenCV REQUIRED)
 message(STATUS "Found LAPACKE: ${LAPACKE_LIB}")
 
@@ -174,6 +174,7 @@ target_link_libraries(test_jleaf_dag_elliptic_compat PRIVATE
   blas
   lapack
 )
+
 
 
 target_include_directories(assemble_cn_step PUBLIC
@@ -346,6 +347,7 @@ if(JPOLYD_BUILD_CAPI)
     PRIVATE 
       jpolyd 
       OpenMP::OpenMP_CXX
+      OpenMP::OpenMP_Fortran
       /usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
       ${LAPACKE_LIB}
       nlopt
@@ -362,6 +364,26 @@ if(JPOLYD_BUILD_CAPI)
     CXX_STANDARD_REQUIRED ON
     POSITION_INDEPENDENT_CODE ON
   )
+
+  add_executable(test_lsmr_shim_threadsafe
+    src/test_lsmr_shim_threadsafe.cpp
+  )
+
+  target_include_directories(test_lsmr_shim_threadsafe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+
+  target_link_libraries(test_lsmr_shim_threadsafe
+    PRIVATE
+      jpolyd_c
+      OpenMP::OpenMP_CXX
+  )
+
+  set_target_properties(test_lsmr_shim_threadsafe PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+  )
+
 endif()
 
 

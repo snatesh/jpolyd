@@ -12,14 +12,28 @@ module lsmr_c_shim
   public :: lsmr_c_set_options
   public :: lsmr_c_step
 
-  ! Singleton reverse-communication state.
-  ! This is intentionally simple and matches the initial ctypes/shared-library
-  ! validation path. It is not thread-safe and supports one active solve per
-  ! shared-library instance. The C++ wrapper below performs cleanup at the end
-  ! of each solve before starting another one.
+  ! One reverse-communication state per calling thread.
+  !
+  ! The public C ABI is unchanged: every solve still calls
+  ! lsmr_c_set_options followed by repeated lsmr_c_step calls.  OpenMP
+  ! THREADPRIVATE gives each thread independent keep/options/inform objects,
+  ! including independent allocatable components owned by keep.
+  !
+  ! Requirements:
+  !   * Compile this translation unit with OpenMP enabled.
+  !   * Link the final shared library/executable with the OpenMP runtime.
+  !   * All calls belonging to one solve, including action=10 cleanup, must
+  !     execute on the same thread.
+  !   * There may be one active solve per thread.  The shim is thread-safe but
+  !     is not recursively reentrant within one thread.
+  !
+  ! nout remains disabled below, avoiding concurrent writes through a shared
+  ! Fortran output unit.
   type(lsmr_keep_type),    save :: keep
   type(lsmr_options_type), save :: options
   type(lsmr_inform_type),  save :: inform
+
+  !$omp threadprivate(keep, options, inform)
 
 contains
 
