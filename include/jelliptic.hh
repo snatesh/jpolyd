@@ -58,12 +58,20 @@ template<int D, class Real>
 class EllipticPlan;
 
 template<int D, class Real>
-class EllipticWorkspace;
+class EllipticActionWorkspace;
+
+template<int D, class Real>
+class EllipticDenseWorkspace;
+
+// Backward compatibility for existing dense assembly callers. New
+// matrix-free code should name EllipticActionWorkspace explicitly.
+template<int D, class Real>
+using EllipticWorkspace = EllipticDenseWorkspace<D,Real>;
 
 template<int D, class Real>
 void jdsimplex_assemble_elliptic_L_int(
   const EllipticPlan<D,Real>& plan,
-  EllipticWorkspace<D,Real>& work,
+  EllipticDenseWorkspace<D,Real>& work,
   const Real* BinvT,
   Real detBabs,
   const Real* Lij_ref,
@@ -78,8 +86,40 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   const DSimplexGeom<D,Real>& geom,
   const EllipticPlan<D,Real>& plan,
   const EllipticElementCoefficientsView<D,Real>& coeffs,
-  EllipticWorkspace<D,Real>& work,
+  EllipticDenseWorkspace<D,Real>& work,
   Real* L_int_out);
+
+/*
+  Matrix-free affine-element actions.
+
+  Forward:
+    y = L_int x,  x has length M and y has length m2.
+
+  Transpose:
+    x = L_int^T y, y has length m2 and x has length M.
+
+  Outputs are overwritten. The caller owns one EllipticActionWorkspace per
+  concurrent application. This type contains no dense assembly matrices.
+*/
+template<int D, class Real>
+void jdsimplex_apply_elliptic(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticActionWorkspace<D,Real>& work,
+  const Real* x,
+  Real* y);
+
+template<int D, class Real>
+void jdsimplex_apply_elliptic_transpose(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticActionWorkspace<D,Real>& work,
+  const Real* y,
+  Real* x);
 
 namespace elliptic_detail {
 
@@ -307,7 +347,8 @@ private:
   std::vector<std::unique_ptr<elliptic_detail::OwnedClenshawPlan<D,Real>>> plans_;
   std::array<int, 3> plan_id_{{-1, -1, -1}};
 
-  friend class EllipticWorkspace<D,Real>;
+  friend class EllipticActionWorkspace<D,Real>;
+  friend class EllipticDenseWorkspace<D,Real>;
 
   int register_order_plan(int order,
                           int p,
@@ -355,29 +396,127 @@ private:
 };
 
 template<int D, class Real>
-class EllipticWorkspace
+class EllipticActionWorkspace
 {
 public:
-  explicit EllipticWorkspace(const EllipticPlan<D,Real>& plan)
+  static constexpr bool has_dense_assembly_storage = false;
+
+  explicit EllipticActionWorkspace(
+    const EllipticPlan<D,Real>& plan)
     : owner_(&plan)
   {
-    mult_workspaces_.resize((std::size_t)plan.num_plans());
+    mult_workspaces_.resize(
+      (std::size_t)plan.num_plans());
 
     int max_MK = 0;
-    int max_MN = 0;
     for (int id = 0; id < plan.num_plans(); ++id)
     {
       const auto& P = plan.entry(id);
       max_MK = std::max(max_MK, P.MK);
-      max_MN = std::max(max_MN, Basis<D,Real>::dim_Pi(P.K - P.p));
       if (!P.scalar_only)
-        mult_workspaces_[(std::size_t)id].init(P.p, P.MK);
+      {
+        mult_workspaces_[(std::size_t)id].init(
+          P.p,
+          P.MK);
+      }
     }
 
     cK_.resize((std::size_t)max_MK);
     yK_.resize((std::size_t)max_MK);
-    Mq_.resize((std::size_t)plan.m2 * (std::size_t)max_MN);
-    Dphys_.resize((std::size_t)plan.M * (std::size_t)plan.M);
+
+    const std::size_t dag_partial_value_count =
+      (std::size_t)plan.M
+      + (std::size_t)D * (std::size_t)plan.m1
+      + (std::size_t)(D * (D + 1) / 2)
+        * (std::size_t)plan.m2;
+
+    dag_partial_column_.resize(
+      dag_partial_value_count);
+    dag_partial_adjoint_.resize(
+      dag_partial_value_count);
+
+    const int max_partial_size =
+      std::max(
+        plan.M,
+        std::max(plan.m1, plan.m2));
+    physical_derivative_.resize(
+      (std::size_t)max_partial_size);
+    scaled_residual_.resize(
+      (std::size_t)plan.m2);
+  }
+
+  bool compatible(
+    const EllipticPlan<D,Real>& plan) const
+  {
+    return owner_ == &plan;
+  }
+
+protected:
+  const EllipticPlan<D,Real>* owner_ = nullptr;
+
+  // Clenshaw action state shared by forward, transpose, and dense diagnostic
+  // assembly. These vectors are all O(dim Pi_K), not O(M^2).
+  std::vector<MultByQClenshawWorkspace<D,Real>>
+    mult_workspaces_;
+  std::vector<Real> cK_;
+  std::vector<Real> yK_;
+
+  // Matrix-free derivative/promotion DAG state.
+  typename RefSimplexPrecomp<D,Real>::PartialWorkspace
+    dag_partial_work_;
+  std::vector<Real> dag_partial_column_;
+  std::vector<Real> dag_partial_adjoint_;
+  std::vector<Real> physical_derivative_;
+  std::vector<Real> scaled_residual_;
+
+  friend void jdsimplex_apply_elliptic<D,Real>(
+    const RefSimplexPrecomp<D,Real>&,
+    const DSimplexGeom<D,Real>&,
+    const EllipticPlan<D,Real>&,
+    const EllipticElementCoefficientsView<D,Real>&,
+    EllipticActionWorkspace<D,Real>&,
+    const Real*,
+    Real*);
+
+  friend void jdsimplex_apply_elliptic_transpose<D,Real>(
+    const RefSimplexPrecomp<D,Real>&,
+    const DSimplexGeom<D,Real>&,
+    const EllipticPlan<D,Real>&,
+    const EllipticElementCoefficientsView<D,Real>&,
+    EllipticActionWorkspace<D,Real>&,
+    const Real*,
+    Real*);
+
+  friend class EllipticDenseWorkspace<D,Real>;
+};
+
+
+template<int D, class Real>
+class EllipticDenseWorkspace
+  : public EllipticActionWorkspace<D,Real>
+{
+public:
+  static constexpr bool has_dense_assembly_storage = true;
+
+  explicit EllipticDenseWorkspace(
+    const EllipticPlan<D,Real>& plan)
+    : EllipticActionWorkspace<D,Real>(plan)
+  {
+    int max_MN = 0;
+    for (int id = 0; id < plan.num_plans(); ++id)
+    {
+      const auto& P = plan.entry(id);
+      max_MN = std::max(
+        max_MN,
+        Basis<D,Real>::dim_Pi(P.K - P.p));
+    }
+
+    Mq_.resize(
+      (std::size_t)plan.m2
+      * (std::size_t)max_MN);
+    Dphys_.resize(
+      (std::size_t)plan.M
+      * (std::size_t)plan.M);
 
     const std::size_t dag_partial_value_count =
       (std::size_t)plan.M
@@ -386,36 +525,28 @@ public:
         * (std::size_t)plan.m2;
 
     dag_source_.resize((std::size_t)plan.M);
-    dag_partial_column_.resize(dag_partial_value_count);
     dag_partial_matrix_.resize(
-      dag_partial_value_count * (std::size_t)plan.M);
-  }
-
-  bool compatible(const EllipticPlan<D,Real>& plan) const
-  {
-    return owner_ == &plan;
+      dag_partial_value_count
+      * (std::size_t)plan.M);
   }
 
 private:
-  const EllipticPlan<D,Real>* owner_ = nullptr;
-  std::vector<MultByQClenshawWorkspace<D,Real>> mult_workspaces_;
-  std::vector<Real> cK_;
-  std::vector<Real> yK_;
+  // Dense-only coefficient multiplication and physical derivative matrices.
   std::vector<Real> Mq_;
   std::vector<Real> Dphys_;
 
-  // Compact DAG materialization workspace. Each partial block is stored
-  // column-major with its natural row count rather than padded to M rows.
-  typename RefSimplexPrecomp<D,Real>::PartialWorkspace dag_partial_work_;
+  // Dense-only identity-column materialization of all unique DAG partials.
   std::vector<Real> dag_source_;
-  std::vector<Real> dag_partial_column_;
   std::vector<Real> dag_partial_matrix_;
 
   friend void jdsimplex_assemble_elliptic_L_int<D,Real>(
     const EllipticPlan<D,Real>&,
-    EllipticWorkspace<D,Real>&,
-    const Real*, Real,
-    const Real*, const Real*, const Real*,
+    EllipticDenseWorkspace<D,Real>&,
+    const Real*,
+    Real,
+    const Real*,
+    const Real*,
+    const Real*,
     const EllipticElementCoefficientsView<D,Real>&,
     Real*);
 
@@ -424,7 +555,7 @@ private:
     const DSimplexGeom<D,Real>&,
     const EllipticPlan<D,Real>&,
     const EllipticElementCoefficientsView<D,Real>&,
-    EllipticWorkspace<D,Real>&,
+    EllipticDenseWorkspace<D,Real>&,
     Real*);
 };
 
@@ -448,7 +579,7 @@ private:
 template<int D, class Real>
 void jdsimplex_assemble_elliptic_L_int(
   const EllipticPlan<D,Real>& plan,
-  EllipticWorkspace<D,Real>& work,
+  EllipticDenseWorkspace<D,Real>& work,
   const Real* BinvT,
   Real detBabs,
   const Real* Lij_ref,
@@ -667,7 +798,7 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   const DSimplexGeom<D,Real>& geom,
   const EllipticPlan<D,Real>& plan,
   const EllipticElementCoefficientsView<D,Real>& coeffs,
-  EllipticWorkspace<D,Real>& work,
+  EllipticDenseWorkspace<D,Real>& work,
   Real* L_int_out)
 {
   using Precomp = RefSimplexPrecomp<D,Real>;
@@ -1029,6 +1160,509 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   }
 }
 
+
+/*
+  Matrix-free forward action.
+
+  The derivative/promotion DAG produces all unique reference partial vectors.
+  Geometry contractions are performed on vectors, and coefficient
+  multiplication is applied directly through the Clenshaw plans. No partial
+  matrix, L_int matrix, or identity-column materialization is formed.
+*/
+template<int D, class Real>
+void jdsimplex_apply_elliptic(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticActionWorkspace<D,Real>& work,
+  const Real* x,
+  Real* y)
+{
+  using Precomp = RefSimplexPrecomp<D,Real>;
+  using PartialPlan = typename Precomp::PartialPlan;
+
+  if (!x || !y)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: null vector");
+  if (!geom.valid)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: invalid geometry");
+  if (!work.compatible(plan))
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: incompatible workspace");
+  if (pre.n != plan.n || pre.M != plan.M ||
+      pre.m_int != plan.m2)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: precompute/plan mismatch");
+  if (pre.partials.empty() || pre.partial_value_count == 0)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: missing partial DAG");
+  if (!(geom.detBabs > Real(0)) ||
+      !std::isfinite((double)geom.detBabs))
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: invalid detBabs");
+  if (plan.degrees.p2 >= 0 && !coeffs.A)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: null A coefficients");
+  if (plan.degrees.p1 >= 0 && !coeffs.b)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: null b coefficients");
+  if (plan.degrees.p0 >= 0 && !coeffs.c)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic: null c coefficients");
+
+  const int M = plan.M;
+  const int m2 = plan.m2;
+  const int m1 = plan.m1;
+
+  if (work.dag_partial_column_.size() < pre.partial_value_count ||
+      work.physical_derivative_.size() <
+        (std::size_t)std::max(M, std::max(m1, m2)))
+    throw std::runtime_error(
+      "jdsimplex_apply_elliptic: undersized workspace");
+
+  std::fill(y, y + m2, Real(0));
+
+  pre.apply_partials(
+    x,
+    work.dag_partial_column_.data(),
+    work.dag_partial_work_);
+
+  std::array<int, D> alpha_zero{};
+  const PartialPlan& zero_plan =
+    pre.partial_plan(alpha_zero);
+
+  std::array<const PartialPlan*, D> first_plan{};
+  for (int axis = 0; axis < D; ++axis)
+  {
+    std::array<int, D> alpha{};
+    alpha[(std::size_t)axis] = 1;
+    first_plan[(std::size_t)axis] =
+      &pre.partial_plan(alpha);
+  }
+
+  std::array<const PartialPlan*, D * D> second_plan{};
+  for (int first_axis = 0; first_axis < D; ++first_axis)
+  {
+    for (int second_axis = 0;
+         second_axis < D;
+         ++second_axis)
+    {
+      std::array<int, D> alpha{};
+      ++alpha[(std::size_t)first_axis];
+      ++alpha[(std::size_t)second_axis];
+      second_plan[
+        (std::size_t)first_axis
+        + (std::size_t)D * (std::size_t)second_axis] =
+        &pre.partial_plan(alpha);
+    }
+  }
+
+  auto apply_restricted_multiplier =
+    [&](int order,
+        const Real* q,
+        const Real* input,
+        int input_size)
+  {
+    const int id = plan.plan_id_for_order(order);
+    if (id < 0)
+      throw std::logic_error(
+        "jdsimplex_apply_elliptic: disabled order");
+
+    const auto& P = plan.entry(id);
+
+    if (P.scalar_only)
+    {
+      const Real scalar = q[0] * plan.phi0_res;
+      const int count = std::min(m2, input_size);
+      for (int row = 0; row < count; ++row)
+        y[row] += scalar * input[row];
+      return;
+    }
+
+    Real* cK = work.cK_.data();
+    Real* yK = work.yK_.data();
+    std::fill(cK, cK + P.MK, Real(0));
+    std::copy(input, input + input_size, cK);
+
+    auto& mult_work =
+      work.mult_workspaces_[(std::size_t)id];
+    P.mult.apply(q, cK, yK, mult_work);
+
+    for (int row = 0; row < m2; ++row)
+      y[row] += yK[row];
+  };
+
+  // Principal part.
+  if (plan.degrees.p2 >= 0)
+  {
+    const int Mp2 = plan.coefficient_size(2);
+
+    for (int r = 0; r < D; ++r)
+    {
+      for (int s = 0; s < D; ++s)
+      {
+        Real* Hrs = work.physical_derivative_.data();
+        std::fill(Hrs, Hrs + m2, Real(0));
+
+        for (int i = 0; i < D; ++i)
+        {
+          const Real Cir =
+            geom.BinvT[
+              (std::size_t)r
+              + (std::size_t)D * (std::size_t)i];
+
+          for (int j = 0; j < D; ++j)
+          {
+            const Real Cjs =
+              geom.BinvT[
+                (std::size_t)s
+                + (std::size_t)D * (std::size_t)j];
+
+            const PartialPlan& partial =
+              *second_plan[
+                (std::size_t)i
+                + (std::size_t)D * (std::size_t)j];
+            const Real* Dij =
+              work.dag_partial_column_.data()
+              + partial.value_offset;
+            const Real scale = Cir * Cjs;
+
+            for (int row = 0; row < m2; ++row)
+              Hrs[row] += scale * Dij[row];
+          }
+        }
+
+        const Real* q =
+          coeffs.A
+          + (
+              (std::size_t)r * (std::size_t)D
+              + (std::size_t)s
+            ) * (std::size_t)Mp2;
+
+        apply_restricted_multiplier(2, q, Hrs, m2);
+      }
+    }
+  }
+
+  // First-order part.
+  if (plan.degrees.p1 >= 0)
+  {
+    const int Mp1 = plan.coefficient_size(1);
+
+    for (int r = 0; r < D; ++r)
+    {
+      Real* Gr = work.physical_derivative_.data();
+      std::fill(Gr, Gr + m1, Real(0));
+
+      for (int i = 0; i < D; ++i)
+      {
+        const Real Cir =
+          geom.BinvT[
+            (std::size_t)r
+            + (std::size_t)D * (std::size_t)i];
+
+        const PartialPlan& partial =
+          *first_plan[(std::size_t)i];
+        const Real* Di =
+          work.dag_partial_column_.data()
+          + partial.value_offset;
+
+        for (int row = 0; row < m1; ++row)
+          Gr[row] += Cir * Di[row];
+      }
+
+      const Real* q =
+        coeffs.b
+        + (std::size_t)r * (std::size_t)Mp1;
+
+      apply_restricted_multiplier(1, q, Gr, m1);
+    }
+  }
+
+  // Zero-order part.
+  if (plan.degrees.p0 >= 0)
+  {
+    const Real* D0 =
+      work.dag_partial_column_.data()
+      + zero_plan.value_offset;
+    apply_restricted_multiplier(0, coeffs.c, D0, M);
+  }
+
+  for (int row = 0; row < m2; ++row)
+    y[row] *= geom.detBabs;
+}
+
+
+/*
+  Exact transpose of jdsimplex_apply_elliptic.
+
+  Multiplication by a real modal coefficient field is self-adjoint in the
+  common orthonormal residual basis. Therefore the transpose of the
+  rectangular restricted multiplier is obtained by embedding the residual
+  adjoint into the full Clenshaw space, applying the same multiplier, and
+  restricting to the derivative input space.
+*/
+template<int D, class Real>
+void jdsimplex_apply_elliptic_transpose(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticActionWorkspace<D,Real>& work,
+  const Real* y,
+  Real* x)
+{
+  using Precomp = RefSimplexPrecomp<D,Real>;
+  using PartialPlan = typename Precomp::PartialPlan;
+
+  if (!y || !x)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: null vector");
+  if (!geom.valid)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: invalid geometry");
+  if (!work.compatible(plan))
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: incompatible workspace");
+  if (pre.n != plan.n || pre.M != plan.M ||
+      pre.m_int != plan.m2)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: precompute/plan mismatch");
+  if (pre.partials.empty() || pre.partial_value_count == 0)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: missing partial DAG");
+  if (!(geom.detBabs > Real(0)) ||
+      !std::isfinite((double)geom.detBabs))
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: invalid detBabs");
+  if (plan.degrees.p2 >= 0 && !coeffs.A)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: null A coefficients");
+  if (plan.degrees.p1 >= 0 && !coeffs.b)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: null b coefficients");
+  if (plan.degrees.p0 >= 0 && !coeffs.c)
+    throw std::invalid_argument(
+      "jdsimplex_apply_elliptic_transpose: null c coefficients");
+
+  const int M = plan.M;
+  const int m2 = plan.m2;
+  const int m1 = plan.m1;
+
+  if (work.dag_partial_adjoint_.size() <
+        pre.partial_value_count ||
+      work.physical_derivative_.size() <
+        (std::size_t)std::max(M, std::max(m1, m2)) ||
+      work.scaled_residual_.size() < (std::size_t)m2)
+    throw std::runtime_error(
+      "jdsimplex_apply_elliptic_transpose: undersized workspace");
+
+  std::fill(
+    work.dag_partial_adjoint_.begin(),
+    work.dag_partial_adjoint_.begin()
+      + pre.partial_value_count,
+    Real(0));
+
+  for (int row = 0; row < m2; ++row)
+    work.scaled_residual_[(std::size_t)row] =
+      geom.detBabs * y[row];
+
+  std::array<int, D> alpha_zero{};
+  const PartialPlan& zero_plan =
+    pre.partial_plan(alpha_zero);
+
+  std::array<const PartialPlan*, D> first_plan{};
+  for (int axis = 0; axis < D; ++axis)
+  {
+    std::array<int, D> alpha{};
+    alpha[(std::size_t)axis] = 1;
+    first_plan[(std::size_t)axis] =
+      &pre.partial_plan(alpha);
+  }
+
+  std::array<const PartialPlan*, D * D> second_plan{};
+  for (int first_axis = 0; first_axis < D; ++first_axis)
+  {
+    for (int second_axis = 0;
+         second_axis < D;
+         ++second_axis)
+    {
+      std::array<int, D> alpha{};
+      ++alpha[(std::size_t)first_axis];
+      ++alpha[(std::size_t)second_axis];
+      second_plan[
+        (std::size_t)first_axis
+        + (std::size_t)D * (std::size_t)second_axis] =
+        &pre.partial_plan(alpha);
+    }
+  }
+
+  auto apply_restricted_multiplier_transpose =
+    [&](int order,
+        const Real* q,
+        Real* output,
+        int output_size)
+  {
+    const int id = plan.plan_id_for_order(order);
+    if (id < 0)
+      throw std::logic_error(
+        "jdsimplex_apply_elliptic_transpose: disabled order");
+
+    const auto& P = plan.entry(id);
+
+    if (P.scalar_only)
+    {
+      const Real scalar = q[0] * plan.phi0_res;
+      std::fill(output, output + output_size, Real(0));
+      const int count = std::min(m2, output_size);
+      for (int row = 0; row < count; ++row)
+      {
+        output[row] =
+          scalar *
+          work.scaled_residual_[(std::size_t)row];
+      }
+      return;
+    }
+
+    Real* cK = work.cK_.data();
+    Real* yK = work.yK_.data();
+    std::fill(cK, cK + P.MK, Real(0));
+    std::copy(
+      work.scaled_residual_.begin(),
+      work.scaled_residual_.begin() + m2,
+      cK);
+
+    auto& mult_work =
+      work.mult_workspaces_[(std::size_t)id];
+    P.mult.apply(q, cK, yK, mult_work);
+
+    std::copy(yK, yK + output_size, output);
+  };
+
+  // Principal-part transpose.
+  if (plan.degrees.p2 >= 0)
+  {
+    const int Mp2 = plan.coefficient_size(2);
+
+    for (int r = 0; r < D; ++r)
+    {
+      for (int s = 0; s < D; ++s)
+      {
+        Real* Hrs_adjoint =
+          work.physical_derivative_.data();
+
+        const Real* q =
+          coeffs.A
+          + (
+              (std::size_t)r * (std::size_t)D
+              + (std::size_t)s
+            ) * (std::size_t)Mp2;
+
+        apply_restricted_multiplier_transpose(
+          2,
+          q,
+          Hrs_adjoint,
+          m2);
+
+        for (int i = 0; i < D; ++i)
+        {
+          const Real Cir =
+            geom.BinvT[
+              (std::size_t)r
+              + (std::size_t)D * (std::size_t)i];
+
+          for (int j = 0; j < D; ++j)
+          {
+            const Real Cjs =
+              geom.BinvT[
+                (std::size_t)s
+                + (std::size_t)D * (std::size_t)j];
+
+            const PartialPlan& partial =
+              *second_plan[
+                (std::size_t)i
+                + (std::size_t)D * (std::size_t)j];
+            Real* Dij_adjoint =
+              work.dag_partial_adjoint_.data()
+              + partial.value_offset;
+            const Real scale = Cir * Cjs;
+
+            for (int row = 0; row < m2; ++row)
+              Dij_adjoint[row] +=
+                scale * Hrs_adjoint[row];
+          }
+        }
+      }
+    }
+  }
+
+  // First-order transpose.
+  if (plan.degrees.p1 >= 0)
+  {
+    const int Mp1 = plan.coefficient_size(1);
+
+    for (int r = 0; r < D; ++r)
+    {
+      Real* Gr_adjoint =
+        work.physical_derivative_.data();
+
+      const Real* q =
+        coeffs.b
+        + (std::size_t)r * (std::size_t)Mp1;
+
+      apply_restricted_multiplier_transpose(
+        1,
+        q,
+        Gr_adjoint,
+        m1);
+
+      for (int i = 0; i < D; ++i)
+      {
+        const Real Cir =
+          geom.BinvT[
+            (std::size_t)r
+            + (std::size_t)D * (std::size_t)i];
+
+        const PartialPlan& partial =
+          *first_plan[(std::size_t)i];
+        Real* Di_adjoint =
+          work.dag_partial_adjoint_.data()
+          + partial.value_offset;
+
+        for (int row = 0; row < m1; ++row)
+          Di_adjoint[row] += Cir * Gr_adjoint[row];
+      }
+    }
+  }
+
+  // Zero-order transpose.
+  if (plan.degrees.p0 >= 0)
+  {
+    Real* D0_adjoint =
+      work.physical_derivative_.data();
+
+    apply_restricted_multiplier_transpose(
+      0,
+      coeffs.c,
+      D0_adjoint,
+      M);
+
+    Real* zero_adjoint =
+      work.dag_partial_adjoint_.data()
+      + zero_plan.value_offset;
+    for (int row = 0; row < M; ++row)
+      zero_adjoint[row] += D0_adjoint[row];
+  }
+
+  pre.apply_partials_transpose(
+    work.dag_partial_adjoint_.data(),
+    x,
+    work.dag_partial_work_);
+}
+
+
 /* Convenience overload for direct C++ use from Leaf. */
 template<int D, class Real>
 void jdsimplex_assemble_elliptic_L_int(
@@ -1036,7 +1670,7 @@ void jdsimplex_assemble_elliptic_L_int(
   const DSimplexGeom<D,Real>& geom,
   const EllipticPlan<D,Real>& plan,
   const EllipticElementCoefficientsView<D,Real>& coeffs,
-  EllipticWorkspace<D,Real>& work,
+  EllipticDenseWorkspace<D,Real>& work,
   Real* L_int_out)
 {
   if (!geom.valid)

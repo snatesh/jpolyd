@@ -175,7 +175,46 @@ target_link_libraries(test_jleaf_dag_elliptic_compat PRIVATE
   lapack
 )
 
+add_executable(test_jelliptic_matrix_free_actions
+  src/test_jelliptic_matrix_free_actions.cpp)
 
+target_include_directories(test_jelliptic_matrix_free_actions PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_jelliptic_matrix_free_actions PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  blas
+  lapack
+)
+
+add_executable(test_jleaf_operator_modes
+  src/test_jleaf_operator_modes.cpp
+)
+
+target_include_directories(
+  test_jleaf_operator_modes
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+  test_jleaf_operator_modes
+  PRIVATE
+    jpolyd
+    jpolyd_c
+    OpenMP::OpenMP_CXX
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
+    ${LAPACKE_LIB}
+    openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+    blas
+    lapack
+)
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
