@@ -48,11 +48,93 @@ public:
   {
     int rows = 0;
     int cols = 0;
+    int degree = 0;
     std::string signature;
     std::vector<int> colptr;
     std::vector<int> rowind;
 
     std::size_t nnz() const { return rowind.size(); }
+  };
+
+  // Integer Jacobi-family shift relative to the source kappa.
+  struct ShiftState
+  {
+    std::array<int, D + 1> delta{};
+
+    bool operator==(const ShiftState& other) const
+    {
+      return delta == other.delta;
+    }
+  };
+
+  // One numerical sparse factor. The CSC structure is owned by either
+  // d_structures or k_structures; only the values vary with the shifted
+  // source kappa.
+  struct SparseFactor
+  {
+    int structure_index = -1;
+    int degree = 0;
+    int coordinate = 0;
+    ShiftState source_shift{};
+    std::vector<Real> values;
+  };
+
+  struct FactorLane
+  {
+    int source_partial = -1;
+    int target_partial = -1;
+    int factor_index = -1;
+  };
+
+  // Lanes in a group share one finite-degree CSC structure. Values are packed
+  // entry-major: values[pos * lanes.size() + lane].
+  struct BatchedFactorGroup
+  {
+    int stage = 0;
+    int structure_index = -1;
+    std::vector<FactorLane> lanes;
+    std::vector<Real> values;
+  };
+
+  struct PartialPlan
+  {
+    std::array<int, D> alpha{};
+    int order = 0;
+    int degree = 0;
+    int size = 0;
+    int parent_partial = -1;
+    int derivative_factor = -1;
+    std::vector<int> promotion_factors;
+    std::size_t value_offset = 0;
+  };
+
+  // Caller-owned storage keeps the immutable precompute thread-safe.
+  struct PartialWorkspace
+  {
+    std::vector<Real> derivative_values;
+    std::vector<Real> promotion_a;
+    std::vector<Real> promotion_b;
+
+    void resize(std::size_t count)
+    {
+      derivative_values.resize(count);
+      promotion_a.resize(count);
+      promotion_b.resize(count);
+    }
+  };
+
+  struct DAGCompatibilityReport
+  {
+    Real L0_relative = Real(0);
+    Real Li_relative = Real(0);
+    Real Lij_relative = Real(0);
+
+    Real maximum() const
+    {
+      return std::max(
+        L0_relative,
+        std::max(Li_relative, Lij_relative));
+    }
   };
 
   int n = 0;
@@ -76,11 +158,23 @@ public:
   // load them without running stencil stabilization.
   std::string stencil_folder = "stencils";
 
-  // Interned finite-degree structures and key-to-structure maps.
+  // Interned finite-degree structures. The legacy axis/parameter arrays point
+  // to the degree-n structures. The DAG also uses degree n-1 and n-2
+  // structures through private (degree,key) maps.
   std::vector<SharedOperatorStructure> d_structures;
   std::vector<SharedOperatorStructure> k_structures;
   std::array<int, D> d_axis_structure{};
   std::array<int, D + 1> k_parameter_structure{};
+
+  // Order-two derivative/promotion DAG. Existing dense Lij_ref/Li_ref/L0_ref
+  // remain the downstream HPS interface during compatibility validation.
+  std::vector<SparseFactor> dag_d_factors;
+  std::vector<SparseFactor> dag_k_factors;
+  std::vector<PartialPlan> partials;
+  std::vector<BatchedFactorGroup> derivative_batches;
+  std::vector<BatchedFactorGroup> promotion_forward_batches;
+  std::vector<BatchedFactorGroup> promotion_transpose_batches;
+  std::size_t partial_value_count = 0;
 
   // Volume quadrature/basis in source-kappa convention.
   std::vector<Real> X_vol;     // row-major nq_vol x D (for basis evaluator)
@@ -160,6 +254,337 @@ public:
     return Mface_ref_csc[(std::size_t)face];
   }
 
+  int partial_index(const std::array<int, D>& alpha) const
+  {
+    for (std::size_t index = 0; index < partials.size(); ++index)
+    {
+      if (partials[index].alpha == alpha)
+      {
+        return static_cast<int>(index);
+      }
+    }
+    return -1;
+  }
+
+  const PartialPlan& partial_plan(
+    const std::array<int, D>& alpha) const
+  {
+    const int index = partial_index(alpha);
+    if (index < 0)
+    {
+      throw std::out_of_range(
+        "RefSimplexPrecomp: partial multi-index");
+    }
+    return partials[static_cast<std::size_t>(index)];
+  }
+
+  // Apply the stacked order-zero, order-one, and order-two reference partial
+  // map. Every channel has already been promoted into kappa_res = kappa + 2.
+  // plan.value_offset and plan.size locate each channel in partial_values.
+  void apply_partials(
+    const Real* x,
+    Real* partial_values,
+    PartialWorkspace& workspace) const
+  {
+    if (!x || !partial_values)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: null partial apply data");
+    }
+    if (partials.empty())
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: partial DAG is empty");
+    }
+
+    workspace.resize(partial_value_count);
+    std::fill(
+      workspace.derivative_values.begin(),
+      workspace.derivative_values.end(),
+      Real(0));
+    std::fill(
+      workspace.promotion_a.begin(),
+      workspace.promotion_a.end(),
+      Real(0));
+    std::fill(
+      workspace.promotion_b.begin(),
+      workspace.promotion_b.end(),
+      Real(0));
+
+    const PartialPlan& root = partials.front();
+    std::copy(
+      x,
+      x + root.size,
+      workspace.derivative_values.begin() + root.value_offset);
+
+    for (const BatchedFactorGroup& group : derivative_batches)
+    {
+      apply_derivative_group_forward(
+        group,
+        workspace.derivative_values,
+        workspace.derivative_values);
+    }
+
+    workspace.promotion_a = workspace.derivative_values;
+
+    for (const BatchedFactorGroup& group : promotion_forward_batches)
+    {
+      std::vector<Real>& input =
+        (group.stage % 2 == 0)
+          ? workspace.promotion_a
+          : workspace.promotion_b;
+      std::vector<Real>& output =
+        (group.stage % 2 == 0)
+          ? workspace.promotion_b
+          : workspace.promotion_a;
+
+      for (const FactorLane& lane : group.lanes)
+      {
+        const PartialPlan& plan =
+          partials[static_cast<std::size_t>(lane.target_partial)];
+        std::fill(
+          output.begin() + plan.value_offset,
+          output.begin() + plan.value_offset + plan.size,
+          Real(0));
+      }
+      apply_promotion_group_forward(group, input, output);
+    }
+
+    for (const PartialPlan& plan : partials)
+    {
+      const std::vector<Real>& source =
+        (plan.promotion_factors.size() % 2 == 0)
+          ? workspace.promotion_a
+          : workspace.promotion_b;
+      std::copy(
+        source.begin() + plan.value_offset,
+        source.begin() + plan.value_offset + plan.size,
+        partial_values + plan.value_offset);
+    }
+  }
+
+  // Exact transpose of apply_partials. The input uses the same flat channel
+  // layout. Contributions from all derivative children accumulate at parents.
+  void apply_partials_transpose(
+    const Real* partial_adjoints,
+    Real* x,
+    PartialWorkspace& workspace) const
+  {
+    if (!partial_adjoints || !x)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: null partial transpose data");
+    }
+    if (partials.empty())
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: partial DAG is empty");
+    }
+
+    workspace.resize(partial_value_count);
+    std::fill(
+      workspace.derivative_values.begin(),
+      workspace.derivative_values.end(),
+      Real(0));
+    std::fill(
+      workspace.promotion_a.begin(),
+      workspace.promotion_a.end(),
+      Real(0));
+    std::fill(
+      workspace.promotion_b.begin(),
+      workspace.promotion_b.end(),
+      Real(0));
+    std::copy(
+      partial_adjoints,
+      partial_adjoints + partial_value_count,
+      workspace.promotion_a.begin());
+
+    for (const BatchedFactorGroup& group : promotion_transpose_batches)
+    {
+      std::vector<Real>& input =
+        (group.stage % 2 == 0)
+          ? workspace.promotion_a
+          : workspace.promotion_b;
+      std::vector<Real>& output =
+        (group.stage % 2 == 0)
+          ? workspace.promotion_b
+          : workspace.promotion_a;
+
+      for (const FactorLane& lane : group.lanes)
+      {
+        const PartialPlan& plan =
+          partials[static_cast<std::size_t>(lane.target_partial)];
+        std::fill(
+          output.begin() + plan.value_offset,
+          output.begin() + plan.value_offset + plan.size,
+          Real(0));
+      }
+      apply_promotion_group_transpose(group, input, output);
+    }
+
+    for (const PartialPlan& plan : partials)
+    {
+      const std::vector<Real>& source =
+        (plan.promotion_factors.size() % 2 == 0)
+          ? workspace.promotion_a
+          : workspace.promotion_b;
+      std::copy(
+        source.begin() + plan.value_offset,
+        source.begin() + plan.value_offset + plan.size,
+        workspace.derivative_values.begin() + plan.value_offset);
+    }
+
+    for (auto batch = derivative_batches.rbegin();
+         batch != derivative_batches.rend();
+         ++batch)
+    {
+      apply_derivative_group_transpose(
+        *batch,
+        workspace.derivative_values,
+        workspace.derivative_values);
+    }
+
+    const PartialPlan& root = partials.front();
+    std::copy(
+      workspace.derivative_values.begin() + root.value_offset,
+      workspace.derivative_values.begin() + root.value_offset + root.size,
+      x);
+  }
+
+  // Materialize the DAG into the existing dense public layouts without
+  // modifying the stored Lij_ref/Li_ref/L0_ref arrays.
+  void materialize_partials_from_dag(
+    std::vector<Real>& Lij_out,
+    std::vector<Real>& Li_out,
+    std::vector<Real>& L0_out) const
+  {
+    if (partials.empty())
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: partial DAG is empty");
+    }
+
+    Lij_out.assign(
+      static_cast<std::size_t>(M) * M * D * D,
+      Real(0));
+    Li_out.assign(
+      static_cast<std::size_t>(M) * M * D,
+      Real(0));
+    L0_out.assign(
+      static_cast<std::size_t>(M) * M,
+      Real(0));
+
+    std::array<int, D> zero_alpha{};
+    const PartialPlan& zero_plan = partial_plan(zero_alpha);
+
+    std::array<int, D> first_index{};
+    std::array<std::array<int, D>, D> first_alpha{};
+    for (int axis = 0; axis < D; ++axis)
+    {
+      first_alpha[static_cast<std::size_t>(axis)].fill(0);
+      first_alpha[static_cast<std::size_t>(axis)]
+                 [static_cast<std::size_t>(axis)] = 1;
+      first_index[static_cast<std::size_t>(axis)] =
+        partial_index(first_alpha[static_cast<std::size_t>(axis)]);
+    }
+
+    std::array<std::array<int, D>, D> second_index{};
+    for (int first_axis = 0; first_axis < D; ++first_axis)
+    {
+      for (int second_axis = 0; second_axis < D; ++second_axis)
+      {
+        std::array<int, D> alpha{};
+        ++alpha[static_cast<std::size_t>(first_axis)];
+        ++alpha[static_cast<std::size_t>(second_axis)];
+        second_index[static_cast<std::size_t>(first_axis)]
+                    [static_cast<std::size_t>(second_axis)] =
+          partial_index(alpha);
+      }
+    }
+
+    std::vector<Real> x(static_cast<std::size_t>(M), Real(0));
+    std::vector<Real> channels(partial_value_count, Real(0));
+    PartialWorkspace workspace;
+
+    for (int col = 0; col < M; ++col)
+    {
+      std::fill(x.begin(), x.end(), Real(0));
+      x[static_cast<std::size_t>(col)] = Real(1);
+      apply_partials(x.data(), channels.data(), workspace);
+
+      for (int row = 0; row < zero_plan.size; ++row)
+      {
+        L0_out[static_cast<std::size_t>(row) +
+               static_cast<std::size_t>(M) * col] =
+          channels[zero_plan.value_offset + static_cast<std::size_t>(row)];
+      }
+
+      for (int axis = 0; axis < D; ++axis)
+      {
+        const int plan_index =
+          first_index[static_cast<std::size_t>(axis)];
+        if (plan_index < 0)
+        {
+          throw std::runtime_error(
+            "RefSimplexPrecomp: missing first partial plan");
+        }
+        const PartialPlan& plan =
+          partials[static_cast<std::size_t>(plan_index)];
+        Real* block =
+          Li_out.data() +
+          static_cast<std::size_t>(M) * M * axis;
+        for (int row = 0; row < plan.size; ++row)
+        {
+          block[static_cast<std::size_t>(row) +
+                static_cast<std::size_t>(M) * col] =
+            channels[plan.value_offset + static_cast<std::size_t>(row)];
+        }
+      }
+
+      for (int first_axis = 0; first_axis < D; ++first_axis)
+      {
+        for (int second_axis = 0; second_axis < D; ++second_axis)
+        {
+          const int plan_index =
+            second_index[static_cast<std::size_t>(first_axis)]
+                        [static_cast<std::size_t>(second_axis)];
+          if (plan_index < 0)
+          {
+            throw std::runtime_error(
+              "RefSimplexPrecomp: missing second partial plan");
+          }
+          const PartialPlan& plan =
+            partials[static_cast<std::size_t>(plan_index)];
+          Real* block =
+            Lij_out.data() +
+            static_cast<std::size_t>(M) * M *
+              (static_cast<std::size_t>(first_axis) +
+               static_cast<std::size_t>(D) * second_axis);
+          for (int row = 0; row < plan.size; ++row)
+          {
+            block[static_cast<std::size_t>(row) +
+                  static_cast<std::size_t>(M) * col] =
+              channels[plan.value_offset + static_cast<std::size_t>(row)];
+          }
+        }
+      }
+    }
+  }
+
+  DAGCompatibilityReport dag_compatibility_report() const
+  {
+    std::vector<Real> Lij_dag;
+    std::vector<Real> Li_dag;
+    std::vector<Real> L0_dag;
+    materialize_partials_from_dag(Lij_dag, Li_dag, L0_dag);
+
+    DAGCompatibilityReport report;
+    report.L0_relative = relative_frobenius_error(L0_dag, L0_ref);
+    report.Li_relative = relative_frobenius_error(Li_dag, Li_ref);
+    report.Lij_relative = relative_frobenius_error(Lij_dag, Lij_ref);
+    return report;
+  }
+
   RefSimplexPrecomp(int n_in,
                     int q_pad_in,
                     int q_vol_in,
@@ -206,6 +631,7 @@ public:
     build_residual_data();
     build_face_data();
     build_operator_stencil_data();
+    build_partial_dag();
     build_derivative_factor_data();
     build_second_partials();
     build_first_partials();
@@ -223,6 +649,10 @@ private:
   std::vector<std::array<Real, D + 1>> derivative_kappa_1;
   std::map<std::array<int, D + 1>, std::vector<Real>>
     residual_promotion_cache;
+
+  // Finite-degree structural lookup used by the DAG.
+  std::map<std::pair<int, int>, int> dag_d_structure_index;
+  std::map<std::pair<int, int>, int> dag_k_structure_index;
 
   void build_volume_data()
   {
@@ -314,6 +744,7 @@ private:
   static void copy_csc_raw_structure(
     int rows,
     int cols,
+    int degree,
     const std::string& signature,
     int* colptr_raw,
     int* rowind_raw,
@@ -327,6 +758,7 @@ private:
 
     out.rows = rows;
     out.cols = cols;
+    out.degree = degree;
     out.signature = signature;
     out.colptr.assign(
       colptr_raw,
@@ -343,12 +775,15 @@ private:
     k_parameter_structure.fill(-1);
     d_structures.clear();
     k_structures.clear();
+    dag_d_structure_index.clear();
+    dag_k_structure_index.clear();
 
-    std::map<std::string, int> d_signature_index;
-    std::map<std::string, int> k_signature_index;
+    std::map<std::pair<std::string, int>, int>
+      d_signature_degree_index;
+    std::map<std::pair<std::string, int>, int>
+      k_signature_degree_index;
 
-    const int d_rows = Basis<D,Real>::dim_Pi(n - 1);
-
+    // One persistent delta-stencil load/discovery per derivative axis.
     for (int axis = 0; axis < D; ++axis)
     {
       DMatStencil stencil{};
@@ -361,32 +796,63 @@ private:
 
       const std::string signature =
         DMat<D,Real>::stencil_signature(stencil);
-      const auto found = d_signature_index.find(signature);
-      if (found != d_signature_index.end())
+
+      for (int degree = n; degree >= n - 1; --degree)
       {
-        d_axis_structure[static_cast<std::size_t>(axis)] = found->second;
-        stencil.clear();
-        continue;
+        const std::pair<std::string, int> intern_key{
+          signature, degree};
+        int structure_index = -1;
+        const auto found =
+          d_signature_degree_index.find(intern_key);
+
+        if (found != d_signature_degree_index.end())
+        {
+          structure_index = found->second;
+        }
+        else
+        {
+          int* colptr_raw = nullptr;
+          int* rowind_raw = nullptr;
+          const std::size_t nnz =
+            DMat<D,Real>::build_natural_csc_pattern_from_stencil(
+              degree,
+              stencil,
+              &colptr_raw,
+              &rowind_raw);
+
+          SharedOperatorStructure structure;
+          copy_csc_raw_structure(
+            Basis<D,Real>::dim_Pi(degree - 1),
+            Basis<D,Real>::dim_Pi(degree),
+            degree,
+            signature,
+            colptr_raw,
+            rowind_raw,
+            nnz,
+            structure);
+
+          structure_index =
+            static_cast<int>(d_structures.size());
+          d_structures.push_back(std::move(structure));
+          d_signature_degree_index.emplace(
+            intern_key,
+            structure_index);
+        }
+
+        dag_d_structure_index.emplace(
+          std::make_pair(degree, axis),
+          structure_index);
+        if (degree == n)
+        {
+          d_axis_structure[static_cast<std::size_t>(axis)] =
+            structure_index;
+        }
       }
 
-      int* colptr_raw = nullptr;
-      int* rowind_raw = nullptr;
-      const std::size_t nnz =
-        DMat<D,Real>::build_natural_csc_pattern_from_stencil(
-          n, stencil, &colptr_raw, &rowind_raw);
-
-      SharedOperatorStructure structure;
-      copy_csc_raw_structure(
-        d_rows, M, signature,
-        colptr_raw, rowind_raw, nnz, structure);
-
-      const int index = static_cast<int>(d_structures.size());
-      d_structures.push_back(std::move(structure));
-      d_signature_index.emplace(signature, index);
-      d_axis_structure[static_cast<std::size_t>(axis)] = index;
       stencil.clear();
     }
 
+    // One persistent delta-stencil load/discovery per promoted parameter.
     for (int parameter = 0; parameter <= D; ++parameter)
     {
       KMatStencil stencil{};
@@ -399,30 +865,61 @@ private:
 
       const std::string signature =
         KMat<D,Real>::stencil_signature(stencil);
-      const auto found = k_signature_index.find(signature);
-      if (found != k_signature_index.end())
+
+      for (int degree = n; degree >= n - 2; --degree)
       {
-        k_parameter_structure[static_cast<std::size_t>(parameter)] =
-          found->second;
-        stencil.clear();
-        continue;
+        const std::pair<std::string, int> intern_key{
+          signature, degree};
+        int structure_index = -1;
+        const auto found =
+          k_signature_degree_index.find(intern_key);
+
+        if (found != k_signature_degree_index.end())
+        {
+          structure_index = found->second;
+        }
+        else
+        {
+          int* colptr_raw = nullptr;
+          int* rowind_raw = nullptr;
+          const std::size_t nnz =
+            KMat<D,Real>::build_natural_csc_pattern_from_stencil(
+              degree,
+              stencil,
+              &colptr_raw,
+              &rowind_raw);
+
+          SharedOperatorStructure structure;
+          const int size = Basis<D,Real>::dim_Pi(degree);
+          copy_csc_raw_structure(
+            size,
+            size,
+            degree,
+            signature,
+            colptr_raw,
+            rowind_raw,
+            nnz,
+            structure);
+
+          structure_index =
+            static_cast<int>(k_structures.size());
+          k_structures.push_back(std::move(structure));
+          k_signature_degree_index.emplace(
+            intern_key,
+            structure_index);
+        }
+
+        dag_k_structure_index.emplace(
+          std::make_pair(degree, parameter),
+          structure_index);
+        if (degree == n)
+        {
+          k_parameter_structure[
+            static_cast<std::size_t>(parameter)] =
+            structure_index;
+        }
       }
 
-      int* colptr_raw = nullptr;
-      int* rowind_raw = nullptr;
-      const std::size_t nnz =
-        KMat<D,Real>::build_natural_csc_pattern_from_stencil(
-          n, stencil, &colptr_raw, &rowind_raw);
-
-      SharedOperatorStructure structure;
-      copy_csc_raw_structure(
-        M, M, signature,
-        colptr_raw, rowind_raw, nnz, structure);
-
-      const int index = static_cast<int>(k_structures.size());
-      k_structures.push_back(std::move(structure));
-      k_signature_index.emplace(signature, index);
-      k_parameter_structure[static_cast<std::size_t>(parameter)] = index;
       stencil.clear();
     }
   }
@@ -458,6 +955,660 @@ private:
         "RefSimplexPrecomp: promotion structure not initialized");
     }
     return k_structures[static_cast<std::size_t>(index)];
+  }
+
+  const SharedOperatorStructure& dag_d_structure(
+    int degree,
+    int axis) const
+  {
+    const auto found =
+      dag_d_structure_index.find(std::make_pair(degree, axis));
+    if (found == dag_d_structure_index.end())
+    {
+      throw std::out_of_range(
+        "RefSimplexPrecomp: missing DAG derivative structure");
+    }
+    return d_structures[static_cast<std::size_t>(found->second)];
+  }
+
+  const SharedOperatorStructure& dag_k_structure(
+    int degree,
+    int parameter) const
+  {
+    const auto found =
+      dag_k_structure_index.find(
+        std::make_pair(degree, parameter));
+    if (found == dag_k_structure_index.end())
+    {
+      throw std::out_of_range(
+        "RefSimplexPrecomp: missing DAG promotion structure");
+    }
+    return k_structures[static_cast<std::size_t>(found->second)];
+  }
+
+  std::array<Real, D + 1> shifted_kappa(
+    const ShiftState& shift) const
+  {
+    std::array<Real, D + 1> result{};
+    for (int parameter = 0; parameter <= D; ++parameter)
+    {
+      result[static_cast<std::size_t>(parameter)] =
+        kappa[static_cast<std::size_t>(parameter)] +
+        static_cast<Real>(
+          shift.delta[static_cast<std::size_t>(parameter)]);
+    }
+    return result;
+  }
+
+  static int partial_order(
+    const std::array<int, D>& alpha)
+  {
+    int order = 0;
+    for (int axis = 0; axis < D; ++axis)
+    {
+      order += alpha[static_cast<std::size_t>(axis)];
+    }
+    return order;
+  }
+
+  static ShiftState derivative_shift(
+    const std::array<int, D>& alpha)
+  {
+    ShiftState shift;
+    int order = 0;
+    for (int axis = 0; axis < D; ++axis)
+    {
+      const int count =
+        alpha[static_cast<std::size_t>(axis)];
+      shift.delta[static_cast<std::size_t>(axis)] = count;
+      order += count;
+    }
+    shift.delta[static_cast<std::size_t>(D)] = order;
+    return shift;
+  }
+
+  static void enumerate_exact_order_recursive(
+    int axis,
+    int remaining,
+    std::array<int, D>& alpha,
+    std::vector<std::array<int, D>>& result)
+  {
+    if (axis == D - 1)
+    {
+      alpha[static_cast<std::size_t>(axis)] = remaining;
+      result.push_back(alpha);
+      return;
+    }
+
+    for (int count = 0; count <= remaining; ++count)
+    {
+      alpha[static_cast<std::size_t>(axis)] = count;
+      enumerate_exact_order_recursive(
+        axis + 1,
+        remaining - count,
+        alpha,
+        result);
+    }
+  }
+
+  static std::vector<std::array<int, D>>
+  enumerate_exact_order(int order)
+  {
+    std::vector<std::array<int, D>> result;
+    std::array<int, D> alpha{};
+    enumerate_exact_order_recursive(
+      0,
+      order,
+      alpha,
+      result);
+    return result;
+  }
+
+  int get_or_build_dag_d_factor(
+    int degree,
+    const ShiftState& source_shift,
+    int axis)
+  {
+    for (std::size_t index = 0;
+         index < dag_d_factors.size();
+         ++index)
+    {
+      const SparseFactor& factor = dag_d_factors[index];
+      if (factor.degree == degree &&
+          factor.coordinate == axis &&
+          factor.source_shift == source_shift)
+      {
+        return static_cast<int>(index);
+      }
+    }
+
+    const SharedOperatorStructure& structure =
+      dag_d_structure(degree, axis);
+    SparseFactor factor;
+    factor.structure_index =
+      static_cast<int>(&structure - d_structures.data());
+    factor.degree = degree;
+    factor.coordinate = axis;
+    factor.source_shift = source_shift;
+    factor.values.assign(structure.nnz(), Real(0));
+
+    const std::array<Real, D + 1> source =
+      shifted_kappa(source_shift);
+    DMat<D,Real>::fill_tprod_natural_csc_values(
+      degree,
+      static_cast<unsigned int>(q_vol),
+      source.data(),
+      axis,
+      structure.colptr.data(),
+      structure.rowind.data(),
+      factor.values.data());
+
+    dag_d_factors.push_back(std::move(factor));
+    return static_cast<int>(dag_d_factors.size()) - 1;
+  }
+
+  int get_or_build_dag_k_factor(
+    int degree,
+    const ShiftState& source_shift,
+    int parameter)
+  {
+    for (std::size_t index = 0;
+         index < dag_k_factors.size();
+         ++index)
+    {
+      const SparseFactor& factor = dag_k_factors[index];
+      if (factor.degree == degree &&
+          factor.coordinate == parameter &&
+          factor.source_shift == source_shift)
+      {
+        return static_cast<int>(index);
+      }
+    }
+
+    const SharedOperatorStructure& structure =
+      dag_k_structure(degree, parameter);
+    SparseFactor factor;
+    factor.structure_index =
+      static_cast<int>(&structure - k_structures.data());
+    factor.degree = degree;
+    factor.coordinate = parameter;
+    factor.source_shift = source_shift;
+    factor.values.assign(structure.nnz(), Real(0));
+
+    const std::array<Real, D + 1> source =
+      shifted_kappa(source_shift);
+    KMat<D,Real>::fill_tprod_natural_csc_values(
+      degree,
+      static_cast<unsigned int>(q_vol),
+      source.data(),
+      parameter,
+      structure.colptr.data(),
+      structure.rowind.data(),
+      factor.values.data());
+
+    dag_k_factors.push_back(std::move(factor));
+    return static_cast<int>(dag_k_factors.size()) - 1;
+  }
+
+  static BatchedFactorGroup& find_or_add_batch(
+    std::vector<BatchedFactorGroup>& batches,
+    int stage,
+    int structure_index)
+  {
+    for (BatchedFactorGroup& group : batches)
+    {
+      if (group.stage == stage &&
+          group.structure_index == structure_index)
+      {
+        return group;
+      }
+    }
+
+    BatchedFactorGroup group;
+    group.stage = stage;
+    group.structure_index = structure_index;
+    batches.push_back(std::move(group));
+    return batches.back();
+  }
+
+  void pack_batch_values(
+    BatchedFactorGroup& group,
+    const std::vector<SparseFactor>& factors,
+    const std::vector<SharedOperatorStructure>& structures)
+  {
+    if (group.structure_index < 0 ||
+        group.structure_index >=
+          static_cast<int>(structures.size()))
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: invalid batch structure index");
+    }
+
+    const std::size_t nnz =
+      structures[static_cast<std::size_t>(
+        group.structure_index)].nnz();
+    const std::size_t lane_count = group.lanes.size();
+    group.values.assign(nnz * lane_count, Real(0));
+
+    for (std::size_t lane = 0; lane < lane_count; ++lane)
+    {
+      const int factor_index = group.lanes[lane].factor_index;
+      if (factor_index < 0 ||
+          factor_index >= static_cast<int>(factors.size()))
+      {
+        throw std::runtime_error(
+          "RefSimplexPrecomp: invalid batch factor index");
+      }
+      const std::vector<Real>& source =
+        factors[static_cast<std::size_t>(factor_index)].values;
+      if (source.size() != nnz)
+      {
+        throw std::runtime_error(
+          "RefSimplexPrecomp: factor/stencil nnz mismatch");
+      }
+      for (std::size_t pos = 0; pos < nnz; ++pos)
+      {
+        group.values[pos * lane_count + lane] = source[pos];
+      }
+    }
+  }
+
+  void build_partial_batches()
+  {
+    derivative_batches.clear();
+    promotion_forward_batches.clear();
+    promotion_transpose_batches.clear();
+
+    for (std::size_t child = 1;
+         child < partials.size();
+         ++child)
+    {
+      const PartialPlan& plan = partials[child];
+      const SparseFactor& factor =
+        dag_d_factors[
+          static_cast<std::size_t>(plan.derivative_factor)];
+      find_or_add_batch(
+        derivative_batches,
+        plan.order - 1,
+        factor.structure_index)
+        .lanes.push_back(FactorLane{
+          plan.parent_partial,
+          static_cast<int>(child),
+          plan.derivative_factor});
+    }
+
+    for (std::size_t partial = 0;
+         partial < partials.size();
+         ++partial)
+    {
+      const PartialPlan& plan = partials[partial];
+      const int count =
+        static_cast<int>(plan.promotion_factors.size());
+      for (int stage = 0; stage < count; ++stage)
+      {
+        const int factor_index =
+          plan.promotion_factors[
+            static_cast<std::size_t>(stage)];
+        const SparseFactor& factor =
+          dag_k_factors[
+            static_cast<std::size_t>(factor_index)];
+
+        find_or_add_batch(
+          promotion_forward_batches,
+          stage,
+          factor.structure_index)
+          .lanes.push_back(FactorLane{
+            static_cast<int>(partial),
+            static_cast<int>(partial),
+            factor_index});
+
+        const int reverse_stage = count - 1 - stage;
+        find_or_add_batch(
+          promotion_transpose_batches,
+          reverse_stage,
+          factor.structure_index)
+          .lanes.push_back(FactorLane{
+            static_cast<int>(partial),
+            static_cast<int>(partial),
+            factor_index});
+      }
+    }
+
+    const auto batch_order =
+      [](const BatchedFactorGroup& left,
+         const BatchedFactorGroup& right)
+      {
+        if (left.stage != right.stage)
+        {
+          return left.stage < right.stage;
+        }
+        return left.structure_index < right.structure_index;
+      };
+
+    std::sort(
+      derivative_batches.begin(),
+      derivative_batches.end(),
+      batch_order);
+    std::sort(
+      promotion_forward_batches.begin(),
+      promotion_forward_batches.end(),
+      batch_order);
+    std::sort(
+      promotion_transpose_batches.begin(),
+      promotion_transpose_batches.end(),
+      batch_order);
+
+    for (BatchedFactorGroup& group : derivative_batches)
+    {
+      pack_batch_values(group, dag_d_factors, d_structures);
+    }
+    for (BatchedFactorGroup& group : promotion_forward_batches)
+    {
+      pack_batch_values(group, dag_k_factors, k_structures);
+    }
+    for (BatchedFactorGroup& group : promotion_transpose_batches)
+    {
+      pack_batch_values(group, dag_k_factors, k_structures);
+    }
+  }
+
+  void build_partial_dag()
+  {
+    dag_d_factors.clear();
+    dag_k_factors.clear();
+    partials.clear();
+    partial_value_count = 0;
+
+    constexpr int maximum_order = 2;
+
+    for (int order = 0; order <= maximum_order; ++order)
+    {
+      const std::vector<std::array<int, D>> alphas =
+        enumerate_exact_order(order);
+
+      for (const std::array<int, D>& alpha : alphas)
+      {
+        PartialPlan plan;
+        plan.alpha = alpha;
+        plan.order = order;
+        plan.degree = n - order;
+        plan.size = Basis<D,Real>::dim_Pi(plan.degree);
+        plan.value_offset = partial_value_count;
+        partial_value_count +=
+          static_cast<std::size_t>(plan.size);
+
+        if (order > 0)
+        {
+          int axis = D - 1;
+          while (axis >= 0 &&
+                 alpha[static_cast<std::size_t>(axis)] == 0)
+          {
+            --axis;
+          }
+          if (axis < 0)
+          {
+            throw std::runtime_error(
+              "RefSimplexPrecomp: invalid derivative DAG node");
+          }
+
+          std::array<int, D> parent_alpha = alpha;
+          --parent_alpha[static_cast<std::size_t>(axis)];
+          plan.parent_partial = partial_index(parent_alpha);
+          if (plan.parent_partial < 0)
+          {
+            throw std::runtime_error(
+              "RefSimplexPrecomp: derivative DAG parent not found");
+          }
+
+          const PartialPlan& parent =
+            partials[
+              static_cast<std::size_t>(plan.parent_partial)];
+          plan.derivative_factor =
+            get_or_build_dag_d_factor(
+              parent.degree,
+              derivative_shift(parent_alpha),
+              axis);
+        }
+
+        ShiftState current_shift = derivative_shift(alpha);
+        for (int parameter = 0; parameter <= D; ++parameter)
+        {
+          while (
+            current_shift.delta[
+              static_cast<std::size_t>(parameter)] <
+            maximum_order)
+          {
+            const int factor_index =
+              get_or_build_dag_k_factor(
+                plan.degree,
+                current_shift,
+                parameter);
+            plan.promotion_factors.push_back(factor_index);
+            ++current_shift.delta[
+              static_cast<std::size_t>(parameter)];
+          }
+        }
+
+        partials.push_back(std::move(plan));
+      }
+    }
+
+    build_partial_batches();
+  }
+
+  void apply_derivative_group_forward(
+    const BatchedFactorGroup& group,
+    const std::vector<Real>& input,
+    std::vector<Real>& output) const
+  {
+    const SharedOperatorStructure& structure =
+      d_structures[
+        static_cast<std::size_t>(group.structure_index)];
+    const std::size_t lane_count = group.lanes.size();
+
+    for (int col = 0; col < structure.cols; ++col)
+    {
+      for (int pos =
+             structure.colptr[static_cast<std::size_t>(col)];
+           pos <
+             structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row =
+          structure.rowind[static_cast<std::size_t>(pos)];
+        const Real* entry_values =
+          group.values.data() +
+          static_cast<std::size_t>(pos) * lane_count;
+
+        for (std::size_t lane = 0;
+             lane < lane_count;
+             ++lane)
+        {
+          const FactorLane& mapping = group.lanes[lane];
+          const PartialPlan& source =
+            partials[
+              static_cast<std::size_t>(
+                mapping.source_partial)];
+          const PartialPlan& target =
+            partials[
+              static_cast<std::size_t>(
+                mapping.target_partial)];
+
+          output[target.value_offset +
+                 static_cast<std::size_t>(row)] +=
+            entry_values[lane] *
+            input[source.value_offset +
+                  static_cast<std::size_t>(col)];
+        }
+      }
+    }
+  }
+
+  void apply_derivative_group_transpose(
+    const BatchedFactorGroup& group,
+    const std::vector<Real>& input,
+    std::vector<Real>& output) const
+  {
+    const SharedOperatorStructure& structure =
+      d_structures[
+        static_cast<std::size_t>(group.structure_index)];
+    const std::size_t lane_count = group.lanes.size();
+
+    for (int col = 0; col < structure.cols; ++col)
+    {
+      for (int pos =
+             structure.colptr[static_cast<std::size_t>(col)];
+           pos <
+             structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row =
+          structure.rowind[static_cast<std::size_t>(pos)];
+        const Real* entry_values =
+          group.values.data() +
+          static_cast<std::size_t>(pos) * lane_count;
+
+        for (std::size_t lane = 0;
+             lane < lane_count;
+             ++lane)
+        {
+          const FactorLane& mapping = group.lanes[lane];
+          const PartialPlan& source =
+            partials[
+              static_cast<std::size_t>(
+                mapping.source_partial)];
+          const PartialPlan& target =
+            partials[
+              static_cast<std::size_t>(
+                mapping.target_partial)];
+
+          output[source.value_offset +
+                 static_cast<std::size_t>(col)] +=
+            entry_values[lane] *
+            input[target.value_offset +
+                  static_cast<std::size_t>(row)];
+        }
+      }
+    }
+  }
+
+  void apply_promotion_group_forward(
+    const BatchedFactorGroup& group,
+    const std::vector<Real>& input,
+    std::vector<Real>& output) const
+  {
+    const SharedOperatorStructure& structure =
+      k_structures[
+        static_cast<std::size_t>(group.structure_index)];
+    const std::size_t lane_count = group.lanes.size();
+
+    for (int col = 0; col < structure.cols; ++col)
+    {
+      for (int pos =
+             structure.colptr[static_cast<std::size_t>(col)];
+           pos <
+             structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row =
+          structure.rowind[static_cast<std::size_t>(pos)];
+        const Real* entry_values =
+          group.values.data() +
+          static_cast<std::size_t>(pos) * lane_count;
+
+        for (std::size_t lane = 0;
+             lane < lane_count;
+             ++lane)
+        {
+          const FactorLane& mapping = group.lanes[lane];
+          const PartialPlan& plan =
+            partials[
+              static_cast<std::size_t>(
+                mapping.target_partial)];
+
+          output[plan.value_offset +
+                 static_cast<std::size_t>(row)] +=
+            entry_values[lane] *
+            input[plan.value_offset +
+                  static_cast<std::size_t>(col)];
+        }
+      }
+    }
+  }
+
+  void apply_promotion_group_transpose(
+    const BatchedFactorGroup& group,
+    const std::vector<Real>& input,
+    std::vector<Real>& output) const
+  {
+    const SharedOperatorStructure& structure =
+      k_structures[
+        static_cast<std::size_t>(group.structure_index)];
+    const std::size_t lane_count = group.lanes.size();
+
+    for (int col = 0; col < structure.cols; ++col)
+    {
+      for (int pos =
+             structure.colptr[static_cast<std::size_t>(col)];
+           pos <
+             structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row =
+          structure.rowind[static_cast<std::size_t>(pos)];
+        const Real* entry_values =
+          group.values.data() +
+          static_cast<std::size_t>(pos) * lane_count;
+
+        for (std::size_t lane = 0;
+             lane < lane_count;
+             ++lane)
+        {
+          const FactorLane& mapping = group.lanes[lane];
+          const PartialPlan& plan =
+            partials[
+              static_cast<std::size_t>(
+                mapping.target_partial)];
+
+          output[plan.value_offset +
+                 static_cast<std::size_t>(col)] +=
+            entry_values[lane] *
+            input[plan.value_offset +
+                  static_cast<std::size_t>(row)];
+        }
+      }
+    }
+  }
+
+  static Real relative_frobenius_error(
+    const std::vector<Real>& candidate,
+    const std::vector<Real>& reference)
+  {
+    if (candidate.size() != reference.size())
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: compatibility size mismatch");
+    }
+
+    long double numerator = 0.0L;
+    long double denominator = 0.0L;
+    for (std::size_t index = 0;
+         index < candidate.size();
+         ++index)
+    {
+      const long double difference =
+        static_cast<long double>(candidate[index]) -
+        static_cast<long double>(reference[index]);
+      const long double value =
+        static_cast<long double>(reference[index]);
+      numerator += difference * difference;
+      denominator += value * value;
+    }
+
+    const long double scale =
+      std::max(denominator, 1.0e-300L);
+    return static_cast<Real>(
+      std::sqrt(numerator / scale));
   }
 
   std::vector<Real> build_d_factor_dense(

@@ -653,7 +653,9 @@ private:
   {
     allocate_LTF_storage();
 
-    jdsimplex_assemble_elliptic_L_int<D,Real>(
+    // Assemble from the compact sparse derivative/promotion DAG. The final
+    // element operator L remains dense for the current LSMR/HPS interface.
+    jdsimplex_assemble_elliptic_L_int_dag<D,Real>(
       *pre,
       geom,
       elliptic_plan,

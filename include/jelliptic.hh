@@ -72,6 +72,15 @@ void jdsimplex_assemble_elliptic_L_int(
   const EllipticElementCoefficientsView<D,Real>& coeffs,
   Real* L_int_out);
 
+template<int D, class Real>
+void jdsimplex_assemble_elliptic_L_int_dag(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticWorkspace<D,Real>& work,
+  Real* L_int_out);
+
 namespace elliptic_detail {
 
 template<int D, class Real>
@@ -369,6 +378,17 @@ public:
     yK_.resize((std::size_t)max_MK);
     Mq_.resize((std::size_t)plan.m2 * (std::size_t)max_MN);
     Dphys_.resize((std::size_t)plan.M * (std::size_t)plan.M);
+
+    const std::size_t dag_partial_value_count =
+      (std::size_t)plan.M
+      + (std::size_t)D * (std::size_t)plan.m1
+      + (std::size_t)(D * (D + 1) / 2)
+        * (std::size_t)plan.m2;
+
+    dag_source_.resize((std::size_t)plan.M);
+    dag_partial_column_.resize(dag_partial_value_count);
+    dag_partial_matrix_.resize(
+      dag_partial_value_count * (std::size_t)plan.M);
   }
 
   bool compatible(const EllipticPlan<D,Real>& plan) const
@@ -384,12 +404,27 @@ private:
   std::vector<Real> Mq_;
   std::vector<Real> Dphys_;
 
+  // Compact DAG materialization workspace. Each partial block is stored
+  // column-major with its natural row count rather than padded to M rows.
+  typename RefSimplexPrecomp<D,Real>::PartialWorkspace dag_partial_work_;
+  std::vector<Real> dag_source_;
+  std::vector<Real> dag_partial_column_;
+  std::vector<Real> dag_partial_matrix_;
+
   friend void jdsimplex_assemble_elliptic_L_int<D,Real>(
     const EllipticPlan<D,Real>&,
     EllipticWorkspace<D,Real>&,
     const Real*, Real,
     const Real*, const Real*, const Real*,
     const EllipticElementCoefficientsView<D,Real>&,
+    Real*);
+
+  friend void jdsimplex_assemble_elliptic_L_int_dag<D,Real>(
+    const RefSimplexPrecomp<D,Real>&,
+    const DSimplexGeom<D,Real>&,
+    const EllipticPlan<D,Real>&,
+    const EllipticElementCoefficientsView<D,Real>&,
+    EllipticWorkspace<D,Real>&,
     Real*);
 };
 
@@ -607,6 +642,391 @@ void jdsimplex_assemble_elliptic_L_int(
 
   for (std::size_t k = 0; k < (std::size_t)m2 * (std::size_t)M; ++k)
     L_int_out[k] *= detBabs;
+}
+
+
+/*
+  DAG-backed affine-element assembly.
+
+  The derivative/promotion DAG is applied to the coefficient-space identity
+  once per source column. Its unique partial channels are stored in compact
+  column-major blocks:
+
+    order zero:  dim(Pi_n)     x M,
+    order one:   D blocks of dim(Pi_{n-1}) x M,
+    order two:   D(D+1)/2 unique blocks of dim(Pi_{n-2}) x M.
+
+  Physical derivative contractions and the existing coefficient
+  multiplication plans then assemble the same dense L_int consumed by Leaf
+  and the current dense LSMR/HPS interface. The padded dense L0_ref, Li_ref,
+  and Lij_ref arrays are not used.
+*/
+template<int D, class Real>
+void jdsimplex_assemble_elliptic_L_int_dag(
+  const RefSimplexPrecomp<D,Real>& pre,
+  const DSimplexGeom<D,Real>& geom,
+  const EllipticPlan<D,Real>& plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  EllipticWorkspace<D,Real>& work,
+  Real* L_int_out)
+{
+  using Precomp = RefSimplexPrecomp<D,Real>;
+  using PartialPlan = typename Precomp::PartialPlan;
+
+  if (!L_int_out)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: null output");
+  if (!geom.valid)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: invalid geometry");
+  if (!work.compatible(plan))
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: incompatible workspace");
+  if (pre.n != plan.n || pre.M != plan.M || pre.m_int != plan.m2)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: precompute/plan mismatch");
+  if (pre.partials.empty() || pre.partial_value_count == 0)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: missing partial DAG");
+  if (!(geom.detBabs > Real(0)) ||
+      !std::isfinite((double)geom.detBabs))
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: invalid detBabs");
+  if (plan.degrees.p2 >= 0 && !coeffs.A)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: null A coefficients");
+  if (plan.degrees.p1 >= 0 && !coeffs.b)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: null b coefficients");
+  if (plan.degrees.p0 >= 0 && !coeffs.c)
+    throw std::invalid_argument(
+      "jdsimplex_assemble_elliptic_L_int_dag: null c coefficients");
+
+  const int M = plan.M;
+  const int m2 = plan.m2;
+  const int m1 = plan.m1;
+
+  if (work.dag_source_.size() < (std::size_t)M ||
+      work.dag_partial_column_.size() < pre.partial_value_count ||
+      work.dag_partial_matrix_.size() <
+        pre.partial_value_count * (std::size_t)M)
+    throw std::runtime_error(
+      "jdsimplex_assemble_elliptic_L_int_dag: undersized workspace");
+
+  std::fill(
+    L_int_out,
+    L_int_out + (std::size_t)m2 * (std::size_t)M,
+    Real(0));
+
+  std::array<int, D> alpha_zero{};
+  const PartialPlan& zero_plan =
+    pre.partial_plan(alpha_zero);
+
+  std::array<const PartialPlan*, D> first_plan{};
+  for (int axis = 0; axis < D; ++axis)
+  {
+    std::array<int, D> alpha{};
+    alpha[(std::size_t)axis] = 1;
+    first_plan[(std::size_t)axis] =
+      &pre.partial_plan(alpha);
+  }
+
+  std::array<const PartialPlan*, D * D> second_plan{};
+  for (int first_axis = 0; first_axis < D; ++first_axis)
+  {
+    for (int second_axis = 0; second_axis < D; ++second_axis)
+    {
+      std::array<int, D> alpha{};
+      ++alpha[(std::size_t)first_axis];
+      ++alpha[(std::size_t)second_axis];
+      second_plan[
+        (std::size_t)first_axis +
+        (std::size_t)D * (std::size_t)second_axis] =
+        &pre.partial_plan(alpha);
+    }
+  }
+
+  // Materialize the unique compact partial blocks from the DAG.
+  for (int column = 0; column < M; ++column)
+  {
+    std::fill(
+      work.dag_source_.begin(),
+      work.dag_source_.begin() + M,
+      Real(0));
+    work.dag_source_[(std::size_t)column] = Real(1);
+
+    pre.apply_partials(
+      work.dag_source_.data(),
+      work.dag_partial_column_.data(),
+      work.dag_partial_work_);
+
+    for (const PartialPlan& partial : pre.partials)
+    {
+      Real* block =
+        work.dag_partial_matrix_.data()
+        + partial.value_offset * (std::size_t)M;
+
+      const Real* source =
+        work.dag_partial_column_.data()
+        + partial.value_offset;
+
+      for (int row = 0; row < partial.size; ++row)
+      {
+        block[
+          (std::size_t)row
+          + (std::size_t)partial.size
+            * (std::size_t)column] =
+          source[(std::size_t)row];
+      }
+    }
+  }
+
+  auto partial_block =
+    [&](const PartialPlan& partial) -> const Real*
+  {
+    return
+      work.dag_partial_matrix_.data()
+      + partial.value_offset * (std::size_t)M;
+  };
+
+  auto build_restricted_mult =
+    [&](int order, const Real* q, int MN) -> const Real*
+  {
+    const int id = plan.plan_id_for_order(order);
+    if (id < 0)
+      throw std::logic_error(
+        "jdsimplex_assemble_elliptic_L_int_dag: disabled order");
+
+    const auto& P = plan.entry(id);
+    Real* Mq = work.Mq_.data();
+    std::fill(
+      Mq,
+      Mq + (std::size_t)m2 * (std::size_t)MN,
+      Real(0));
+
+    if (P.scalar_only)
+    {
+      const Real scalar = q[0] * plan.phi0_res;
+      const int ndiag = std::min(m2, MN);
+      for (int j = 0; j < ndiag; ++j)
+      {
+        Mq[
+          (std::size_t)j
+          + (std::size_t)m2 * (std::size_t)j] =
+          scalar;
+      }
+      return Mq;
+    }
+
+    Real* cK = work.cK_.data();
+    Real* yK = work.yK_.data();
+    auto& mult_work =
+      work.mult_workspaces_[(std::size_t)id];
+
+    for (int col = 0; col < MN; ++col)
+    {
+      std::fill(cK, cK + P.MK, Real(0));
+      cK[col] = Real(1);
+      P.mult.apply(q, cK, yK, mult_work);
+
+      for (int row = 0; row < m2; ++row)
+      {
+        Mq[
+          (std::size_t)row
+          + (std::size_t)m2 * (std::size_t)col] =
+          yK[row];
+      }
+    }
+
+    return Mq;
+  };
+
+  // Principal part: sum_{r,s} M_{a_rs} H_rs.
+  if (plan.degrees.p2 >= 0)
+  {
+    const int Mp2 = plan.coefficient_size(2);
+    const int MN = m2;
+
+    for (int r = 0; r < D; ++r)
+    {
+      for (int s = 0; s < D; ++s)
+      {
+        Real* Hrs =
+          work.Dphys_.data();
+
+        for (int col = 0; col < M; ++col)
+        {
+          for (int row = 0; row < MN; ++row)
+          {
+            Real value = Real(0);
+
+            for (int i = 0; i < D; ++i)
+            {
+              const Real Cir =
+                geom.BinvT[
+                  (std::size_t)r
+                  + (std::size_t)D * (std::size_t)i];
+
+              for (int j = 0; j < D; ++j)
+              {
+                const Real Cjs =
+                  geom.BinvT[
+                    (std::size_t)s
+                    + (std::size_t)D * (std::size_t)j];
+
+                const PartialPlan& partial =
+                  *second_plan[
+                    (std::size_t)i
+                    + (std::size_t)D * (std::size_t)j];
+
+                const Real* Dij =
+                  partial_block(partial);
+
+                value +=
+                  Cir * Cjs *
+                  Dij[
+                    (std::size_t)row
+                    + (std::size_t)MN
+                      * (std::size_t)col];
+              }
+            }
+
+            Hrs[
+              (std::size_t)row
+              + (std::size_t)MN * (std::size_t)col] =
+              value;
+          }
+        }
+
+        const Real* q =
+          coeffs.A
+          + (
+              (std::size_t)r * (std::size_t)D
+              + (std::size_t)s
+            ) * (std::size_t)Mp2;
+
+        const Real* Mq =
+          build_restricted_mult(2, q, MN);
+
+        detail::BlasGemm<Real>::run(
+          CblasColMajor,
+          CblasNoTrans,
+          CblasNoTrans,
+          m2,
+          M,
+          MN,
+          Real(1),
+          Mq,
+          m2,
+          Hrs,
+          MN,
+          Real(1),
+          L_int_out,
+          m2);
+      }
+    }
+  }
+
+  // First-order part: sum_r M_{b_r} G_r.
+  if (plan.degrees.p1 >= 0)
+  {
+    const int Mp1 = plan.coefficient_size(1);
+    const int MN = m1;
+
+    for (int r = 0; r < D; ++r)
+    {
+      Real* Gr =
+        work.Dphys_.data();
+
+      for (int col = 0; col < M; ++col)
+      {
+        for (int row = 0; row < MN; ++row)
+        {
+          Real value = Real(0);
+
+          for (int i = 0; i < D; ++i)
+          {
+            const Real Cir =
+              geom.BinvT[
+                (std::size_t)r
+                + (std::size_t)D * (std::size_t)i];
+
+            const PartialPlan& partial =
+              *first_plan[(std::size_t)i];
+            const Real* Di =
+              partial_block(partial);
+
+            value +=
+              Cir *
+              Di[
+                (std::size_t)row
+                + (std::size_t)MN * (std::size_t)col];
+          }
+
+          Gr[
+            (std::size_t)row
+            + (std::size_t)MN * (std::size_t)col] =
+            value;
+        }
+      }
+
+      const Real* q =
+        coeffs.b
+        + (std::size_t)r * (std::size_t)Mp1;
+
+      const Real* Mq =
+        build_restricted_mult(1, q, MN);
+
+      detail::BlasGemm<Real>::run(
+        CblasColMajor,
+        CblasNoTrans,
+        CblasNoTrans,
+        m2,
+        M,
+        MN,
+        Real(1),
+        Mq,
+        m2,
+        Gr,
+        MN,
+        Real(1),
+        L_int_out,
+        m2);
+    }
+  }
+
+  // Zero-order part: M_c D^0.
+  if (plan.degrees.p0 >= 0)
+  {
+    const int MN = M;
+    const Real* Mq =
+      build_restricted_mult(0, coeffs.c, MN);
+    const Real* D0 =
+      partial_block(zero_plan);
+
+    detail::BlasGemm<Real>::run(
+      CblasColMajor,
+      CblasNoTrans,
+      CblasNoTrans,
+      m2,
+      M,
+      MN,
+      Real(1),
+      Mq,
+      m2,
+      D0,
+      MN,
+      Real(1),
+      L_int_out,
+      m2);
+  }
+
+  for (std::size_t entry = 0;
+       entry < (std::size_t)m2 * (std::size_t)M;
+       ++entry)
+  {
+    L_int_out[entry] *= geom.detBabs;
+  }
 }
 
 /* Convenience overload for direct C++ use from Leaf. */

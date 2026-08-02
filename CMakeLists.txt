@@ -141,6 +141,41 @@ target_link_libraries(test_jmat_stencil_cache PRIVATE
   lapack
 )
 
+add_executable(test_jprecomp_partial_dag_compat
+  src/test_jprecomp_partial_dag_compat.cpp)
+
+target_include_directories(test_jprecomp_partial_dag_compat PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_jprecomp_partial_dag_compat PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  blas
+  lapack
+)
+
+add_executable(test_jleaf_dag_elliptic_compat
+  src/test_jleaf_dag_elliptic_compat.cpp)
+
+target_include_directories(test_jleaf_dag_elliptic_compat PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_jleaf_dag_elliptic_compat PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+  blas
+  lapack
+)
+
+
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse
