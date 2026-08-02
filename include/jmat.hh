@@ -1,14 +1,25 @@
 #ifndef JMAT_H
 #define JMAT_H
 
-#include <cstdlib>      
-#include <cmath>        
-#include <cstddef>      
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
-#include <type_traits>  
-#include <jdetail.hh>     
-#include <jbasis.hh>       
-#include <jquad_tprod.hh>   
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <string>
+#include <system_error>
+#include <type_traits>
+#include <vector>
+#include <jdetail.hh>
+#include <jbasis.hh>
+#include <jquad_tprod.hh>
 
 
 namespace jsimplex
@@ -577,15 +588,25 @@ struct JMat
 
   /* Multiplication-by-coordinate sparse ops.
      Build J_all as concatenation [J_0 J_1 ... J_{D-1}] where each J_i is MxM.
-  
-     If n < stencil_min (or D==1): build dense then return.
-     Else: discover a stable stencil per coordinate and assemble only those entries
-           into dense Ji (for testing).
+
+     Small degrees retain the dense fallback.  Otherwise each coordinate uses
+     its persistent degree-independent stencil and only the indicated entries
+     are assembled.
   */
   static void build_pruned(int n,
-                           const Real* kappa,      // length D+1
+                           const Real* kappa,
                            unsigned int nquad,
-                           Real* J_all)            // (D * M * M) row-major blocks
+                           Real* J_all)
+  {
+    build_pruned(
+      n, kappa, nquad, J_all, default_stencil_folder());
+  }
+
+  static void build_pruned(int n,
+                           const Real* kappa,
+                           unsigned int nquad,
+                           Real* J_all,
+                           const std::string& stencil_folder)
   {
     if (!kappa || !J_all)
     {
@@ -597,49 +618,33 @@ struct JMat
       std::cerr << "JMat::build_pruned: require n >= 0\n";
       std::exit(1);
     }
-    if (nquad == 0) {nquad = 1;}
+    if (nquad == 0) nquad = 1;
 
-  
-    const int stencil_min = D + 1;
-    const int stencil_max = 4 * D;
-  
     const int M = Basis<D,Real>::dim_Pi(n);
-  
+    const int stencil_min = default_stencil_min_degree();
+
     if (D == 1 || n < stencil_min)
     {
-      build_pruned_dense(n, kappa, nquad, J_all); // existing dense builder [J0..]
+      build_pruned_dense(n, kappa, nquad, J_all);
       return;
     }
-  
+
     for (int coord = 0; coord < D; ++coord)
     {
-      Real* Ji = J_all + (std::size_t)coord * (std::size_t)M * (std::size_t)M;
-  
+      Real* Ji =
+        J_all + static_cast<std::size_t>(coord) *
+                static_cast<std::size_t>(M) *
+                static_cast<std::size_t>(M);
+
       JMatStencil S;
       std::memset(&S, 0, sizeof(S));
-  
-      // 1) Discover stencil for this coordinate
-      discover_stencil_stable(nquad,
-                              kappa,
-                              coord,
-                              stencil_min,
-                              stencil_max,
-                              &S);
-  
-      // 2) Assemble using stencil into dense (for testing)
-      build_from_deltas(n,
-                        kappa,
-                        nquad,
-                        coord,
-                        S,
-                        Ji);
-  
+      load_or_discover_coordinate_stencil(
+        nquad, kappa, coord, &S, stencil_folder);
+      build_from_deltas(
+        n, kappa, nquad, coord, S, Ji);
       S.clear();
     }
   }
-
-  
-
 
 
   /* Given total degree j and local index k in Hom(j)
@@ -788,6 +793,390 @@ struct JMat
     return true;
   }
   
+
+  static constexpr int stencil_cache_version()
+  {
+    return 1;
+  }
+
+  static constexpr int default_stencil_min_degree()
+  {
+    return D + 1;
+  }
+
+  static constexpr int default_stencil_max_degree()
+  {
+    return 4 * D;
+  }
+
+  static std::string default_stencil_folder()
+  {
+    return "stencils";
+  }
+
+  /* Canonical structural signature used for automatic interning.  The
+     coordinate and representative degree are intentionally omitted. */
+  static std::string stencil_signature(const JMatStencil& S)
+  {
+    std::ostringstream out;
+    out << "JMat:D=" << D
+        << ":ndelta0=" << S.ndelta0 << ":keys0=";
+    out << std::hex << std::setfill('0');
+    for (int k = 0; k < S.ndelta0; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keys0[k];
+    }
+
+    out << ":ndeltam1=" << std::dec << S.ndeltam1 << ":keysm1=";
+    out << std::hex;
+    for (int k = 0; k < S.ndeltam1; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keysm1[k];
+    }
+
+    out << ":ndeltap1=" << std::dec << S.ndeltap1 << ":keysp1=";
+    out << std::hex;
+    for (int k = 0; k < S.ndeltap1; ++k)
+    {
+      if (k) out << ',';
+      out << std::setw(16) << S.keysp1[k];
+    }
+    return out.str();
+  }
+
+  static bool stencil_valid(const JMatStencil& S)
+  {
+    if (S.ndelta0 < 0 || S.ndeltam1 < 0 || S.ndeltap1 < 0)
+      return false;
+    if (S.ndelta0 > 0 && !S.keys0) return false;
+    if (S.ndeltam1 > 0 && !S.keysm1) return false;
+    if (S.ndeltap1 > 0 && !S.keysp1) return false;
+
+    for (int k = 1; k < S.ndelta0; ++k)
+    {
+      if (!(S.keys0[k - 1] < S.keys0[k])) return false;
+    }
+    for (int k = 1; k < S.ndeltam1; ++k)
+    {
+      if (!(S.keysm1[k - 1] < S.keysm1[k])) return false;
+    }
+    for (int k = 1; k < S.ndeltap1; ++k)
+    {
+      if (!(S.keysp1[k - 1] < S.keysp1[k])) return false;
+    }
+    return true;
+  }
+
+  static void copy_stencil(const JMatStencil& src, JMatStencil* dst)
+  {
+    if (!dst || !stencil_valid(src))
+    {
+      std::cerr << "JMat::copy_stencil: invalid input\n";
+      std::exit(1);
+    }
+
+    dst->clear();
+    dst->j_rep = src.j_rep;
+    dst->ndelta0 = src.ndelta0;
+    dst->ndeltam1 = src.ndeltam1;
+    dst->ndeltap1 = src.ndeltap1;
+
+    auto copy_keys = [](const uint64_t* source,
+                        int count,
+                        uint64_t** destination)
+    {
+      *destination = nullptr;
+      if (count == 0) return;
+      *destination = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(count) * sizeof(uint64_t)));
+      if (!*destination)
+      {
+        std::cerr << "JMat::copy_stencil: allocation failed\n";
+        std::exit(1);
+      }
+      std::memcpy(
+        *destination,
+        source,
+        static_cast<std::size_t>(count) * sizeof(uint64_t));
+    };
+
+    copy_keys(src.keys0, src.ndelta0, &dst->keys0);
+    copy_keys(src.keysm1, src.ndeltam1, &dst->keysm1);
+    copy_keys(src.keysp1, src.ndeltap1, &dst->keysp1);
+  }
+
+  static std::filesystem::path stencil_cache_path(
+    int coord,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (coord < 0 || coord >= D)
+    {
+      std::cerr << "JMat::stencil_cache_path: coordinate out of range\n";
+      std::exit(1);
+    }
+
+    const std::filesystem::path folder =
+      stencil_folder.empty() ? std::filesystem::path(".")
+                             : std::filesystem::path(stencil_folder);
+    std::ostringstream name;
+    name << "jmat_D" << D
+         << "_coord" << coord
+         << "_v" << stencil_cache_version()
+         << ".stencil";
+    return folder / name.str();
+  }
+
+  /* Return false only when the keyed file is absent.  A present but invalid
+     file is a hard error so stale or corrupt cache data is never used. */
+  static bool load_stencil_file(
+    int coord,
+    JMatStencil* S_out,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!S_out)
+    {
+      std::cerr << "JMat::load_stencil_file: null output\n";
+      std::exit(1);
+    }
+
+    const std::filesystem::path path =
+      stencil_cache_path(coord, stencil_folder);
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec))
+    {
+      if (ec)
+      {
+        std::cerr << "JMat::load_stencil_file: exists failed for "
+                  << path << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+      return false;
+    }
+
+    std::ifstream in(path);
+    std::string magic;
+    std::string kind;
+    std::string basis_tag;
+    int version = 0;
+    int file_D = -1;
+    int file_coord = -1;
+    int j_rep = 0;
+    int ndelta0 = -1;
+    int ndeltam1 = -1;
+    int ndeltap1 = -1;
+
+    if (!(in >> magic >> version >> kind >> basis_tag
+             >> file_D >> file_coord >> j_rep
+             >> ndelta0 >> ndeltam1 >> ndeltap1))
+    {
+      std::cerr << "JMat::load_stencil_file: malformed header in "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    if (magic != "JPOLYD_STENCIL" ||
+        version != stencil_cache_version() ||
+        kind != "JMAT" ||
+        basis_tag != "KAPPA_MINUS_HALF" ||
+        file_D != D ||
+        file_coord != coord ||
+        ndelta0 < 0 ||
+        ndeltam1 < 0 ||
+        ndeltap1 < 0)
+    {
+      std::cerr << "JMat::load_stencil_file: incompatible cache file "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    JMatStencil loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    loaded.j_rep = j_rep;
+    loaded.ndelta0 = ndelta0;
+    loaded.ndeltam1 = ndeltam1;
+    loaded.ndeltap1 = ndeltap1;
+
+    auto read_keys = [&](int count,
+                         uint64_t** keys,
+                         const char* label)
+    {
+      *keys = nullptr;
+      if (count == 0) return;
+      *keys = static_cast<uint64_t*>(
+        std::malloc(static_cast<std::size_t>(count) * sizeof(uint64_t)));
+      if (!*keys)
+      {
+        loaded.clear();
+        std::cerr << "JMat::load_stencil_file: allocation failed\n";
+        std::exit(1);
+      }
+      for (int i = 0; i < count; ++i)
+      {
+        if (!(in >> (*keys)[i]))
+        {
+          loaded.clear();
+          std::cerr << "JMat::load_stencil_file: truncated "
+                    << label << " in " << path << '\n';
+          std::exit(1);
+        }
+      }
+    };
+
+    read_keys(loaded.ndelta0, &loaded.keys0, "keys0");
+    read_keys(loaded.ndeltam1, &loaded.keysm1, "keysm1");
+    read_keys(loaded.ndeltap1, &loaded.keysp1, "keysp1");
+
+    std::string end_token;
+    if (!(in >> end_token) ||
+        end_token != "END" ||
+        !stencil_valid(loaded))
+    {
+      loaded.clear();
+      std::cerr << "JMat::load_stencil_file: invalid stencil in "
+                << path << '\n';
+      std::exit(1);
+    }
+
+    S_out->clear();
+    *S_out = loaded;
+    std::memset(&loaded, 0, sizeof(loaded));
+    return true;
+  }
+
+  static void save_stencil_file(
+    int coord,
+    const JMatStencil& S,
+    const std::string& stencil_folder = "stencils")
+  {
+    if (!stencil_valid(S))
+    {
+      std::cerr << "JMat::save_stencil_file: invalid stencil\n";
+      std::exit(1);
+    }
+
+    const std::filesystem::path path =
+      stencil_cache_path(coord, stencil_folder);
+    const std::filesystem::path folder = path.parent_path();
+    std::error_code ec;
+    if (!folder.empty())
+    {
+      std::filesystem::create_directories(folder, ec);
+      if (ec)
+      {
+        std::cerr << "JMat::save_stencil_file: cannot create "
+                  << folder << ": " << ec.message() << '\n';
+        std::exit(1);
+      }
+    }
+
+    const std::filesystem::path temporary = path.string() + ".tmp";
+    {
+      std::ofstream out(temporary, std::ios::trunc);
+      if (!out)
+      {
+        std::cerr << "JMat::save_stencil_file: cannot open "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+
+      out << "JPOLYD_STENCIL " << stencil_cache_version()
+          << " JMAT KAPPA_MINUS_HALF "
+          << D << ' ' << coord << ' '
+          << S.j_rep << ' '
+          << S.ndelta0 << ' '
+          << S.ndeltam1 << ' '
+          << S.ndeltap1 << '\n';
+      for (int i = 0; i < S.ndelta0; ++i) out << S.keys0[i] << '\n';
+      for (int i = 0; i < S.ndeltam1; ++i) out << S.keysm1[i] << '\n';
+      for (int i = 0; i < S.ndeltap1; ++i) out << S.keysp1[i] << '\n';
+      out << "END\n";
+      out.flush();
+      if (!out)
+      {
+        std::cerr << "JMat::save_stencil_file: write failed for "
+                  << temporary << '\n';
+        std::exit(1);
+      }
+    }
+
+    std::filesystem::rename(temporary, path, ec);
+    if (ec)
+    {
+      std::error_code remove_ec;
+      std::filesystem::remove(path, remove_ec);
+      ec.clear();
+      std::filesystem::rename(temporary, path, ec);
+    }
+    if (ec)
+    {
+      std::cerr << "JMat::save_stencil_file: rename failed for "
+                << path << ": " << ec.message() << '\n';
+      std::exit(1);
+    }
+  }
+
+  static void discover_coordinate_stencil(
+    unsigned int nquad,
+    const Real* kappa,
+    int coord,
+    int n_min,
+    int n_max,
+    JMatStencil* S_out)
+  {
+    discover_stencil_stable(
+      nquad, kappa, coord, n_min, n_max, S_out);
+  }
+
+  /* Main persistent path.  Returns true when loaded and false when newly
+     discovered and written. */
+  static bool load_or_discover_coordinate_stencil(
+    unsigned int nquad,
+    const Real* kappa,
+    int coord,
+    JMatStencil* S_out,
+    const std::string& stencil_folder = "stencils",
+    int n_min = default_stencil_min_degree(),
+    int n_max = default_stencil_max_degree())
+  {
+    if (!kappa || !S_out)
+    {
+      std::cerr
+        << "JMat::load_or_discover_coordinate_stencil: null input\n";
+      std::exit(1);
+    }
+    if (coord < 0 || coord >= D)
+    {
+      std::cerr
+        << "JMat::load_or_discover_coordinate_stencil: coordinate out of range\n";
+      std::exit(1);
+    }
+    if (nquad == 0) nquad = 1;
+
+    if (load_stencil_file(coord, S_out, stencil_folder))
+      return true;
+
+    discover_coordinate_stencil(
+      nquad, kappa, coord, n_min, n_max, S_out);
+    save_stencil_file(coord, *S_out, stencil_folder);
+    return false;
+  }
+
+  static bool load_or_discover_stencil(
+    unsigned int nquad,
+    const Real* kappa,
+    int coord,
+    JMatStencil* S_out,
+    const std::string& stencil_folder = "stencils",
+    int n_min = default_stencil_min_degree(),
+    int n_max = default_stencil_max_degree())
+  {
+    return load_or_discover_coordinate_stencil(
+      nquad, kappa, coord, S_out, stencil_folder, n_min, n_max);
+  }
+
+
   static int cmp_u64(const void* a, const void* b)
   {
     const uint64_t A = *(const uint64_t*)a;
@@ -860,7 +1249,7 @@ struct JMat
         S_out->clear();
         *S_out = S_cur;                // shallow move
         std::memset(&S_cur, 0, sizeof(S_cur));
-        std::cout << "stabilized at n_test = " << n_test << std::endl;
+        std::cout << "JMat: stabilized at n_test = " << n_test << std::endl;
         return;
       }
   
@@ -1277,123 +1666,219 @@ struct JMat
     std::free(off);
   }
 
-  // Build J_coord in CSC.
-  //
-  // Output arrays allocated with malloc:
-  //   colptr : length M+1
-  //   rowind : length nnz
-  //   x      : length nnz
-  //
-  // Returns nnz.
-  static std::size_t build_pruned_csc(int n,
-                                      const Real* kappa,     // length D+1
-                                      unsigned int nquad,
-                                      int coord,             // 0..D-1
-                                      int** colptr_out,
-                                      int** rowind_out,
-                                      Real** x_out)
+  /* Build only the finite-degree CSC structure obtained by truncating a
+     degree-independent JMat delta stencil.  No quadrature or parameter values
+     are used. */
+  static std::size_t build_csc_pattern_from_stencil(
+    int n,
+    const JMatStencil& S,
+    int** colptr_out,
+    int** rowind_out)
   {
-    if (!kappa || !colptr_out || !rowind_out || !x_out)
+    if (!colptr_out || !rowind_out || !stencil_valid(S))
     {
-      std::cerr << "JMat::build_pruned_csc: null input\n";
+      std::cerr << "JMat::build_csc_pattern_from_stencil: invalid input\n";
       std::exit(1);
     }
     *colptr_out = nullptr;
     *rowind_out = nullptr;
-    *x_out      = nullptr;
-  
+
     if (n < 0)
     {
-      std::cerr << "JMat::build_pruned_csc: require n >= 0\n";
+      std::cerr << "JMat::build_csc_pattern_from_stencil: n < 0\n";
+      std::exit(1);
+    }
+
+    const int M = Basis<D,Real>::dim_Pi(n);
+    int* colptr = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M + 1) * sizeof(int)));
+    int* alpha_table = static_cast<int*>(
+      std::malloc(static_cast<std::size_t>(M) *
+                  static_cast<std::size_t>(D) * sizeof(int)));
+    if (!colptr || !alpha_table)
+    {
+      std::free(colptr);
+      std::free(alpha_table);
+      std::cerr << "JMat::build_csc_pattern_from_stencil: allocation failed\n";
+      std::exit(1);
+    }
+
+    Basis<D,Real>::build_alpha_table(n, alpha_table);
+    colptr[0] = 0;
+
+    std::vector<int> rows;
+    rows.reserve(
+      static_cast<std::size_t>(M) *
+      static_cast<std::size_t>(
+        S.ndelta0 + S.ndeltam1 + S.ndeltap1));
+
+    int dvec[8];
+    int dst_alpha[8];
+
+    auto append_keys = [&](int jdeg,
+                           int jloc,
+                           int ideg,
+                           const uint64_t* keys,
+                           int nkey)
+    {
+      if (ideg < 0 || ideg > n) return;
+
+      const int* src =
+        hom_decode_ptr(jdeg, jloc, alpha_table);
+      const int row0 = Basis<D,Real>::dim_Pi(ideg - 1);
+      const int rdeg = Basis<D,Real>::dim_Hom(ideg);
+
+      for (int t = 0; t < nkey; ++t)
+      {
+        unpack_delta8(keys[t], dvec);
+
+        bool ok = true;
+        int sum = 0;
+        for (int dim = 0; dim < D; ++dim)
+        {
+          dst_alpha[dim] = src[dim] + dvec[dim];
+          if (dst_alpha[dim] < 0)
+          {
+            ok = false;
+            break;
+          }
+          sum += dst_alpha[dim];
+        }
+        if (!ok || sum != ideg) continue;
+
+        const int iloc = hom_encode_rank_fast(ideg, dst_alpha);
+        if (iloc < 0 || iloc >= rdeg) continue;
+        rows.push_back(row0 + iloc);
+      }
+    };
+
+    for (int jdeg = 0; jdeg <= n; ++jdeg)
+    {
+      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
+      const int cdeg = Basis<D,Real>::dim_Hom(jdeg);
+
+      for (int jloc = 0; jloc < cdeg; ++jloc)
+      {
+        const int jg = col0 + jloc;
+        append_keys(
+          jdeg, jloc, jdeg,
+          S.keys0, S.ndelta0);
+        append_keys(
+          jdeg, jloc, jdeg - 1,
+          S.keysm1, S.ndeltam1);
+        append_keys(
+          jdeg, jloc, jdeg + 1,
+          S.keysp1, S.ndeltap1);
+        colptr[jg + 1] = static_cast<int>(rows.size());
+      }
+    }
+
+    int* rowind = nullptr;
+    if (!rows.empty())
+    {
+      rowind = static_cast<int*>(
+        std::malloc(rows.size() * sizeof(int)));
+      if (!rowind)
+      {
+        std::free(colptr);
+        std::free(alpha_table);
+        std::cerr
+          << "JMat::build_csc_pattern_from_stencil: allocation failed\n";
+        std::exit(1);
+      }
+      std::memcpy(
+        rowind,
+        rows.data(),
+        rows.size() * sizeof(int));
+    }
+
+    std::free(alpha_table);
+    *colptr_out = colptr;
+    *rowind_out = rowind;
+    return rows.size();
+  }
+
+  /* Fill values on a supplied CSC pattern.  This also supports a union
+     stencil: every supplied row/column slot is evaluated numerically. */
+  static void fill_pruned_csc_values(
+    int n,
+    const Real* kappa,
+    unsigned int nquad,
+    int coord,
+    const int* colptr,
+    const int* rowind,
+    Real* values)
+  {
+    if (!kappa || !colptr || n < 0)
+    {
+      std::cerr << "JMat::fill_pruned_csc_values: invalid input\n";
       std::exit(1);
     }
     if (coord < 0 || coord >= D)
     {
-      std::cerr << "JMat::build_pruned_csc: coord out of range\n";
+      std::cerr << "JMat::fill_pruned_csc_values: coordinate out of range\n";
       std::exit(1);
     }
-    if (nquad == 0) { nquad = 1; }
-  
+    if (nquad == 0) nquad = 1;
+
     const int M = Basis<D,Real>::dim_Pi(n);
-  
-    // Stencil policy consistent with your dense build_pruned():
-    const int stencil_min = D + 1;
-    const int stencil_max = 4 * D;
-  
-    // --- Fallback: dense -> CSC (for small n or D==1) ---
-    if (D == 1 || n < stencil_min)
+    if (colptr[0] != 0)
     {
-      Real* Jdense = (Real*) std::malloc((std::size_t)M * (std::size_t)M * sizeof(Real));
-      if (!Jdense)
+      std::cerr << "JMat::fill_pruned_csc_values: colptr[0] != 0\n";
+      std::exit(1);
+    }
+    for (int j = 0; j < M; ++j)
+    {
+      if (colptr[j + 1] < colptr[j])
       {
-        std::cerr << "JMat::build_pruned_csc: alloc dense failed\n";
+        std::cerr << "JMat::fill_pruned_csc_values: invalid colptr\n";
         std::exit(1);
       }
-  
-      build_pruned_dense_coordinate(
-        n,
-        kappa,
-        nquad,
-        coord,
-        Jdense
-      );
-  
-      const std::size_t nnz =
-        detail::compress_dense_to_csc(M, Jdense, colptr_out, rowind_out, x_out);
-  
-      std::free(Jdense);
-      return nnz;
     }
-  
-    // --- Stencil path ---
-    JMatStencil S;
-    std::memset(&S, 0, sizeof(S));
-  
-    discover_stencil_stable(nquad,
-                            kappa,
-                            coord,
-                            stencil_min,
-                            stencil_max,
-                            &S);
-  
-    // Build CSC directly using stencil (no dense intermediate).
-    const std::size_t nnz =
-      build_from_deltas_csc(n, kappa, nquad, coord, S, colptr_out, rowind_out, x_out);
-  
-    S.clear();
-    return nnz;
-  }
 
-  static std::size_t build_from_deltas_csc(int n,
-                                          const Real* kappa,
-                                          unsigned int nquad,
-                                          int coord,
-                                          const JMatStencil& S,
-                                          int** colptr_out,
-                                          int** rowind_out,
-                                          Real** x_out)
-  {
-    const int M = Basis<D,Real>::dim_Pi(n);
-  
-    // ---- Quadrature: weight w_kappa ----
-    const unsigned int npts_u = QuadMapped<D,Real>::npoints(nquad);
-    const int npts = (int)npts_u;
-  
-    Real* X  = (Real*) std::malloc((std::size_t)npts * (std::size_t)D * sizeof(Real));
-    Real* wq = (Real*) std::malloc((std::size_t)npts * sizeof(Real));
+    const int nnz = colptr[M];
+    if (nnz > 0 && (!rowind || !values))
+    {
+      std::cerr << "JMat::fill_pruned_csc_values: null nnz arrays\n";
+      std::exit(1);
+    }
+    for (int p = 0; p < nnz; ++p)
+    {
+      if (rowind[p] < 0 || rowind[p] >= M)
+      {
+        std::cerr << "JMat::fill_pruned_csc_values: row out of range\n";
+        std::exit(1);
+      }
+    }
+
+    const unsigned int npts_u =
+      QuadMapped<D,Real>::npoints(nquad);
+    const int npts = static_cast<int>(npts_u);
+
+    Real* X = static_cast<Real*>(
+      std::malloc(
+        static_cast<std::size_t>(npts) *
+        static_cast<std::size_t>(D) * sizeof(Real)));
+    Real* wq = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(npts) * sizeof(Real)));
     if (!X || !wq)
     {
-      std::cerr << "JMat::build_from_deltas_csc: alloc quad failed\n";
+      std::free(X);
+      std::free(wq);
+      std::cerr << "JMat::fill_pruned_csc_values: allocation failed\n";
       std::exit(1);
     }
-    const int built = QuadMapped<D,Real>::build_kappa(nquad, kappa, X, wq);
+
+    const int built =
+      QuadMapped<D,Real>::build_kappa(nquad, kappa, X, wq);
     if (built != npts)
     {
-      std::cerr << "JMat::build_from_deltas_csc: build_kappa failed\n";
+      std::free(X);
+      std::free(wq);
+      std::cerr << "JMat::fill_pruned_csc_values: quadrature failed\n";
       std::exit(1);
     }
-  
-    // normalize (matches your other builders; harmless if already normalized)
+
     Real sw = Real(0);
     for (int p = 0; p < npts; ++p) sw += wq[p];
     if (sw != Real(0))
@@ -1401,37 +1886,49 @@ struct JMat
       const Real inv_sw = Real(1) / sw;
       for (int p = 0; p < npts; ++p) wq[p] *= inv_sw;
     }
-  
-    // ---- Basis tables for degree n ----
-    int* alpha_table = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    int* tail_deg    = (int*) std::malloc((std::size_t)M * (std::size_t)D * sizeof(int));
-    Real* inv_h      = (Real*) std::malloc((std::size_t)M * sizeof(Real));
-    if (!alpha_table || !tail_deg || !inv_h)
+
+    int* alpha_table = static_cast<int*>(
+      std::malloc(
+        static_cast<std::size_t>(M) *
+        static_cast<std::size_t>(D) * sizeof(int)));
+    int* tail_deg = static_cast<int*>(
+      std::malloc(
+        static_cast<std::size_t>(M) *
+        static_cast<std::size_t>(D) * sizeof(int)));
+    Real* inv_h = static_cast<Real*>(
+      std::malloc(static_cast<std::size_t>(M) * sizeof(Real)));
+    Real* V = static_cast<Real*>(
+      std::malloc(
+        static_cast<std::size_t>(npts) *
+        static_cast<std::size_t>(M) * sizeof(Real)));
+
+    if (!alpha_table || !tail_deg || !inv_h || !V)
     {
-      std::cerr << "JMat::build_from_deltas_csc: alloc tables failed\n";
+      std::free(X);
+      std::free(wq);
+      std::free(alpha_table);
+      std::free(tail_deg);
+      std::free(inv_h);
+      std::free(V);
+      std::cerr << "JMat::fill_pruned_csc_values: allocation failed\n";
       std::exit(1);
     }
-  
+
     Basis<D,Real>::build_alpha_table(n, alpha_table);
     Basis<D,Real>::build_tail_deg(n, alpha_table, tail_deg);
     for (int m = 0; m < M; ++m)
     {
-      const int* a = alpha_table + (std::size_t)m * (std::size_t)D;
-      inv_h[m] = Basis<D,Real>::inv_h_alpha(a, kappa);
+      const int* alpha =
+        alpha_table +
+        static_cast<std::size_t>(m) * static_cast<std::size_t>(D);
+      inv_h[m] = Basis<D,Real>::inv_h_alpha(alpha, kappa);
     }
-  
-    // ---- Evaluate basis values V(x) ----
+
     const int ldV = npts;
-    Real* V = (Real*) std::malloc((std::size_t)npts * (std::size_t)M * sizeof(Real));
-    if (!V)
-    {
-      std::cerr << "JMat::build_from_deltas_csc: alloc V failed\n";
-      std::exit(1);
-    }
-  
     Basis<D,Real>::eval_all(
       X,
-      D, 1,
+      D,
+      1,
       npts,
       kappa,
       n,
@@ -1440,168 +1937,187 @@ struct JMat
       inv_h,
       V,
       ldV,
-      nullptr
-    );
-  
-    // ---- Pass 1: count nnz per column ----
-    int* colnnz = (int*) std::malloc((std::size_t)M * sizeof(int));
-    int* colptr = (int*) std::malloc((std::size_t)(M + 1) * sizeof(int));
-    if (!colnnz || !colptr)
+      nullptr);
+
+    for (int j = 0; j < M; ++j)
     {
-      std::cerr << "JMat::build_from_deltas_csc: alloc colnnz/colptr failed\n";
-      std::exit(1);
-    }
-    for (int j = 0; j < M; ++j) colnnz[j] = 0;
-  
-    int dvec[8];
-    int dst_alpha[8];
-  
-    auto count_keys = [&](int jdeg, int jloc, int ideg, const uint64_t* keys, int nkey) -> int
-    {
-      if (ideg < 0 || ideg > n) return 0;
-  
-      const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-      int cnt = 0;
-  
-      for (int t = 0; t < nkey; ++t)
+      const Real* Vj =
+        V + static_cast<std::size_t>(j) *
+            static_cast<std::size_t>(ldV);
+
+      for (int pentry = colptr[j];
+           pentry < colptr[j + 1];
+           ++pentry)
       {
-        unpack_delta8(keys[t], dvec);
-  
-        bool ok = true;
-        int sum = 0;
-        for (int d = 0; d < D; ++d)
-        {
-          dst_alpha[d] = src[d] + dvec[d];
-          if (dst_alpha[d] < 0) { ok = false; break; }
-          sum += dst_alpha[d];
-        }
-        if (!ok) continue;
-        if (sum != ideg) continue;
-  
-        // rank check (defensive)
-        const int iloc = hom_encode_rank_fast(ideg, dst_alpha);
-        const int r = Basis<D,Real>::dim_Hom(ideg);
-        if (iloc < 0 || iloc >= r) continue;
-  
-        ++cnt;
-      }
-      return cnt;
-    };
-  
-    for (int jdeg = 0; jdeg <= n; ++jdeg)
-    {
-      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int c    = Basis<D,Real>::dim_Hom(jdeg);
-  
-      for (int jloc = 0; jloc < c; ++jloc)
-      {
-        const int jg = col0 + jloc;
-  
-        int cnt = 0;
-        // src j -> dst j
-        cnt += count_keys(jdeg, jloc, jdeg,   S.keys0,  S.ndelta0);
-        // src j -> dst j-1
-        cnt += count_keys(jdeg, jloc, jdeg-1, S.keysm1, S.ndeltam1);
-        // src j -> dst j+1
-        cnt += count_keys(jdeg, jloc, jdeg+1, S.keysp1, S.ndeltap1);
-  
-        colnnz[jg] = cnt;
-      }
-    }
-  
-    colptr[0] = 0;
-    for (int j = 0; j < M; ++j) colptr[j + 1] = colptr[j] + colnnz[j];
-  
-    const int nnz = colptr[M];
-  
-    int* rowind = (int*) std::malloc((std::size_t)nnz * sizeof(int));
-    Real* x     = (Real*) std::malloc((std::size_t)nnz * sizeof(Real));
-    int*  wpos  = (int*) std::malloc((std::size_t)M * sizeof(int));
-    if ((!rowind && nnz) || (!x && nnz) || !wpos)
-    {
-      std::cerr << "JMat::build_from_deltas_csc: alloc nnz arrays failed\n";
-      std::exit(1);
-    }
-    for (int j = 0; j < M; ++j) wpos[j] = colptr[j];
-  
-    // ---- Pass 2: fill CSC ----
-    auto fill_keys = [&](int jdeg, int jloc, int ideg, const uint64_t* keys, int nkey)
-    {
-      if (ideg < 0 || ideg > n) return;
-  
-      const int col0 = Basis<D,Real>::dim_Pi(jdeg - 1);
-      const int jg = col0 + jloc;
-  
-      const int row0 = Basis<D,Real>::dim_Pi(ideg - 1);
-  
-      const int* src = hom_decode_ptr(jdeg, jloc, alpha_table);
-      const Real* Vj = V + (std::size_t)jg * (std::size_t)ldV;
-  
-      for (int t = 0; t < nkey; ++t)
-      {
-        unpack_delta8(keys[t], dvec);
-  
-        bool ok = true;
-        int sum = 0;
-        for (int d = 0; d < D; ++d)
-        {
-          dst_alpha[d] = src[d] + dvec[d];
-          if (dst_alpha[d] < 0) { ok = false; break; }
-          sum += dst_alpha[d];
-        }
-        if (!ok) continue;
-        if (sum != ideg) continue;
-  
-        const int iloc = hom_encode_rank_fast(ideg, dst_alpha);
-        const int r = Basis<D,Real>::dim_Hom(ideg);
-        if (iloc < 0 || iloc >= r) continue;
-  
-        const int ig = row0 + iloc;
-        const Real* Vi = V + (std::size_t)ig * (std::size_t)ldV;
-  
-        // s = <phi_i, x_coord * phi_j>_w
-        Real s = Real(0);
+        const int i = rowind[pentry];
+        const Real* Vi =
+          V + static_cast<std::size_t>(i) *
+              static_cast<std::size_t>(ldV);
+
+        Real sum = Real(0);
         for (int p = 0; p < npts; ++p)
         {
-          const Real xp = X[(std::size_t)p * (std::size_t)D + (std::size_t)coord];
-          s += Vi[p] * wq[p] * xp * Vj[p];
+          const Real xp =
+            X[static_cast<std::size_t>(p) *
+              static_cast<std::size_t>(D) +
+              static_cast<std::size_t>(coord)];
+          sum += Vi[p] * wq[p] * xp * Vj[p];
         }
-  
-        const int pos = wpos[jg]++;
-        rowind[pos] = ig;
-        x[pos]      = s;
-      }
-    };
-  
-    for (int jdeg = 0; jdeg <= n; ++jdeg)
-    {
-      const int c = Basis<D,Real>::dim_Hom(jdeg);
-      for (int jloc = 0; jloc < c; ++jloc)
-      {
-        fill_keys(jdeg, jloc, jdeg,   S.keys0,  S.ndelta0);
-        fill_keys(jdeg, jloc, jdeg-1, S.keysm1, S.ndeltam1);
-        fill_keys(jdeg, jloc, jdeg+1, S.keysp1, S.ndeltap1);
+        values[pentry] = sum;
       }
     }
-  
-    // hand off outputs
-    *colptr_out = colptr;
-    *rowind_out = rowind;
-    *x_out      = x;
-  
-    // free temporaries
+
     std::free(X);
     std::free(wq);
     std::free(alpha_table);
     std::free(tail_deg);
     std::free(inv_h);
     std::free(V);
-    std::free(colnnz);
-    std::free(wpos);
-  
-    return (std::size_t)nnz;
   }
 
+  static std::size_t build_pruned_csc_from_stencil(
+    int n,
+    const Real* kappa,
+    unsigned int nquad,
+    int coord,
+    const JMatStencil& S,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    if (!kappa || !colptr_out || !rowind_out || !values_out)
+    {
+      std::cerr << "JMat::build_pruned_csc_from_stencil: null input\n";
+      std::exit(1);
+    }
+
+    *colptr_out = nullptr;
+    *rowind_out = nullptr;
+    *values_out = nullptr;
+
+    const std::size_t nnz =
+      build_csc_pattern_from_stencil(
+        n, S, colptr_out, rowind_out);
+
+    if (nnz > 0)
+    {
+      *values_out = static_cast<Real*>(
+        std::malloc(nnz * sizeof(Real)));
+      if (!*values_out)
+      {
+        std::free(*colptr_out);
+        std::free(*rowind_out);
+        *colptr_out = nullptr;
+        *rowind_out = nullptr;
+        std::cerr
+          << "JMat::build_pruned_csc_from_stencil: allocation failed\n";
+        std::exit(1);
+      }
+    }
+
+    fill_pruned_csc_values(
+      n, kappa, nquad, coord,
+      *colptr_out, *rowind_out, *values_out);
+    return nnz;
+  }
+
+  /* Backward-compatible name for callers that already hold a stencil. */
+  static std::size_t build_from_deltas_csc(
+    int n,
+    const Real* kappa,
+    unsigned int nquad,
+    int coord,
+    const JMatStencil& S,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    return build_pruned_csc_from_stencil(
+      n, kappa, nquad, coord, S,
+      colptr_out, rowind_out, values_out);
+  }
+
+  static std::size_t build_pruned_csc(
+    int n,
+    const Real* kappa,
+    unsigned int nquad,
+    int coord,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out)
+  {
+    return build_pruned_csc(
+      n, kappa, nquad, coord,
+      colptr_out, rowind_out, values_out,
+      default_stencil_folder());
+  }
+
+  static std::size_t build_pruned_csc(
+    int n,
+    const Real* kappa,
+    unsigned int nquad,
+    int coord,
+    int** colptr_out,
+    int** rowind_out,
+    Real** values_out,
+    const std::string& stencil_folder)
+  {
+    if (!kappa || !colptr_out || !rowind_out || !values_out)
+    {
+      std::cerr << "JMat::build_pruned_csc: null input\n";
+      std::exit(1);
+    }
+    *colptr_out = nullptr;
+    *rowind_out = nullptr;
+    *values_out = nullptr;
+
+    if (n < 0)
+    {
+      std::cerr << "JMat::build_pruned_csc: require n >= 0\n";
+      std::exit(1);
+    }
+    if (coord < 0 || coord >= D)
+    {
+      std::cerr << "JMat::build_pruned_csc: coordinate out of range\n";
+      std::exit(1);
+    }
+    if (nquad == 0) nquad = 1;
+
+    const int M = Basis<D,Real>::dim_Pi(n);
+    const int stencil_min = default_stencil_min_degree();
+
+    if (D == 1 || n < stencil_min)
+    {
+      Real* dense = static_cast<Real*>(
+        std::malloc(
+          static_cast<std::size_t>(M) *
+          static_cast<std::size_t>(M) * sizeof(Real)));
+      if (!dense)
+      {
+        std::cerr << "JMat::build_pruned_csc: allocation failed\n";
+        std::exit(1);
+      }
+
+      build_pruned_dense_coordinate(
+        n, kappa, nquad, coord, dense);
+      const std::size_t nnz =
+        detail::compress_dense_to_csc(
+          M, dense, colptr_out, rowind_out, values_out);
+      std::free(dense);
+      return nnz;
+    }
+
+    JMatStencil S;
+    std::memset(&S, 0, sizeof(S));
+    load_or_discover_coordinate_stencil(
+      nquad, kappa, coord, &S, stencil_folder);
+    const std::size_t nnz =
+      build_pruned_csc_from_stencil(
+        n, kappa, nquad, coord, S,
+        colptr_out, rowind_out, values_out);
+    S.clear();
+    return nnz;
+  }
 
 
 };

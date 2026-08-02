@@ -1,12 +1,16 @@
 #ifndef JPRECOMP_HH
 #define JPRECOMP_HH
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
 #include <memory>
+#include <map>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include <jbasis.hh>
@@ -36,6 +40,21 @@ public:
     std::size_t nnz() const { return values.size(); }
   };
 
+  // Degree-n CSC structure generated from a degree-independent DMat/KMat
+  // delta stencil. Numerical values are filled separately for each shifted
+  // factor. Equal signatures are interned automatically within each operator
+  // family, so multiple axes/parameters may reference the same structure.
+  struct SharedOperatorStructure
+  {
+    int rows = 0;
+    int cols = 0;
+    std::string signature;
+    std::vector<int> colptr;
+    std::vector<int> rowind;
+
+    std::size_t nnz() const { return rowind.size(); }
+  };
+
   int n = 0;
   int q_pad = 2;
   int q_vol = 0;
@@ -51,6 +70,17 @@ public:
   std::array<Real, D + 1> kappa{};
   std::array<Real, D + 1> kappa_res{};
   std::array<Real, D> kappa_face{};
+
+  // Persistent stencil cache directory used by DMat/KMat. Missing keyed
+  // stencils are discovered once and written here; subsequent precomputes
+  // load them without running stencil stabilization.
+  std::string stencil_folder = "stencils";
+
+  // Interned finite-degree structures and key-to-structure maps.
+  std::vector<SharedOperatorStructure> d_structures;
+  std::vector<SharedOperatorStructure> k_structures;
+  std::array<int, D> d_axis_structure{};
+  std::array<int, D + 1> k_parameter_structure{};
 
   // Volume quadrature/basis in source-kappa convention.
   std::vector<Real> X_vol;     // row-major nq_vol x D (for basis evaluator)
@@ -134,12 +164,16 @@ public:
                     int q_pad_in,
                     int q_vol_in,
                     int q_face_in,
-                    const Real* kappa_in)
+                    const Real* kappa_in,
+                    const std::string& stencil_folder_in = "stencils")
   {
     if (!kappa_in) { throw std::invalid_argument("RefSimplexPrecomp: null kappa"); }
     if (n_in < 2) { throw std::invalid_argument("RefSimplexPrecomp: require n>=2"); }
 
     n = n_in;
+    stencil_folder = stencil_folder_in.empty()
+      ? std::string("stencils")
+      : stencil_folder_in;
     q_pad = (q_pad_in > 0) ? q_pad_in : 2;
     q_vol = (q_vol_in > 0) ? q_vol_in : (n + q_pad);
     q_face = (q_face_in > 0) ? q_face_in : q_vol;
@@ -171,6 +205,8 @@ public:
     build_volume_data();
     build_residual_data();
     build_face_data();
+    build_operator_stencil_data();
+    build_derivative_factor_data();
     build_second_partials();
     build_first_partials();
     build_zero_partials();
@@ -179,6 +215,15 @@ public:
   }
 
 private:
+  // Stage-A numerical factors: dense row-major materializations assembled
+  // from shared stencil structures. These preserve existing public dense
+  // operators while eliminating repeated stencil discovery.
+  std::vector<Real> D1_factor_rm;
+  std::vector<Real> D2_factor_rm;
+  std::vector<std::array<Real, D + 1>> derivative_kappa_1;
+  std::map<std::array<int, D + 1>, std::vector<Real>>
+    residual_promotion_cache;
+
   void build_volume_data()
   {
     X_vol.assign((std::size_t)nq_vol * D, (Real)0);
@@ -266,163 +311,502 @@ private:
     }
   }
 
-  void build_second_partials()
+  static void copy_csc_raw_structure(
+    int rows,
+    int cols,
+    const std::string& signature,
+    int* colptr_raw,
+    int* rowind_raw,
+    std::size_t nnz,
+    SharedOperatorStructure& out)
   {
-    Lij_ref.assign((std::size_t)M * M * D * D, (Real)0);
+    std::unique_ptr<int, decltype(&std::free)> colptr_guard(
+      colptr_raw, &std::free);
+    std::unique_ptr<int, decltype(&std::free)> rowind_guard(
+      rowind_raw, &std::free);
 
-    std::vector<Real> D1((std::size_t)D * M * M, (Real)0); // row-major per axis
-    std::vector<std::array<Real, D + 1>> k1((std::size_t)D);
-
-    for (int i = 0; i < D; ++i)
+    out.rows = rows;
+    out.cols = cols;
+    out.signature = signature;
+    out.colptr.assign(
+      colptr_raw,
+      colptr_raw + static_cast<std::size_t>(cols) + 1);
+    if (nnz > 0)
     {
-      Basis<D,Real>::derivative_kappa_shift(kappa.data(), i, k1[(std::size_t)i].data());
-      DMat<D,Real>::build_tprod_natural_pruned_dense(
-        n, (unsigned int)q_vol, kappa.data(), i,
-        D1.data() + (std::size_t)i * M * M);
+      out.rowind.assign(rowind_raw, rowind_raw + nnz);
+    }
+  }
+
+  void build_operator_stencil_data()
+  {
+    d_axis_structure.fill(-1);
+    k_parameter_structure.fill(-1);
+    d_structures.clear();
+    k_structures.clear();
+
+    std::map<std::string, int> d_signature_index;
+    std::map<std::string, int> k_signature_index;
+
+    const int d_rows = Basis<D,Real>::dim_Pi(n - 1);
+
+    for (int axis = 0; axis < D; ++axis)
+    {
+      DMatStencil stencil{};
+      DMat<D,Real>::load_or_discover_natural_stencil(
+        static_cast<unsigned int>(q_vol),
+        kappa.data(),
+        axis,
+        &stencil,
+        stencil_folder);
+
+      const std::string signature =
+        DMat<D,Real>::stencil_signature(stencil);
+      const auto found = d_signature_index.find(signature);
+      if (found != d_signature_index.end())
+      {
+        d_axis_structure[static_cast<std::size_t>(axis)] = found->second;
+        stencil.clear();
+        continue;
+      }
+
+      int* colptr_raw = nullptr;
+      int* rowind_raw = nullptr;
+      const std::size_t nnz =
+        DMat<D,Real>::build_natural_csc_pattern_from_stencil(
+          n, stencil, &colptr_raw, &rowind_raw);
+
+      SharedOperatorStructure structure;
+      copy_csc_raw_structure(
+        d_rows, M, signature,
+        colptr_raw, rowind_raw, nnz, structure);
+
+      const int index = static_cast<int>(d_structures.size());
+      d_structures.push_back(std::move(structure));
+      d_signature_index.emplace(signature, index);
+      d_axis_structure[static_cast<std::size_t>(axis)] = index;
+      stencil.clear();
     }
 
-    for (int i = 0; i < D; ++i)
+    for (int parameter = 0; parameter <= D; ++parameter)
     {
-      for (int j = 0; j < D; ++j)
+      KMatStencil stencil{};
+      KMat<D,Real>::load_or_discover_natural_stencil(
+        static_cast<unsigned int>(q_vol),
+        kappa.data(),
+        parameter,
+        &stencil,
+        stencil_folder);
+
+      const std::string signature =
+        KMat<D,Real>::stencil_signature(stencil);
+      const auto found = k_signature_index.find(signature);
+      if (found != k_signature_index.end())
       {
-        std::array<Real, D + 1> k2{};
-        Basis<D,Real>::derivative_kappa_shift(k1[(std::size_t)i].data(), j, k2.data());
+        k_parameter_structure[static_cast<std::size_t>(parameter)] =
+          found->second;
+        stencil.clear();
+        continue;
+      }
 
-        std::vector<Real> Dj((std::size_t)M * M, (Real)0);
-        DMat<D,Real>::build_tprod_natural_pruned_dense(
-          n, (unsigned int)q_vol, k1[(std::size_t)i].data(), j, Dj.data());
+      int* colptr_raw = nullptr;
+      int* rowind_raw = nullptr;
+      const std::size_t nnz =
+        KMat<D,Real>::build_natural_csc_pattern_from_stencil(
+          n, stencil, &colptr_raw, &rowind_raw);
 
-        std::vector<Real> Draw_col((std::size_t)M * M, Real(0));
-        
-        const Real* Di_rm =
-          D1.data() + (std::size_t)i * M * M;
-        
-        // Draw_col = Dj * Di
-        // Dj and Di are row-major actual matrices.
-        // Interpreted as column-major, they represent Dj^T and Di^T.
-        // Therefore trans/trans gives the actual Dj and Di.
-        detail::BlasGemm<Real>::run(
-          CblasColMajor,
-          CblasTrans,
-          CblasTrans,
-          M,
-          M,
-          M,
-          Real(1),
-          Dj.data(),
-          M,
-          Di_rm,
-          M,
-          Real(0),
-          Draw_col.data(),
-          M
-        );
-        
-        // Output block is column-major M x M inside Lij_ref.
-        Real* Lij_block =
-          &Lij_ref[(std::size_t)M * M * ((std::size_t)i + (std::size_t)D * j)];
-        
-        std::vector<Real> K((std::size_t)M * M, (Real)0);
-        KMat<D,Real>::build_tprod_pruned_dense(
-          n, (unsigned int)q_vol, k2.data(), kappa_res.data(), K.data());
+      SharedOperatorStructure structure;
+      copy_csc_raw_structure(
+        M, M, signature,
+        colptr_raw, rowind_raw, nnz, structure);
 
-  
-        // Lij_block = K * Draw_col
-        //
-        // K is row-major actual matrix, so use transA.
-        // Draw_col is already column-major actual matrix, so no transB.
-        detail::BlasGemm<Real>::run(
-          CblasColMajor,
-          CblasTrans,
-          CblasNoTrans,
-          M,
-          M,
-          M,
-          Real(1),
-          K.data(),
-          M,
-          Draw_col.data(),
-          M,
-          Real(0),
-          Lij_block,
-          M
-        );
+      const int index = static_cast<int>(k_structures.size());
+      k_structures.push_back(std::move(structure));
+      k_signature_index.emplace(signature, index);
+      k_parameter_structure[static_cast<std::size_t>(parameter)] = index;
+      stencil.clear();
+    }
+  }
+
+  const SharedOperatorStructure& d_structure(int axis) const
+  {
+    if (axis < 0 || axis >= D)
+    {
+      throw std::out_of_range(
+        "RefSimplexPrecomp: derivative-axis structure index");
+    }
+    const int index = d_axis_structure[static_cast<std::size_t>(axis)];
+    if (index < 0 || index >= static_cast<int>(d_structures.size()))
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: derivative structure not initialized");
+    }
+    return d_structures[static_cast<std::size_t>(index)];
+  }
+
+  const SharedOperatorStructure& k_structure(int parameter) const
+  {
+    if (parameter < 0 || parameter > D)
+    {
+      throw std::out_of_range(
+        "RefSimplexPrecomp: promotion-parameter structure index");
+    }
+    const int index =
+      k_parameter_structure[static_cast<std::size_t>(parameter)];
+    if (index < 0 || index >= static_cast<int>(k_structures.size()))
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: promotion structure not initialized");
+    }
+    return k_structures[static_cast<std::size_t>(index)];
+  }
+
+  std::vector<Real> build_d_factor_dense(
+    const Real* kappa_src,
+    int axis) const
+  {
+    if (!kappa_src)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: null derivative source kappa");
+    }
+    const SharedOperatorStructure& structure = d_structure(axis);
+    std::vector<Real> values(structure.nnz(), Real(0));
+    DMat<D,Real>::fill_tprod_natural_csc_values(
+      n,
+      static_cast<unsigned int>(q_vol),
+      kappa_src,
+      axis,
+      structure.colptr.data(),
+      structure.rowind.data(),
+      values.data());
+
+    // Preserve the legacy padded row-major M x M factor layout.
+    std::vector<Real> dense(
+      static_cast<std::size_t>(M) * M, Real(0));
+    for (int col = 0; col < M; ++col)
+    {
+      for (int pos = structure.colptr[static_cast<std::size_t>(col)];
+           pos < structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row = structure.rowind[static_cast<std::size_t>(pos)];
+        dense[static_cast<std::size_t>(row) * M + col] =
+          values[static_cast<std::size_t>(pos)];
+      }
+    }
+    return dense;
+  }
+
+  std::vector<Real> build_k_factor_dense(
+    const Real* kappa_src,
+    int promoted_parameter) const
+  {
+    if (!kappa_src)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: null promotion source kappa");
+    }
+    const SharedOperatorStructure& structure =
+      k_structure(promoted_parameter);
+    std::vector<Real> values(structure.nnz(), Real(0));
+    KMat<D,Real>::fill_tprod_natural_csc_values(
+      n,
+      static_cast<unsigned int>(q_vol),
+      kappa_src,
+      promoted_parameter,
+      structure.colptr.data(),
+      structure.rowind.data(),
+      values.data());
+
+    std::vector<Real> dense(
+      static_cast<std::size_t>(M) * M, Real(0));
+    for (int col = 0; col < M; ++col)
+    {
+      for (int pos = structure.colptr[static_cast<std::size_t>(col)];
+           pos < structure.colptr[static_cast<std::size_t>(col + 1)];
+           ++pos)
+      {
+        const int row = structure.rowind[static_cast<std::size_t>(pos)];
+        dense[static_cast<std::size_t>(row) * M + col] =
+          values[static_cast<std::size_t>(pos)];
+      }
+    }
+    return dense;
+  }
+
+  void row_major_product(
+    const std::vector<Real>& A,
+    const std::vector<Real>& B,
+    std::vector<Real>& C) const
+  {
+    const std::size_t count = static_cast<std::size_t>(M) * M;
+    if (A.size() != count || B.size() != count)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: incompatible dense factor dimensions");
+    }
+    C.assign(count, Real(0));
+    detail::BlasGemm<Real>::run(
+      CblasRowMajor,
+      CblasNoTrans,
+      CblasNoTrans,
+      M,
+      M,
+      M,
+      Real(1),
+      A.data(),
+      M,
+      B.data(),
+      M,
+      Real(0),
+      C.data(),
+      M);
+  }
+
+  std::array<int, D + 1> residual_promotion_remaining(
+    const Real* kappa_src) const
+  {
+    if (!kappa_src)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: null residual-promotion source kappa");
+    }
+    std::array<int, D + 1> remaining{};
+    const Real tolerance = Real(1.0e-12);
+    for (int parameter = 0; parameter <= D; ++parameter)
+    {
+      const Real difference =
+        kappa_res[static_cast<std::size_t>(parameter)] -
+        kappa_src[parameter];
+      const long long rounded = std::llround(
+        static_cast<long double>(difference));
+      if (rounded < 0 ||
+          std::abs(difference - static_cast<Real>(rounded)) > tolerance)
+      {
+        throw std::invalid_argument(
+          "RefSimplexPrecomp: residual promotion is not a nonnegative "
+          "integer parameter shift");
+      }
+      remaining[static_cast<std::size_t>(parameter)] =
+        static_cast<int>(rounded);
+    }
+    return remaining;
+  }
+
+  const std::vector<Real>& build_residual_promotion_from_remaining(
+    const std::array<int, D + 1>& remaining)
+  {
+    const auto found = residual_promotion_cache.find(remaining);
+    if (found != residual_promotion_cache.end())
+    {
+      return found->second;
+    }
+
+    bool identity = true;
+    for (int parameter = 0; parameter <= D; ++parameter)
+    {
+      if (remaining[static_cast<std::size_t>(parameter)] != 0)
+      {
+        identity = false;
+        break;
+      }
+    }
+    if (identity)
+    {
+      std::vector<Real> I(
+        static_cast<std::size_t>(M) * M, Real(0));
+      for (int i = 0; i < M; ++i)
+      {
+        I[static_cast<std::size_t>(i) * M + i] = Real(1);
+      }
+      const auto inserted = residual_promotion_cache.emplace(
+        remaining, std::move(I));
+      return inserted.first->second;
+    }
+
+    int parameter = -1;
+    for (int r = 0; r <= D; ++r)
+    {
+      if (remaining[static_cast<std::size_t>(r)] > 0)
+      {
+        parameter = r;
+        break;
+      }
+    }
+    if (parameter < 0)
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: invalid residual-promotion DAG state");
+    }
+
+    std::array<Real, D + 1> source{};
+    for (int r = 0; r <= D; ++r)
+    {
+      source[static_cast<std::size_t>(r)] =
+        kappa_res[static_cast<std::size_t>(r)] -
+        static_cast<Real>(remaining[static_cast<std::size_t>(r)]);
+    }
+
+    std::array<int, D + 1> next_remaining = remaining;
+    --next_remaining[static_cast<std::size_t>(parameter)];
+
+    const std::vector<Real> natural_factor =
+      build_k_factor_dense(source.data(), parameter);
+    const std::vector<Real>& tail =
+      build_residual_promotion_from_remaining(next_remaining);
+
+    std::vector<Real> result;
+    row_major_product(tail, natural_factor, result);
+    const auto inserted = residual_promotion_cache.emplace(
+      remaining, std::move(result));
+    return inserted.first->second;
+  }
+
+  const std::vector<Real>& build_residual_promotion(
+    const Real* kappa_src)
+  {
+    return build_residual_promotion_from_remaining(
+      residual_promotion_remaining(kappa_src));
+  }
+
+  void copy_row_major_to_column_major(
+    const std::vector<Real>& source,
+    Real* destination) const
+  {
+    if (!destination ||
+        source.size() != static_cast<std::size_t>(M) * M)
+    {
+      throw std::invalid_argument(
+        "RefSimplexPrecomp: invalid dense layout conversion");
+    }
+    for (int col = 0; col < M; ++col)
+    {
+      for (int row = 0; row < M; ++row)
+      {
+        destination[static_cast<std::size_t>(row) +
+                    static_cast<std::size_t>(M) * col] =
+          source[static_cast<std::size_t>(row) * M + col];
+      }
+    }
+  }
+
+  void build_derivative_factor_data()
+  {
+    D1_factor_rm.assign(
+      static_cast<std::size_t>(D) * M * M, Real(0));
+    D2_factor_rm.assign(
+      static_cast<std::size_t>(D) * D * M * M, Real(0));
+    derivative_kappa_1.resize(static_cast<std::size_t>(D));
+
+    for (int first_axis = 0; first_axis < D; ++first_axis)
+    {
+      Basis<D,Real>::derivative_kappa_shift(
+        kappa.data(),
+        first_axis,
+        derivative_kappa_1[static_cast<std::size_t>(first_axis)].data());
+
+      const std::vector<Real> first =
+        build_d_factor_dense(kappa.data(), first_axis);
+      std::copy(
+        first.begin(),
+        first.end(),
+        D1_factor_rm.begin() +
+          static_cast<std::size_t>(first_axis) * M * M);
+
+      for (int second_axis = 0; second_axis < D; ++second_axis)
+      {
+        const std::vector<Real> second = build_d_factor_dense(
+          derivative_kappa_1[static_cast<std::size_t>(first_axis)].data(),
+          second_axis);
+        std::copy(
+          second.begin(),
+          second.end(),
+          D2_factor_rm.begin() + static_cast<std::size_t>(M) * M *
+            (static_cast<std::size_t>(second_axis) +
+             static_cast<std::size_t>(D) * first_axis));
+      }
+    }
+  }
+
+  void build_second_partials()
+  {
+    Lij_ref.assign(
+      static_cast<std::size_t>(M) * M * D * D, Real(0));
+
+    for (int first_axis = 0; first_axis < D; ++first_axis)
+    {
+      const Real* first = D1_factor_rm.data() +
+        static_cast<std::size_t>(first_axis) * M * M;
+      const std::vector<Real> first_matrix(
+        first,
+        first + static_cast<std::size_t>(M) * M);
+
+      for (int second_axis = 0; second_axis < D; ++second_axis)
+      {
+        const Real* second = D2_factor_rm.data() +
+          static_cast<std::size_t>(M) * M *
+          (static_cast<std::size_t>(second_axis) +
+           static_cast<std::size_t>(D) * first_axis);
+        const std::vector<Real> second_matrix(
+          second,
+          second + static_cast<std::size_t>(M) * M);
+
+        std::vector<Real> derivative_product;
+        row_major_product(
+          second_matrix,
+          first_matrix,
+          derivative_product);
+
+        std::array<Real, D + 1> kappa_second{};
+        Basis<D,Real>::derivative_kappa_shift(
+          derivative_kappa_1[static_cast<std::size_t>(first_axis)].data(),
+          second_axis,
+          kappa_second.data());
+
+        const std::vector<Real>& promotion =
+          build_residual_promotion(kappa_second.data());
+        std::vector<Real> result;
+        row_major_product(promotion, derivative_product, result);
+
+        Real* output = Lij_ref.data() +
+          static_cast<std::size_t>(M) * M *
+          (static_cast<std::size_t>(first_axis) +
+           static_cast<std::size_t>(D) * second_axis);
+        copy_row_major_to_column_major(result, output);
       }
     }
   }
 
   void build_first_partials()
   {
-    Li_ref.assign((std::size_t)M * M * D, (Real)0);
+    Li_ref.assign(
+      static_cast<std::size_t>(M) * M * D, Real(0));
 
-    for (int i = 0; i < D; ++i)
+    for (int axis = 0; axis < D; ++axis)
     {
-      std::array<Real, D + 1> k1{};
-      Basis<D,Real>::derivative_kappa_shift(
-        kappa.data(), i, k1.data());
+      const Real* derivative = D1_factor_rm.data() +
+        static_cast<std::size_t>(axis) * M * M;
+      const std::vector<Real> derivative_matrix(
+        derivative,
+        derivative + static_cast<std::size_t>(M) * M);
 
-      // Natural first derivative:
-      //   Pi_n(kappa) -> Pi_{n-1}(k1).
-      // DMat returns the actual matrix in row-major storage, padded to M x M.
-      std::vector<Real> Di((std::size_t)M * M, (Real)0);
-      DMat<D,Real>::build_tprod_natural_pruned_dense(
-        n, (unsigned int)q_vol, kappa.data(), i, Di.data());
+      const std::vector<Real>& promotion = build_residual_promotion(
+        derivative_kappa_1[static_cast<std::size_t>(axis)].data());
+      std::vector<Real> result;
+      row_major_product(promotion, derivative_matrix, result);
 
-      // Sparse promotion into the common PDE residual family:
-      //   Pi_n(k1) -> Pi_n(kappa_res),  kappa_res = kappa + 2.
-      // Only the degree <= n-1 range of Di contributes.
-      // KMat returns the actual matrix in row-major storage.
-      std::vector<Real> K((std::size_t)M * M, (Real)0);
-      KMat<D,Real>::build_tprod_pruned_dense(
-        n, (unsigned int)q_vol, k1.data(), kappa_res.data(), K.data());
-
-      // Public output block is column-major M x M.
-      Real* Li_block =
-        Li_ref.data() + (std::size_t)M * M * i;
-
-      // Li_block = K * Di.
-      // Row-major actual matrices appear transposed when interpreted as
-      // column-major, hence trans/trans recovers the actual operands.
-      detail::BlasGemm<Real>::run(
-        CblasColMajor,
-        CblasTrans,
-        CblasTrans,
-        M,
-        M,
-        M,
-        Real(1),
-        K.data(),
-        M,
-        Di.data(),
-        M,
-        Real(0),
-        Li_block,
-        M
-      );
+      copy_row_major_to_column_major(
+        result,
+        Li_ref.data() + static_cast<std::size_t>(M) * M * axis);
     }
   }
 
   void build_zero_partials()
   {
-    L0_ref.assign((std::size_t)M * M, (Real)0);
-
-    // Zero derivatives followed by sparse promotion into the common PDE
-    // residual family:
-    //   Pi_n(kappa) -> Pi_n(kappa_res),  kappa_res = kappa + 2.
-    // KMat returns the actual matrix in row-major storage.
-    std::vector<Real> K((std::size_t)M * M, (Real)0);
-    KMat<D,Real>::build_tprod_pruned_dense(
-      n, (unsigned int)q_vol, kappa.data(), kappa_res.data(), K.data());
-
-    // Convert row-major actual K into the public column-major layout.
-    for (int col = 0; col < M; ++col)
-    {
-      for (int row = 0; row < M; ++row)
-      {
-        L0_ref[(std::size_t)row + (std::size_t)M * col] =
-          K[(std::size_t)row * M + col];
-      }
-    }
+    L0_ref.assign(static_cast<std::size_t>(M) * M, Real(0));
+    const std::vector<Real>& promotion =
+      build_residual_promotion(kappa.data());
+    copy_row_major_to_column_major(promotion, L0_ref.data());
   }
 
   void embed_face_points(int face_id, const int* sigma, std::vector<Real>& Xf) const
@@ -483,8 +867,6 @@ private:
     std::array<std::vector<int>, D> alpha_deriv;
     std::array<std::vector<int>, D> tail_deriv;
     std::array<std::vector<Real>, D> invh_deriv;
-    std::vector<Real> D1((std::size_t)D * M * M, (Real)0); // row-major per axis
-
     for (int a = 0; a < D; ++a)
     {
       Basis<D,Real>::derivative_kappa_shift(kappa.data(), a, k_deriv[(std::size_t)a].data());
@@ -492,9 +874,6 @@ private:
                                       alpha_deriv[(std::size_t)a],
                                       tail_deriv[(std::size_t)a],
                                       invh_deriv[(std::size_t)a]);
-      DMat<D,Real>::build_tprod_natural_pruned_dense(
-        n, (unsigned int)q_vol, kappa.data(), a,
-        D1.data() + (std::size_t)a * M * M);
     }
 
     for (int face_id = 0; face_id < nface; ++face_id)
@@ -594,7 +973,7 @@ private:
             Real(1),
             Vrng.data(),
             nq_face,
-            D1.data() + (std::size_t)a * M * M,
+            D1_factor_rm.data() + (std::size_t)a * M * M,
             M,
             Real(0),
             dV.data(),

@@ -1599,7 +1599,7 @@ struct KMat
         S_out->clear();
         *S_out = S_cur;                // shallow move
         std::memset(&S_cur, 0, sizeof(S_cur));
-        std::cout << "stabilized at n_test = " << n_test << std::endl;
+        std::cout << "KMat: stabilized at n_test = " << n_test << std::endl;
         return;
       }
   
