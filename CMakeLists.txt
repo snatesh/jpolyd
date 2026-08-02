@@ -216,6 +216,31 @@ target_link_libraries(
     lapack
 )
 
+add_executable(test_jhps_poisson_leaf_operator_modes
+  src/test_jhps_poisson_leaf_operator_modes.cpp
+)
+
+target_include_directories(
+  test_jhps_poisson_leaf_operator_modes
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+  test_jhps_poisson_leaf_operator_modes
+  PRIVATE
+    jpolyd
+    jpolyd_c
+    OpenMP::OpenMP_CXX
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
+    ${LAPACKE_LIB}
+    openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+    blas
+    lapack
+)
+
+
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse

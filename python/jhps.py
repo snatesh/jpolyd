@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes as ct
 import math
 from dataclasses import dataclass, field
+from enum import IntEnum
 
 import numpy as np
 
@@ -11,6 +12,42 @@ from libjpolyd_loader import libjpolyd
 
 _Int32C = np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS")
 _Float64C = np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS")
+
+
+class HpsLeafOperatorMode(IntEnum):
+  DENSE = 0
+  MATRIX_FREE = 1
+  VERIFY = 2
+
+
+def _coerce_leaf_operator_mode(
+  value: HpsLeafOperatorMode | str | int,
+) -> HpsLeafOperatorMode:
+  if isinstance(value, HpsLeafOperatorMode):
+    return value
+
+  if isinstance(value, str):
+    normalized = value.strip().lower().replace("-", "_")
+    names = {
+      "dense": HpsLeafOperatorMode.DENSE,
+      "matrix_free": HpsLeafOperatorMode.MATRIX_FREE,
+      "matrixfree": HpsLeafOperatorMode.MATRIX_FREE,
+      "mf": HpsLeafOperatorMode.MATRIX_FREE,
+      "verify": HpsLeafOperatorMode.VERIFY,
+    }
+    try:
+      return names[normalized]
+    except KeyError as exc:
+      raise ValueError(
+        "leaf_operator_mode must be Dense, MatrixFree, or Verify"
+      ) from exc
+
+  try:
+    return HpsLeafOperatorMode(int(value))
+  except (TypeError, ValueError) as exc:
+    raise ValueError(
+      "leaf_operator_mode must be Dense, MatrixFree, or Verify"
+    ) from exc
 
 
 @dataclass
@@ -194,6 +231,19 @@ def _set_elliptic_mesh_tree_signature(fn) -> None:
   fn.restype = ct.c_int
 
 
+def _set_elliptic_mesh_tree_leaf_mode_signature(fn) -> None:
+  _set_elliptic_mesh_tree_signature(fn)
+
+  # Insert after verbose and before leaf_coeffs_elementmajor.
+  argtypes = list(fn.argtypes)
+  argtypes[28:28] = [
+    ct.c_int,       # leaf_operator_mode
+    ct.c_double,    # leaf_verify_tolerance
+    ct.c_int,       # leaf_verify_each_solve
+  ]
+  fn.argtypes = argtypes
+
+
 for _name in (
   "jhps_dummy_two_leaf_test",
   "jhps_dummy_three_leaf_chain_test",
@@ -204,6 +254,9 @@ for _name in (
 _set_mesh_tree_signature(libjpolyd.jhps_dummy_mesh_tree_test)
 _set_poisson_mesh_tree_signature(libjpolyd.jhps_poisson_mesh_tree_solve)
 _set_elliptic_mesh_tree_signature(libjpolyd.jhps_elliptic_mesh_tree_solve)
+_set_elliptic_mesh_tree_leaf_mode_signature(
+  libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_mode
+)
 
 
 def load_library() -> ct.CDLL:
@@ -449,6 +502,11 @@ def run_elliptic_mesh_tree_solve(
   alpha: float = 1.0,
   beta: float = 0.0,
   verbose: bool = False,
+  leaf_operator_mode: HpsLeafOperatorMode | str | int = (
+    HpsLeafOperatorMode.DENSE
+  ),
+  leaf_verify_tolerance: float = 0.0,
+  leaf_verify_each_solve: bool = True,
 ) -> HpsEllipticResult:
   """Solve a variable-coefficient nondivergence-form elliptic problem.
 
@@ -469,12 +527,31 @@ def run_elliptic_mesh_tree_solve(
 
   Artificial interfaces and the current Robin path use ordinary normal
   derivative, not conormal flux. Pure Neumann is not implemented.
+
+  ``leaf_operator_mode`` selects the leaf-local backend:
+
+    Dense       legacy explicit L/T/F/A_tau path
+    MatrixFree  no dense leaf matrices; explicit HPS Ulam/S maps remain
+    Verify      matrix-free solve with a retained dense comparison backend
+
+  Dense remains the default so existing Python callers retain their old path.
   """
   D = int(pc.D)
   n = int(pc.n)
   p2 = int(p2)
   p1 = int(p1)
   p0 = int(p0)
+  leaf_mode = _coerce_leaf_operator_mode(
+    leaf_operator_mode
+  )
+
+  if (
+    not np.isfinite(leaf_verify_tolerance)
+    or float(leaf_verify_tolerance) < 0.0
+  ):
+    raise ValueError(
+      "leaf_verify_tolerance must be finite and nonnegative"
+    )
 
   if D < 1 or D > 5:
     raise ValueError("D must be in 1..5")
@@ -584,7 +661,7 @@ def run_elliptic_mesh_tree_solve(
   interface_nb = ct.c_int()
   leaf_threads_used = ct.c_int()
 
-  rc = libjpolyd.jhps_elliptic_mesh_tree_solve(
+  common_args = (
     ct.c_int(D),
     ct.c_int(n),
     ct.c_int(int(pc.q_pad)),
@@ -613,6 +690,9 @@ def run_elliptic_mesh_tree_solve(
     ct.c_double(float(alpha)),
     ct.c_double(float(beta)),
     ct.c_int(1 if verbose else 0),
+  )
+
+  output_args = (
     leaf_coeffs,
     ct.byref(root_res),
     ct.byref(iface_res),
@@ -624,8 +704,32 @@ def run_elliptic_mesh_tree_solve(
     ct.byref(interface_nb),
     ct.byref(leaf_threads_used),
   )
+
+  if leaf_mode == HpsLeafOperatorMode.DENSE:
+    # Preserve the original Python/C route exactly.
+    rc = libjpolyd.jhps_elliptic_mesh_tree_solve(
+      *(common_args + output_args)
+    )
+    c_symbol = "jhps_elliptic_mesh_tree_solve"
+  else:
+    rc = libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_mode(
+      *(
+        common_args
+        + (
+            ct.c_int(int(leaf_mode)),
+            ct.c_double(float(leaf_verify_tolerance)),
+            ct.c_int(1 if leaf_verify_each_solve else 0),
+          )
+        + output_args
+      )
+    )
+    c_symbol = "jhps_elliptic_mesh_tree_solve_with_leaf_mode"
+
   if rc != 0:
-    raise RuntimeError(f"jhps_elliptic_mesh_tree_solve failed with rc={rc}")
+    raise RuntimeError(
+      f"{c_symbol} failed with rc={rc} "
+      f"(leaf mode {leaf_mode.name})"
+    )
 
   returned_dims = (M_out.value, m_int_out.value, kf_out.value)
   expected_dims = (int(pc.M), int(pc.m_int), int(pc.kf))

@@ -136,7 +136,9 @@ inline Node<D,Real> materialize_homogeneous_leaf_node(
 
   Node<D,Real> node;
   node.kf = leaf.kf;
-  node.boundary_faces.assign(elem.face_keys.begin(), elem.face_keys.end());
+  node.boundary_faces.assign(
+    elem.face_keys.begin(),
+    elem.face_keys.end());
   node.is_leaf = true;
   node.leaf_element_id = element_id;
   node.vol_dim = leaf.M;
@@ -148,50 +150,108 @@ inline Node<D,Real> materialize_homogeneous_leaf_node(
     throw std::runtime_error(
       "materialize_homogeneous_leaf_node: Node/Leaf boundary size mismatch");
   }
-  for (int f = 0; f < leaf.nface; ++f)
+  for (int face = 0;
+       face < leaf.nface;
+       ++face)
   {
-    if (node.boundary_faces[(std::size_t)f] != leaf.face_key(f))
+    if (node.boundary_faces[(std::size_t)face]
+        != leaf.face_key(face))
     {
       throw std::runtime_error(
         "materialize_homogeneous_leaf_node: Mesh/Leaf face ordering mismatch");
     }
   }
 
-  node.S.assign((std::size_t)nb * nb, Real(0));
-  node.b.assign((std::size_t)nb, Real(0));
-  node.Ulam.assign((std::size_t)M * nb, Real(0));
-  node.cf.assign((std::size_t)M, Real(0));
+  node.S.assign(
+    (std::size_t)nb * nb,
+    Real(0));
+  node.b.assign(
+    (std::size_t)nb,
+    Real(0));
+  node.Ulam.assign(
+    (std::size_t)M * nb,
+    Real(0));
+  node.cf.assign(
+    (std::size_t)M,
+    Real(0));
 
-  std::vector<Real> lambda((std::size_t)nb, Real(0));
-  std::vector<Real> c((std::size_t)M, Real(0));
-  std::vector<Real> trace((std::size_t)nb, Real(0));
-  std::vector<Real> raw_flux((std::size_t)nb, Real(0));
-  std::vector<Real> aug_flux((std::size_t)nb, Real(0));
+  std::vector<Real> lambda(
+    (std::size_t)nb,
+    Real(0));
 
-  // Leaf::apply requires a non-null source pointer even when m_int=0.
-  std::vector<Real> f0((std::size_t)std::max(1, leaf.m_int), Real(0));
+  typename Leaf<D,Real>::SolveWorkspace
+    solve_workspace(leaf);
 
-  for (int j = 0; j < nb; ++j)
+  /*
+    First construct only the coefficient map Ulam. This performs nb LSMR
+    solves while reusing all reverse-communication vectors and does not
+    traverse the trace or flux maps inside the column loop.
+  */
+  for (int column = 0;
+       column < nb;
+       ++column)
   {
-    std::fill(lambda.begin(), lambda.end(), Real(0));
-    lambda[(std::size_t)j] = Real(1);
+    lambda[(std::size_t)column] =
+      Real(1);
 
-    std::fill(c.begin(), c.end(), Real(0));
-    leaf.apply(
+    leaf.solve_coefficients_zero_source(
       lambda.data(),
-      f0.data(),
-      c.data(),
-      trace.data(),
-      raw_flux.data(),
-      aug_flux.data());
+      node.Ulam.data()
+        + (std::size_t)M
+          * (std::size_t)column,
+      solve_workspace);
 
-    for (int i = 0; i < M; ++i)
+    lambda[(std::size_t)column] =
+      Real(0);
+  }
+
+  /*
+    Apply the boundary maps once to the complete dense coefficient panel.
+    Dense mode uses GEMM; MatrixFree and Verify use the existing CSC x dense
+    traversals.
+  */
+  std::vector<Real> trace_map(
+    (std::size_t)nb * nb,
+    Real(0));
+
+  leaf.apply_trace_columns(
+    node.Ulam.data(),
+    M,
+    nb,
+    trace_map.data(),
+    nb);
+  leaf.apply_flux_columns(
+    node.Ulam.data(),
+    M,
+    nb,
+    node.S.data(),
+    nb);
+
+  // S already contains F Ulam. Add tau (T Ulam - I).
+  for (int column = 0;
+       column < nb;
+       ++column)
+  {
+    for (int row = 0;
+         row < nb;
+         ++row)
     {
-      node.Ulam[(std::size_t)i + (std::size_t)M * j] = c[(std::size_t)i];
-    }
-    for (int i = 0; i < nb; ++i)
-    {
-      node.S[(std::size_t)i + (std::size_t)nb * j] = aug_flux[(std::size_t)i];
+      const std::size_t index =
+        (std::size_t)row
+        + (std::size_t)nb
+          * (std::size_t)column;
+
+      const Real identity =
+        row == column
+        ? Real(1)
+        : Real(0);
+
+      node.S[index] +=
+        leaf.tau_rows[(std::size_t)row]
+        * (
+            trace_map[index]
+            - identity
+          );
     }
   }
 
@@ -265,6 +325,72 @@ inline Node<D,Real> make_elliptic_homogeneous_leaf_node(
 }
 
 /*
+  Mode-aware elliptic leaf materialization.
+
+  Dense mode preserves the explicit local matrices. MatrixFree stores only
+  the action workspace and the final HPS-facing Ulam/S maps. Verify retains
+  both leaf backends and compares them according to leaf_options.
+
+  In MatrixFree and Verify modes Leaf copies the enabled coefficient arrays,
+  because set_leaf_source and homogeneous-map materialization continue to
+  apply the local operator after this function returns.
+*/
+template<int D, class Real>
+inline Node<D,Real> make_elliptic_homogeneous_leaf_node(
+  const Mesh<D,Real>& mesh,
+  int element_id,
+  const RefSimplexPrecomp<D,Real>& pre,
+  const EllipticPlan<D,Real>& elliptic_plan,
+  const EllipticElementCoefficientsView<D,Real>& coeffs,
+  Leaf<D,Real>& leaf_out,
+  const typename Leaf<D,Real>::Options& leaf_options,
+  Real tau_C = Real(10),
+  Real atol = Real(1e-14),
+  Real btol = Real(1e-14),
+  int itnlim = 5000)
+{
+  if (!(tau_C > Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: tau_C must be positive");
+  }
+  if (!(atol >= Real(0)) || !(btol >= Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: tolerances must be nonnegative");
+  }
+  if (itnlim <= 0)
+  {
+    throw std::invalid_argument(
+      "make_elliptic_homogeneous_leaf_node: itnlim must be positive");
+  }
+
+  const auto& elem = mesh.element(element_id);
+
+  typename Leaf<D,Real>::LsmrOptions opts{};
+  opts.atol = atol;
+  opts.btol = btol;
+  opts.itnlim = itnlim;
+
+  leaf_out.reset(
+    pre,
+    elem.V_phys.data(),
+    elem.global_vids.data(),
+    elliptic_plan,
+    coeffs,
+    tau_C,
+    opts,
+    leaf_options);
+
+  return node_detail::materialize_homogeneous_leaf_node<D,Real>(
+    mesh,
+    element_id,
+    leaf_out);
+}
+
+
+
+/*
   Materialize the source-independent Poisson leaf maps
 
     c(lambda,0)       = Ulam lambda,
@@ -326,6 +452,62 @@ inline Node<D,Real> make_poisson_homogeneous_leaf_node(
 }
 
 /*
+  Mode-aware Poisson leaf materialization. The legacy overload above remains
+  Dense by default; this overload permits MatrixFree and Verify without
+  changing old callers.
+*/
+template<int D, class Real>
+inline Node<D,Real> make_poisson_homogeneous_leaf_node(
+  const Mesh<D,Real>& mesh,
+  int element_id,
+  const RefSimplexPrecomp<D,Real>& pre,
+  Leaf<D,Real>& leaf_out,
+  const typename Leaf<D,Real>::Options& leaf_options,
+  Real tau_C = Real(10),
+  Real atol = Real(1e-14),
+  Real btol = Real(1e-14),
+  int itnlim = 5000)
+{
+  if (!(tau_C > Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_poisson_homogeneous_leaf_node: tau_C must be positive");
+  }
+  if (!(atol >= Real(0)) || !(btol >= Real(0)))
+  {
+    throw std::invalid_argument(
+      "make_poisson_homogeneous_leaf_node: tolerances must be nonnegative");
+  }
+  if (itnlim <= 0)
+  {
+    throw std::invalid_argument(
+      "make_poisson_homogeneous_leaf_node: itnlim must be positive");
+  }
+
+  const auto& elem = mesh.element(element_id);
+
+  typename Leaf<D,Real>::LsmrOptions opts{};
+  opts.atol = atol;
+  opts.btol = btol;
+  opts.itnlim = itnlim;
+
+  leaf_out.reset(
+    pre,
+    elem.V_phys.data(),
+    elem.global_vids.data(),
+    tau_C,
+    opts,
+    leaf_options);
+
+  return node_detail::materialize_homogeneous_leaf_node<D,Real>(
+    mesh,
+    element_id,
+    leaf_out);
+}
+
+
+
+/*
   Set the source-dependent affine terms on an already materialized homogeneous
   leaf:
 
@@ -347,7 +529,9 @@ inline void set_leaf_source(
     throw std::invalid_argument(
       "set_leaf_source: node is not a leaf");
   }
-  if (node.kf != leaf.kf || node.nb() != leaf.nb || node.vol_dim != leaf.M)
+  if (node.kf != leaf.kf
+      || node.nb() != leaf.nb
+      || node.vol_dim != leaf.M)
   {
     throw std::invalid_argument(
       "set_leaf_source: Node/Leaf dimension mismatch");
@@ -357,9 +541,12 @@ inline void set_leaf_source(
     throw std::invalid_argument(
       "set_leaf_source: Node/Leaf face-count mismatch");
   }
-  for (int f = 0; f < leaf.nface; ++f)
+  for (int face = 0;
+       face < leaf.nface;
+       ++face)
   {
-    if (node.boundary_faces[(std::size_t)f] != leaf.face_key(f))
+    if (node.boundary_faces[(std::size_t)face]
+        != leaf.face_key(face))
     {
       throw std::invalid_argument(
         "set_leaf_source: Node/Leaf face ordering mismatch");
@@ -374,24 +561,56 @@ inline void set_leaf_source(
   const int nb = node.nb();
   const int M = node.vol_dim;
 
-  std::vector<Real> lambda0((std::size_t)nb, Real(0));
-  std::vector<Real> trace((std::size_t)nb, Real(0));
-  std::vector<Real> raw_flux((std::size_t)nb, Real(0));
+  std::vector<Real> lambda0(
+    (std::size_t)nb,
+    Real(0));
+  std::vector<Real> trace(
+    (std::size_t)nb,
+    Real(0));
 
   // Keep the pointer non-null for the degree range where m_int=0.
   const Real f_dummy = Real(0);
-  const Real* f_ptr = f_int ? f_int : &f_dummy;
+  const Real* f_ptr =
+    f_int ? f_int : &f_dummy;
 
-  std::vector<Real> cf_new((std::size_t)M, Real(0));
-  std::vector<Real> b_new((std::size_t)nb, Real(0));
+  std::vector<Real> cf_new(
+    (std::size_t)M,
+    Real(0));
+  std::vector<Real> b_new(
+    (std::size_t)nb,
+    Real(0));
 
-  leaf.apply(
+  typename Leaf<D,Real>::SolveWorkspace
+    solve_workspace(leaf);
+
+  leaf.solve_coefficients(
     lambda0.data(),
     f_ptr,
     cf_new.data(),
+    solve_workspace);
+
+  leaf.apply_trace_columns(
+    cf_new.data(),
+    M,
+    1,
     trace.data(),
-    raw_flux.data(),
-    b_new.data());
+    nb);
+  leaf.apply_flux_columns(
+    cf_new.data(),
+    M,
+    1,
+    b_new.data(),
+    nb);
+
+  // b_new already contains F cf. Since lambda=0, add tau T cf.
+  for (int row = 0;
+       row < nb;
+       ++row)
+  {
+    b_new[(std::size_t)row] +=
+      leaf.tau_rows[(std::size_t)row]
+      * trace[(std::size_t)row];
+  }
 
   node.cf.swap(cf_new);
   node.b.swap(b_new);

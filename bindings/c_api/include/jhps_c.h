@@ -6,6 +6,22 @@ extern "C" {
 #endif
 
 /*
+  Leaf-local operator backend used by the mode-aware HPS entry points.
+
+  DENSE preserves the legacy explicit L/T/F/A_tau leaf path.
+  MATRIX_FREE avoids those dense local matrices but still materializes the
+  explicit HPS leaf solution and augmented-DtN maps Ulam and S.
+  VERIFY builds both leaf backends, solves through MATRIX_FREE, and checks
+  against DENSE.
+*/
+typedef enum jhps_leaf_operator_mode
+{
+  JHPS_LEAF_OPERATOR_DENSE = 0,
+  JHPS_LEAF_OPERATOR_MATRIX_FREE = 1,
+  JHPS_LEAF_OPERATOR_VERIFY = 2
+} jhps_leaf_operator_mode;
+
+/*
   Run HPS skeleton tests using dummy leaf DtN maps.
 
   Inputs:
@@ -214,6 +230,53 @@ int jhps_poisson_mesh_tree_solve(
 
 
 /*
+  Mode-aware Poisson entry point.
+
+  leaf_operator_mode must be one of jhps_leaf_operator_mode.
+  leaf_verify_tolerance <= 0 selects the C++ LeafOptions default.
+  leaf_verify_each_solve is used only in VERIFY mode.
+
+  The legacy jhps_poisson_mesh_tree_solve symbol remains unchanged and selects
+  JHPS_LEAF_OPERATOR_DENSE.
+*/
+int jhps_poisson_mesh_tree_solve_with_leaf_mode(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out
+);
+
+
+/*
   Solve a variable-coefficient nondivergence-form elliptic problem on an
   arbitrary conforming simplex mesh using an externally supplied bottom-up
   HPS merge tree.
@@ -298,6 +361,61 @@ int jhps_elliptic_mesh_tree_solve(
   double alpha,
   double beta,
   int verbose,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
+
+/*
+  Mode-aware variable-coefficient elliptic entry point.
+
+  leaf_operator_mode must be one of jhps_leaf_operator_mode.
+  leaf_verify_tolerance <= 0 selects the C++ LeafOptions default.
+  leaf_verify_each_solve is used only in VERIFY mode.
+
+  The legacy jhps_elliptic_mesh_tree_solve symbol remains unchanged and
+  selects JHPS_LEAF_OPERATOR_DENSE.
+*/
+int jhps_elliptic_mesh_tree_solve_with_leaf_mode(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,
   double* root_robin_residual_inf_out,
   double* interface_flux_residual_inf_out,

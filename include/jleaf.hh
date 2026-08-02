@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -65,6 +66,78 @@ public:
   using LsmrOptions = detail::LsmrOptions<Real>;
   using LsmrInfo = detail::LsmrInfo<Real>;
   using Options = LeafOptions<Real>;
+
+  /*
+    Caller-owned storage for repeated local LSMR solves.
+
+    One workspace may be reused for every column of a leaf solution map.
+    It is not safe to use one workspace concurrently from multiple calls.
+    Independent leaves and independent workspaces remain thread-independent.
+  */
+  struct SolveWorkspace
+  {
+    int row_count = 0;
+    int column_count = 0;
+
+    // Stacked right-hand side in Real precision.
+    std::vector<Real> rhs;
+
+    // Reverse-communication LSMR arrays. The Fortran implementation is
+    // double precision, matching the existing matrix-free solve path.
+    std::vector<double> rhs_double;
+    std::vector<double> u;
+    std::vector<double> v;
+    std::vector<double> x;
+
+    // Reused only by Verify mode.
+    std::vector<Real> verify_solution;
+
+    SolveWorkspace() = default;
+
+    explicit SolveWorkspace(const Leaf& leaf)
+    {
+      reset(leaf);
+    }
+
+    void reset(const Leaf& leaf)
+    {
+      reset(leaf.ntau_rows, leaf.M);
+    }
+
+    void reset(int rows, int columns)
+    {
+      if (rows < 0 || columns < 0)
+      {
+        throw std::invalid_argument(
+          "Leaf::SolveWorkspace: negative dimensions");
+      }
+
+      row_count = rows;
+      column_count = columns;
+
+      rhs.assign((std::size_t)rows, Real(0));
+      rhs_double.assign((std::size_t)rows, 0.0);
+      u.assign((std::size_t)rows, 0.0);
+      v.assign((std::size_t)columns, 0.0);
+      x.assign((std::size_t)columns, 0.0);
+      verify_solution.assign(
+        (std::size_t)columns,
+        Real(0));
+    }
+
+    bool compatible(const Leaf& leaf) const
+    {
+      return row_count == leaf.ntau_rows
+          && column_count == leaf.M
+          && rhs.size() == (std::size_t)row_count
+          && rhs_double.size() == (std::size_t)row_count
+          && u.size() == (std::size_t)row_count
+          && v.size() == (std::size_t)column_count
+          && x.size() == (std::size_t)column_count
+          && verify_solution.size()
+               == (std::size_t)column_count;
+    }
+  };
 
   const RefSimplexPrecomp<D,Real>* pre = nullptr;
 
@@ -533,6 +606,96 @@ public:
       ldy);
   }
 
+  /*
+    Solve only for the volume coefficients. No trace, flux, mismatch, or PDE
+    residual is evaluated here. Reusing SolveWorkspace removes the repeated
+    vector allocations from homogeneous-map column construction.
+  */
+  LsmrInfo solve_coefficients(
+    const Real* lambda,
+    const Real* f_int,
+    Real* c_out,
+    SolveWorkspace& workspace) const
+  {
+    validate_coefficient_solve_inputs(
+      lambda,
+      f_int,
+      c_out,
+      false,
+      "Leaf::solve_coefficients");
+
+    ensure_solve_workspace(workspace);
+    build_stacked_rhs(
+      lambda,
+      f_int,
+      false,
+      workspace.rhs.data());
+
+    return solve_coefficients_from_rhs(
+      workspace.rhs.data(),
+      c_out,
+      workspace,
+      "Leaf::solve_coefficients");
+  }
+
+  /*
+    Homogeneous-source specialization used for every Ulam column. It avoids
+    allocating or clearing a separate m_int-vector of zeros.
+  */
+  LsmrInfo solve_coefficients_zero_source(
+    const Real* lambda,
+    Real* c_out,
+    SolveWorkspace& workspace) const
+  {
+    validate_coefficient_solve_inputs(
+      lambda,
+      nullptr,
+      c_out,
+      true,
+      "Leaf::solve_coefficients_zero_source");
+
+    ensure_solve_workspace(workspace);
+    build_stacked_rhs(
+      lambda,
+      nullptr,
+      true,
+      workspace.rhs.data());
+
+    return solve_coefficients_from_rhs(
+      workspace.rhs.data(),
+      c_out,
+      workspace,
+      "Leaf::solve_coefficients_zero_source");
+  }
+
+  /*
+    Convenience overloads preserve a simple one-shot interface. Repeated
+    callers should provide SolveWorkspace explicitly.
+  */
+  LsmrInfo solve_coefficients(
+    const Real* lambda,
+    const Real* f_int,
+    Real* c_out) const
+  {
+    SolveWorkspace workspace(*this);
+    return solve_coefficients(
+      lambda,
+      f_int,
+      c_out,
+      workspace);
+  }
+
+  LsmrInfo solve_coefficients_zero_source(
+    const Real* lambda,
+    Real* c_out) const
+  {
+    SolveWorkspace workspace(*this);
+    return solve_coefficients_zero_source(
+      lambda,
+      c_out,
+      workspace);
+  }
+
   LsmrInfo apply(
     const Real* lambda,
     const Real* f_int,
@@ -543,115 +706,29 @@ public:
     Real* trace_mismatch_out = nullptr,
     Real* pde_residual_out = nullptr) const
   {
-    if (!lambda)
-    {
-      throw std::invalid_argument(
-        "Leaf::apply: null lambda");
-    }
-    if (!f_int)
-    {
-      throw std::invalid_argument(
-        "Leaf::apply: null f_int");
-    }
-    if (!c_out)
-    {
-      throw std::invalid_argument(
-        "Leaf::apply: null c_out");
-    }
     if (!trace_out || !raw_flux_out || !aug_flux_out)
     {
       throw std::invalid_argument(
         "Leaf::apply: null boundary output");
     }
 
-    std::vector<Real> rhs(
-      (std::size_t)ntau_rows,
-      Real(0));
-
-    for (int row = 0; row < m_int; ++row)
-    {
-      rhs[(std::size_t)row] =
-        -sL * f_int[row];
-    }
-    for (int row = 0; row < nb; ++row)
-    {
-      rhs[(std::size_t)m_int + row] =
-        sqrt_tau_rows[(std::size_t)row]
-        * lambda[row];
-    }
-
-    LsmrInfo info{};
-    int return_code = 0;
-
-    if (operator_mode == LeafOperatorMode::Dense)
-    {
-      return_code = lsmr_dense_solve_colmajor<Real>(
-        ntau_rows,
-        M,
-        A_tau.data(),
-        rhs.data(),
-        c_out,
-        lsmr_options,
-        &info);
-    }
-    else
-    {
-      return_code = solve_matrix_free(
-        rhs.data(),
-        c_out,
-        &info);
-    }
-
-    if (return_code != 0)
-    {
-      throw std::runtime_error(
-        "Leaf::apply: LSMR solve failed");
-    }
-
-    if (operator_mode == LeafOperatorMode::Verify
-        && leaf_options.verify_each_solve)
-    {
-      verify_solution_against_dense(
-        rhs.data(),
-        c_out);
-    }
-
-    apply_trace_columns(
+    SolveWorkspace workspace(*this);
+    const LsmrInfo info = solve_coefficients(
+      lambda,
+      f_int,
       c_out,
-      M,
-      1,
+      workspace);
+
+    finish_solution_outputs(
+      lambda,
+      f_int,
+      false,
+      c_out,
       trace_out,
-      nb);
-    apply_flux_columns(
-      c_out,
-      M,
-      1,
       raw_flux_out,
-      nb);
-
-    for (int row = 0; row < nb; ++row)
-    {
-      const Real mismatch =
-        trace_out[row] - lambda[row];
-      if (trace_mismatch_out)
-      {
-        trace_mismatch_out[row] = mismatch;
-      }
-      aug_flux_out[row] =
-        raw_flux_out[row]
-        + tau_rows[(std::size_t)row] * mismatch;
-    }
-
-    if (pde_residual_out)
-    {
-      apply_interior_operator(
-        c_out,
-        pde_residual_out);
-      for (int row = 0; row < m_int; ++row)
-      {
-        pde_residual_out[row] += f_int[row];
-      }
-    }
+      aug_flux_out,
+      trace_mismatch_out,
+      pde_residual_out);
 
     return info;
   }
@@ -665,22 +742,209 @@ public:
     Real* trace_mismatch_out = nullptr,
     Real* pde_residual_out = nullptr) const
   {
-    std::vector<Real> zero_source(
-      (std::size_t)m_int,
-      Real(0));
+    if (!trace_out || !raw_flux_out || !aug_flux_out)
+    {
+      throw std::invalid_argument(
+        "Leaf::apply_zero_source: null boundary output");
+    }
 
-    return apply(
+    SolveWorkspace workspace(*this);
+    const LsmrInfo info =
+      solve_coefficients_zero_source(
+        lambda,
+        c_out,
+        workspace);
+
+    finish_solution_outputs(
       lambda,
-      zero_source.data(),
+      nullptr,
+      true,
       c_out,
       trace_out,
       raw_flux_out,
       aug_flux_out,
       trace_mismatch_out,
       pde_residual_out);
+
+    return info;
   }
 
 private:
+  void ensure_solve_workspace(
+    SolveWorkspace& workspace) const
+  {
+    if (!workspace.compatible(*this))
+    {
+      workspace.reset(*this);
+    }
+  }
+
+  void validate_coefficient_solve_inputs(
+    const Real* lambda,
+    const Real* f_int,
+    const Real* c_out,
+    bool zero_source,
+    const char* caller) const
+  {
+    if (!lambda)
+    {
+      throw std::invalid_argument(
+        std::string(caller)
+        + ": null lambda");
+    }
+    if (!c_out)
+    {
+      throw std::invalid_argument(
+        std::string(caller)
+        + ": null c_out");
+    }
+    if (!zero_source
+        && m_int > 0
+        && !f_int)
+    {
+      throw std::invalid_argument(
+        std::string(caller)
+        + ": null f_int");
+    }
+  }
+
+  void build_stacked_rhs(
+    const Real* lambda,
+    const Real* f_int,
+    bool zero_source,
+    Real* rhs) const
+  {
+    for (int row = 0;
+         row < m_int;
+         ++row)
+    {
+      rhs[(std::size_t)row] =
+        zero_source
+        ? Real(0)
+        : -sL * f_int[row];
+    }
+
+    for (int row = 0;
+         row < nb;
+         ++row)
+    {
+      rhs[(std::size_t)m_int + row] =
+        sqrt_tau_rows[(std::size_t)row]
+        * lambda[row];
+    }
+  }
+
+  LsmrInfo solve_coefficients_from_rhs(
+    const Real* rhs,
+    Real* c_out,
+    SolveWorkspace& workspace,
+    const char* caller) const
+  {
+    LsmrInfo info{};
+    int return_code = 0;
+
+    if (operator_mode == LeafOperatorMode::Dense)
+    {
+      return_code =
+        lsmr_dense_solve_colmajor<Real>(
+          ntau_rows,
+          M,
+          A_tau.data(),
+          rhs,
+          c_out,
+          lsmr_options,
+          &info);
+    }
+    else
+    {
+      return_code = solve_matrix_free(
+        rhs,
+        c_out,
+        workspace,
+        &info);
+    }
+
+    if (return_code != 0)
+    {
+      throw std::runtime_error(
+        std::string(caller)
+        + ": LSMR solve failed");
+    }
+
+    if (operator_mode == LeafOperatorMode::Verify
+        && leaf_options.verify_each_solve)
+    {
+      verify_solution_against_dense(
+        rhs,
+        c_out,
+        workspace);
+    }
+
+    return info;
+  }
+
+  void finish_solution_outputs(
+    const Real* lambda,
+    const Real* f_int,
+    bool zero_source,
+    const Real* c_out,
+    Real* trace_out,
+    Real* raw_flux_out,
+    Real* aug_flux_out,
+    Real* trace_mismatch_out,
+    Real* pde_residual_out) const
+  {
+    apply_trace_columns(
+      c_out,
+      M,
+      1,
+      trace_out,
+      nb);
+    apply_flux_columns(
+      c_out,
+      M,
+      1,
+      raw_flux_out,
+      nb);
+
+    for (int row = 0;
+         row < nb;
+         ++row)
+    {
+      const Real mismatch =
+        trace_out[row] - lambda[row];
+
+      if (trace_mismatch_out)
+      {
+        trace_mismatch_out[row] =
+          mismatch;
+      }
+
+      aug_flux_out[row] =
+        raw_flux_out[row]
+        + tau_rows[(std::size_t)row]
+          * mismatch;
+    }
+
+    if (pde_residual_out)
+    {
+      apply_interior_operator(
+        c_out,
+        pde_residual_out);
+
+      if (!zero_source)
+      {
+        for (int row = 0;
+             row < m_int;
+             ++row)
+        {
+          pde_residual_out[row] +=
+            f_int[row];
+        }
+      }
+    }
+  }
+
   void check_face_id(int face_id) const
   {
     if (face_id < 0 || face_id >= nface) { throw std::out_of_range("Leaf: face_id out of range"); }
@@ -1708,6 +1972,7 @@ private:
   int solve_matrix_free(
     const Real* rhs,
     Real* x_out,
+    SolveWorkspace& workspace,
     LsmrInfo* info) const
   {
     if (!rhs || !x_out || !info)
@@ -1724,17 +1989,32 @@ private:
     const int row_count = ntau_rows;
     const int column_count = M;
 
-    std::vector<double> rhs_double(
-      (std::size_t)row_count,
+    ensure_solve_workspace(workspace);
+
+    std::vector<double>& rhs_double =
+      workspace.rhs_double;
+    std::vector<double>& u =
+      workspace.u;
+    std::vector<double>& v =
+      workspace.v;
+    std::vector<double>& x =
+      workspace.x;
+
+    std::fill(
+      rhs_double.begin(),
+      rhs_double.end(),
       0.0);
-    std::vector<double> u(
-      (std::size_t)row_count,
+    std::fill(
+      u.begin(),
+      u.end(),
       0.0);
-    std::vector<double> v(
-      (std::size_t)column_count,
+    std::fill(
+      v.begin(),
+      v.end(),
       0.0);
-    std::vector<double> x(
-      (std::size_t)column_count,
+    std::fill(
+      x.begin(),
+      x.end(),
       0.0);
 
     for (int row = 0;
@@ -1955,10 +2235,15 @@ private:
 
   void verify_solution_against_dense(
     const Real* rhs,
-    const Real* matrix_free_solution) const
+    const Real* matrix_free_solution,
+    SolveWorkspace& workspace) const
   {
-    std::vector<Real> dense_solution(
-      (std::size_t)M,
+    ensure_solve_workspace(workspace);
+    std::vector<Real>& dense_solution =
+      workspace.verify_solution;
+    std::fill(
+      dense_solution.begin(),
+      dense_solution.end(),
       Real(0));
     LsmrInfo dense_info{};
 
