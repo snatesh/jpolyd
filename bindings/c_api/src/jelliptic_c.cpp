@@ -18,6 +18,9 @@ struct JEllipticPlanBase
   virtual int M() const = 0;
   virtual int m2() const = 0;
   virtual int m1() const = 0;
+  virtual int mR() const = 0;
+  virtual int residual_degree() const = 0;
+  virtual int q_mult() const = 0;
   virtual int Mp2() const = 0;
   virtual int Mp1() const = 0;
   virtual int Mp0() const = 0;
@@ -69,7 +72,10 @@ struct JEllipticPlan final : JEllipticPlanBase
         n,
         kappa_res,
         EllipticDegreeSpec{p2, p1, p0},
-        assume_symmetric)
+        assume_symmetric,
+        EllipticResidualPolicy::TrialDegree,
+        EllipticMultiplicationAssembler::Quadrature,
+        false)
   {}
 
   int D() const override { return Dim; }
@@ -77,6 +83,9 @@ struct JEllipticPlan final : JEllipticPlanBase
   int M() const override { return plan.M; }
   int m2() const override { return plan.m2; }
   int m1() const override { return plan.m1; }
+  int mR() const override { return plan.mR; }
+  int residual_degree() const override { return plan.residual_degree; }
+  int q_mult() const override { return plan.q_mult; }
   int Mp2() const override { return plan.coefficient_size(2); }
   int Mp1() const override { return plan.coefficient_size(1); }
   int Mp0() const override { return plan.coefficient_size(0); }
@@ -212,6 +221,21 @@ int jelliptic_plan_dims(jelliptic_plan_t plan,
   *Mp2_out = H->Mp2();
   *Mp1_out = H->Mp1();
   *Mp0_out = H->Mp0();
+  return 0;
+}
+
+int jelliptic_plan_dims_ex(jelliptic_plan_t plan,
+                           int* mR_out,
+                           int* residual_degree_out,
+                           int* q_mult_out)
+{
+  if (!plan || !mR_out || !residual_degree_out || !q_mult_out)
+    return 1;
+
+  const JEllipticPlanBase* H = as_plan(plan);
+  *mR_out = H->mR();
+  *residual_degree_out = H->residual_degree();
+  *q_mult_out = H->q_mult();
   return 0;
 }
 

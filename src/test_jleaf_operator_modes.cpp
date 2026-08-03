@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -339,6 +340,58 @@ void test_batched_boundary_maps(
   }
 }
 
+
+template<int D>
+void test_response_maps(
+  const jsimplex::Leaf<D,double>& qr_leaf,
+  const jsimplex::Leaf<D,double>& lsmr_leaf,
+  double tolerance)
+{
+  const int nrhs = qr_leaf.nb + qr_leaf.m_int;
+  std::vector<double> qr_maps(
+    (std::size_t)qr_leaf.M * (std::size_t)nrhs,
+    0.0);
+  std::vector<double> lsmr_maps(
+    (std::size_t)lsmr_leaf.M * (std::size_t)nrhs,
+    0.0);
+
+  typename jsimplex::Leaf<D,double>::SolveWorkspace qr_workspace(qr_leaf);
+  typename jsimplex::Leaf<D,double>::SolveWorkspace lsmr_workspace(lsmr_leaf);
+  long long qr_iterations = -1;
+  long long lsmr_iterations = 0;
+
+  qr_leaf.solve_response_maps(
+    qr_maps.data(),
+    qr_leaf.M,
+    qr_workspace,
+    &qr_iterations);
+  lsmr_leaf.solve_response_maps(
+    lsmr_maps.data(),
+    lsmr_leaf.M,
+    lsmr_workspace,
+    &lsmr_iterations);
+
+  const double map_error =
+    relative_error(qr_maps, lsmr_maps);
+
+  std::cout
+    << "    reusable [Ulam Uf]: error="
+    << std::scientific
+    << std::setprecision(3)
+    << map_error
+    << ", QR iterations=" << qr_iterations
+    << ", LSMR iterations=" << lsmr_iterations
+    << '\n';
+
+  if (qr_iterations != 0
+      || lsmr_iterations <= 0
+      || map_error > tolerance)
+  {
+    throw std::runtime_error(
+      "DenseQR/LSMR response-map mismatch");
+  }
+}
+
 template<int D>
 void run_dimension(
   int n,
@@ -379,6 +432,7 @@ void run_dimension(
     2, 1, 2};
   Plan plan(pre, degrees);
   DenseWorkspace legacy_dense_workspace(plan);
+  DenseWorkspace dense_lsmr_workspace(plan);
 
   std::mt19937 generator(
     seed + 4099u * D);
@@ -448,8 +502,27 @@ void run_dimension(
     plan,
     coeffs,
     legacy_dense_workspace,
-    10.0,
+    1.0,
     lsmr_options);
+
+  typename Leaf::Options dense_lsmr_options;
+  dense_lsmr_options.operator_mode =
+    jsimplex::LeafOperatorMode::Dense;
+  dense_lsmr_options.least_squares_solver =
+    jsimplex::LeafLeastSquaresSolver::LSMR;
+  dense_lsmr_options.interior_scale_override =
+    dense_leaf.sL;
+
+  Leaf dense_lsmr_leaf(
+    pre,
+    vertices.data(),
+    global_vertices.data(),
+    plan,
+    coeffs,
+    dense_lsmr_workspace,
+    1.0,
+    lsmr_options,
+    dense_lsmr_options);
 
   typename Leaf::Options matrix_free_options;
   matrix_free_options.operator_mode =
@@ -465,9 +538,25 @@ void run_dimension(
     global_vertices.data(),
     plan,
     coeffs,
-    10.0,
+    1.0,
     lsmr_options,
     matrix_free_options);
+
+  typename Leaf::Options dense_sparse_options;
+  dense_sparse_options.operator_mode =
+    jsimplex::LeafOperatorMode::DenseSparse;
+  dense_sparse_options.interior_scale_override =
+    dense_leaf.sL;
+
+  Leaf dense_sparse_leaf(
+    pre,
+    vertices.data(),
+    global_vertices.data(),
+    plan,
+    coeffs,
+    1.0,
+    lsmr_options,
+    dense_sparse_options);
 
   typename Leaf::Options verify_options;
   verify_options.operator_mode =
@@ -486,12 +575,38 @@ void run_dimension(
     global_vertices.data(),
     plan,
     coeffs,
-    10.0,
+    1.0,
     lsmr_options,
     verify_options);
 
+  const double expected_tau_row_factor =
+    static_cast<double>(plan.mR)
+    / static_cast<double>(plan.m2);
+  const double expected_tau_C_effective =
+    expected_tau_row_factor;
+  const double tau_scale_tolerance = 64.0
+    * std::numeric_limits<double>::epsilon()
+    * std::max(1.0, expected_tau_C_effective);
+
+  if (std::abs(dense_leaf.tau_C_base - 1.0)
+        > tau_scale_tolerance
+      || std::abs(
+           dense_leaf.tau_residual_row_factor
+           - expected_tau_row_factor)
+        > tau_scale_tolerance
+      || std::abs(
+           dense_leaf.tau_C
+           - expected_tau_C_effective)
+        > tau_scale_tolerance)
+  {
+    throw std::runtime_error(
+      "elliptic tau base/residual-row rescaling mismatch");
+  }
+
   if (dense_leaf.operator_mode
         != jsimplex::LeafOperatorMode::Dense
+      || dense_leaf.least_squares_solver
+        != jsimplex::LeafLeastSquaresSolver::DenseQR
       || !dense_leaf.has_dense_local_operator())
   {
     throw std::runtime_error(
@@ -506,6 +621,16 @@ void run_dimension(
   {
     throw std::runtime_error(
       "MatrixFree leaf retained dense local matrices");
+  }
+
+  if (!dense_sparse_leaf.has_dense_interior_operator()
+      || dense_sparse_leaf.has_dense_local_operator()
+      || !dense_sparse_leaf.T.empty()
+      || !dense_sparse_leaf.F.empty()
+      || !dense_sparse_leaf.A_tau.empty())
+  {
+    throw std::runtime_error(
+      "DenseSparse leaf storage is inconsistent");
   }
 
   if (!verify_leaf.has_dense_local_operator())
@@ -532,8 +657,12 @@ void run_dimension(
 
   const ApplyResult<D> dense_result =
     apply_leaf(dense_leaf, lambda, source);
+  const ApplyResult<D> dense_lsmr_result =
+    apply_leaf(dense_lsmr_leaf, lambda, source);
   const ApplyResult<D> matrix_free_result =
     apply_leaf(matrix_free_leaf, lambda, source);
+  const ApplyResult<D> dense_sparse_result =
+    apply_leaf(dense_sparse_leaf, lambda, source);
   const ApplyResult<D> verify_result =
     apply_leaf(verify_leaf, lambda, source);
 
@@ -549,12 +678,31 @@ void run_dimension(
     << '\n';
 
   compare_result(
+    dense_lsmr_result,
+    dense_result,
+    lambda,
+    source,
+    tolerance,
+    "Dense/LSMR");
+  test_response_maps(
+    dense_leaf,
+    dense_lsmr_leaf,
+    tolerance);
+
+  compare_result(
     matrix_free_result,
     dense_result,
     lambda,
     source,
     tolerance,
     "MatrixFree");
+  compare_result(
+    dense_sparse_result,
+    dense_result,
+    lambda,
+    source,
+    tolerance,
+    "DenseSparse");
   compare_result(
     verify_result,
     dense_result,
@@ -565,7 +713,7 @@ void run_dimension(
 
   test_batched_boundary_maps(
     dense_leaf,
-    matrix_free_leaf,
+    dense_sparse_leaf,
     generator,
     tolerance);
 

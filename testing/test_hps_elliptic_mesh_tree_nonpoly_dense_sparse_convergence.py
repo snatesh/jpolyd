@@ -22,7 +22,11 @@ from hps_mesh_tree_driver import (
   validate_merge_tree,
   visualize_case,
 )
-from jhps import HpsEllipticResult, run_elliptic_mesh_tree_solve
+from jhps import (
+  HpsEllipticResult,
+  HpsLeafOperatorMode,
+  run_elliptic_mesh_tree_solve,
+)
 from jperms import face_sigma_array, face_vertices
 from jprecomp import RefSimplexPrecomp, dimPi
 from thread_control import set_omp_threads, set_openblas_threads
@@ -31,7 +35,9 @@ from thread_control import set_omp_threads, set_openblas_threads
 _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parents[1] if _THIS.parent.name == "python" else _THIS.parent
 _DEFAULT_OUTPUT_DIR = (
-  _PROJECT_ROOT / "build" / "hps_elliptic_nonpoly_convergence"
+  _PROJECT_ROOT
+  / "build"
+  / "hps_elliptic_nonpoly_dense_sparse_convergence"
 )
 
 # Keep one fixed mesh and merge tree for every polynomial degree in each
@@ -513,7 +519,7 @@ def assert_hps_result(
 
 
 def check_reduction(
-  rows: list[dict[str, float | int]],
+  rows: list[dict[str, float | int | str]],
   min_reduction: float,
 ) -> None:
   if min_reduction <= 0.0:
@@ -541,12 +547,12 @@ def check_reduction(
     )
 
 
-def save_results_csv(rows: list[dict[str, float | int]], path: Path) -> None:
+def save_results_csv(rows: list[dict[str, float | int | str]], path: Path) -> None:
   fieldnames = [
+    "leaf_operator_mode",
     "D", "n", "dimPi", "p", "nverts", "nelem", "M", "m_int", "kf",
     "boundary_faces", "interior_faces", "tree_depth", "metis_splits",
-    "fallback_splits", "alpha", "beta", "tau_C_base",
-    "tau_residual_row_factor", "tau_C_effective", "q_solve_vol",
+    "fallback_splits", "alpha", "beta", "tau_C", "q_solve_vol",
     "q_solve_face", "q_data_vol", "q_data_face", "q_eval",
     "leaf_threads_used", "root_residual", "interface_residual",
     "parent_residual", "relative_L2_error", "best_relative_L2_error",
@@ -558,7 +564,7 @@ def save_results_csv(rows: list[dict[str, float | int]], path: Path) -> None:
     writer.writerows(rows)
 
 
-def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
+def plot_l2_vs_n(rows: list[dict[str, float | int | str]], path: Path) -> None:
   plt.figure(figsize=(7.5, 5.2))
   for D in sorted({int(row["D"]) for row in rows}):
     subset = sorted(
@@ -571,7 +577,9 @@ def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
 
   plt.xlabel(r"polynomial degree $n$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("HPS variable-coefficient elliptic nonpolynomial convergence")
+  plt.title(
+    "Dense-sparse-leaf HPS elliptic nonpolynomial convergence"
+  )
   plt.xticks(sorted({int(row["n"]) for row in rows}))
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend()
@@ -580,7 +588,7 @@ def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
   plt.close()
 
 
-def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
+def plot_l2_vs_dimPi(rows: list[dict[str, float | int | str]], path: Path) -> None:
   plt.figure(figsize=(7.5, 5.2))
   for D in sorted({int(row["D"]) for row in rows}):
     subset = sorted(
@@ -593,7 +601,9 @@ def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
 
   plt.xlabel(r"$M=\dim(\Pi_n^D)$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("HPS elliptic convergence by approximation dimension")
+  plt.title(
+    "Dense-sparse-leaf HPS convergence by approximation dimension"
+  )
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend()
   plt.tight_layout()
@@ -602,7 +612,7 @@ def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
 
 
 def plot_hps_vs_best_l2_vs_n(
-  rows: list[dict[str, float | int]],
+  rows: list[dict[str, float | int | str]],
   path: Path,
 ) -> None:
   plt.figure(figsize=(8.4, 5.6))
@@ -627,7 +637,9 @@ def plot_hps_vs_best_l2_vs_n(
 
   plt.xlabel(r"polynomial degree $n$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("Elliptic HPS error versus best elementwise projection")
+  plt.title(
+    "Dense-sparse-leaf HPS error versus best elementwise projection"
+  )
   plt.xticks(sorted({int(row["n"]) for row in rows}))
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend(ncol=2, fontsize="small")
@@ -640,7 +652,8 @@ def main() -> None:
   parser = argparse.ArgumentParser(
     description=(
       "Nonpolynomial manufactured convergence study for the full "
-      "variable-coefficient nondivergence-form elliptic HPS solve."
+      "variable-coefficient nondivergence-form elliptic HPS solve, "
+      "using only the DenseSparse leaf backend."
     )
   )
   parser.add_argument("--D", default="1,2,3")
@@ -661,13 +674,7 @@ def main() -> None:
   )
   parser.add_argument("--alpha", type=float, default=1.0)
   parser.add_argument("--beta", type=float, default=0.0)
-  parser.add_argument(
-    "--tau-C-base", "--tau-C", dest="tau_C", type=float, default=1.0,
-    help=(
-      "elliptic base tau constant; C++ uses "
-      "tau_C_effective=tau_C*(mR/m2)"
-    ),
-  )
+  parser.add_argument("--tau-C", type=float, default=10.0)
   parser.add_argument("--residual-tol", type=float, default=5.0e-10)
   parser.add_argument("--min-reduction", type=float, default=0.0)
   parser.add_argument("--determinant-tol", type=float, default=1.0e-13)
@@ -691,11 +698,16 @@ def main() -> None:
   if args.q_eval_extra < 0:
     raise ValueError("--q-eval-extra must be nonnegative")
 
-  # The current LSMR shim is serial. Keep both possible inner runtimes at one
-  # thread until LSMR owns independent state per concurrent solve.
+  # Keep BLAS single-threaded while parallelizing leaf construction with OpenMP.
+  # DenseSparse retains only dense L_int at each leaf; trace and flux actions
+  # remain CSC, while the explicit HPS Ulam/S maps feed the normal tree passes.
   set_openblas_threads(1)
   set_omp_threads(16)
-  print("thread control: OpenBLAS=1, OpenMP=1")
+  print("thread control: OpenBLAS=1, OpenMP=16")
+  print(
+    "leaf backend: DenseSparse "
+    "(dense L_int; CSC T/F; no dense T/F/A_tau; explicit HPS Ulam/S retained)"
+  )
 
   try:
     import pymetis
@@ -714,7 +726,7 @@ def main() -> None:
 
   args.output_dir.mkdir(parents=True, exist_ok=True)
   dimensions = parse_D_list(args.D)
-  rows: list[dict[str, float | int]] = []
+  rows: list[dict[str, float | int | str]] = []
 
   for D in dimensions:
     print(f"\nConstructing fixed mesh/tree and symbolic elliptic problem for D={D}")
@@ -831,6 +843,7 @@ def main() -> None:
         alpha=args.alpha,
         beta=args.beta,
         verbose=args.verbose,
+        leaf_operator_mode=HpsLeafOperatorMode.DENSE_SPARSE,
       )
       assert_hps_result(
         result,
@@ -859,7 +872,8 @@ def main() -> None:
         raise AssertionError(f"non-finite L2 error for D={D}, n={n}")
       hps_to_best = relative_l2 / max(best_relative_l2, 1.0e-300)
 
-      row: dict[str, float | int] = {
+      row: dict[str, float | int | str] = {
+        "leaf_operator_mode": "DenseSparse",
         "D": D,
         "n": n,
         "dimPi": dimPi(D, n),
@@ -876,13 +890,7 @@ def main() -> None:
         "fallback_splits": tree.fallback_splits,
         "alpha": float(args.alpha),
         "beta": float(args.beta),
-        "tau_C_base": float(args.tau_C),
-        "tau_residual_row_factor": (
-          result.m_int / dimPi(D, n - 2)
-        ),
-        "tau_C_effective": (
-          float(args.tau_C) * result.m_int / dimPi(D, n - 2)
-        ),
+        "tau_C": float(args.tau_C),
         "q_solve_vol": q_solve_vol,
         "q_solve_face": q_solve_face,
         "q_data_vol": q_data_vol,
@@ -911,16 +919,31 @@ def main() -> None:
 
   check_reduction(rows, args.min_reduction)
 
-  csv_path = args.output_dir / "hps_elliptic_nonpoly_convergence.csv"
-  plot_n_path = args.output_dir / "hps_elliptic_nonpoly_l2_vs_n.png"
-  plot_dim_path = args.output_dir / "hps_elliptic_nonpoly_l2_vs_dimPi.png"
-  plot_best_path = args.output_dir / "hps_elliptic_nonpoly_hps_vs_best.png"
+  csv_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_sparse_convergence.csv"
+  )
+  plot_n_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_sparse_l2_vs_n.png"
+  )
+  plot_dim_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_sparse_l2_vs_dimPi.png"
+  )
+  plot_best_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_sparse_hps_vs_best.png"
+  )
   save_results_csv(rows, csv_path)
   plot_l2_vs_n(rows, plot_n_path)
   plot_l2_vs_dimPi(rows, plot_dim_path)
   plot_hps_vs_best_l2_vs_n(rows, plot_best_path)
 
-  print("\nall requested variable-coefficient elliptic HPS solves completed")
+  print(
+    "\nall requested DenseSparse-leaf variable-coefficient "
+    "elliptic HPS solves completed"
+  )
   print(f"results CSV: {csv_path}")
   print(f"L2 versus n plot: {plot_n_path}")
   print(f"L2 versus dimPi plot: {plot_dim_path}")

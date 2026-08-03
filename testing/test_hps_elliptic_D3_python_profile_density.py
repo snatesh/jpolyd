@@ -229,7 +229,7 @@ def audit_element_L_density(
   assembly_start = time.perf_counter()
 
   try:
-    out = np.empty((plan.m2, plan.M), dtype=np.float64, order="F")
+    out = np.empty((plan.mR, plan.M), dtype=np.float64, order="F")
 
     for element_id, simplex in enumerate(simplices):
       V_phys = base.element_vertices(vertex_row, coords, simplex)
@@ -300,9 +300,9 @@ def audit_element_L_density(
     "L_plan_seconds": plan_seconds,
     "L_assembly_seconds": assembly_seconds,
     "L_audit_seconds": plan_seconds + assembly_seconds,
-    "L_rows": int(pc.m_int),
+    "L_rows": int(pc.M),
     "L_cols": int(pc.M),
-    "L_entries_per_element": int(pc.m_int * pc.M),
+    "L_entries_per_element": int(pc.M * pc.M),
     "L_total_entries": total_entries,
     "L_exact_nnz_total": exact_nnz_total,
     "L_exact_density_total": exact_nnz_total / max(total_entries, 1),
@@ -456,7 +456,13 @@ def main() -> None:
   parser.add_argument("--q-eval-extra", type=int, default=1)
   parser.add_argument("--alpha", type=float, default=1.0)
   parser.add_argument("--beta", type=float, default=0.0)
-  parser.add_argument("--tau-C", type=float, default=10.0)
+  parser.add_argument(
+    "--tau-C-base", "--tau-C", dest="tau_C", type=float, default=1.0,
+    help=(
+      "elliptic base tau constant; C++ uses "
+      "tau_C_effective=tau_C*(mR/m2)"
+    ),
+  )
   parser.add_argument("--residual-tol", type=float, default=5.0e-10)
   parser.add_argument("--determinant-tol", type=float, default=1.0e-13)
   parser.add_argument("--mesh-seed", type=int, default=61000)

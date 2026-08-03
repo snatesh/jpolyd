@@ -18,6 +18,13 @@ class HpsLeafOperatorMode(IntEnum):
   DENSE = 0
   MATRIX_FREE = 1
   VERIFY = 2
+  DENSE_SPARSE = 3
+
+
+class HpsLeafLeastSquaresSolver(IntEnum):
+  AUTO = 0
+  LSMR = 1
+  DENSE_QR = 2
 
 
 def _coerce_leaf_operator_mode(
@@ -30,6 +37,9 @@ def _coerce_leaf_operator_mode(
     normalized = value.strip().lower().replace("-", "_")
     names = {
       "dense": HpsLeafOperatorMode.DENSE,
+      "dense_sparse": HpsLeafOperatorMode.DENSE_SPARSE,
+      "densesparse": HpsLeafOperatorMode.DENSE_SPARSE,
+      "ds": HpsLeafOperatorMode.DENSE_SPARSE,
       "matrix_free": HpsLeafOperatorMode.MATRIX_FREE,
       "matrixfree": HpsLeafOperatorMode.MATRIX_FREE,
       "mf": HpsLeafOperatorMode.MATRIX_FREE,
@@ -39,14 +49,44 @@ def _coerce_leaf_operator_mode(
       return names[normalized]
     except KeyError as exc:
       raise ValueError(
-        "leaf_operator_mode must be Dense, MatrixFree, or Verify"
+        "leaf_operator_mode must be Dense, DenseSparse, MatrixFree, or Verify"
       ) from exc
 
   try:
     return HpsLeafOperatorMode(int(value))
   except (TypeError, ValueError) as exc:
     raise ValueError(
-      "leaf_operator_mode must be Dense, MatrixFree, or Verify"
+      "leaf_operator_mode must be Dense, DenseSparse, MatrixFree, or Verify"
+    ) from exc
+
+
+def _coerce_leaf_least_squares_solver(
+  value: HpsLeafLeastSquaresSolver | str | int,
+) -> HpsLeafLeastSquaresSolver:
+  if isinstance(value, HpsLeafLeastSquaresSolver):
+    return value
+
+  if isinstance(value, str):
+    normalized = value.strip().lower().replace("-", "_")
+    names = {
+      "auto": HpsLeafLeastSquaresSolver.AUTO,
+      "lsmr": HpsLeafLeastSquaresSolver.LSMR,
+      "dense_qr": HpsLeafLeastSquaresSolver.DENSE_QR,
+      "denseqr": HpsLeafLeastSquaresSolver.DENSE_QR,
+      "qr": HpsLeafLeastSquaresSolver.DENSE_QR,
+    }
+    try:
+      return names[normalized]
+    except KeyError as exc:
+      raise ValueError(
+        "leaf_least_squares_solver must be Auto, LSMR, or DenseQR"
+      ) from exc
+
+  try:
+    return HpsLeafLeastSquaresSolver(int(value))
+  except (TypeError, ValueError) as exc:
+    raise ValueError(
+      "leaf_least_squares_solver must be Auto, LSMR, or DenseQR"
     ) from exc
 
 
@@ -244,6 +284,30 @@ def _set_elliptic_mesh_tree_leaf_mode_signature(fn) -> None:
   fn.argtypes = argtypes
 
 
+def _set_poisson_mesh_tree_leaf_options_signature(fn) -> None:
+  _set_poisson_mesh_tree_signature(fn)
+  argtypes = list(fn.argtypes)
+  argtypes[21:21] = [
+    ct.c_int,       # leaf_operator_mode
+    ct.c_int,       # leaf_least_squares_solver
+    ct.c_double,    # leaf_verify_tolerance
+    ct.c_int,       # leaf_verify_each_solve
+  ]
+  fn.argtypes = argtypes
+
+
+def _set_elliptic_mesh_tree_leaf_options_signature(fn) -> None:
+  _set_elliptic_mesh_tree_signature(fn)
+  argtypes = list(fn.argtypes)
+  argtypes[28:28] = [
+    ct.c_int,       # leaf_operator_mode
+    ct.c_int,       # leaf_least_squares_solver
+    ct.c_double,    # leaf_verify_tolerance
+    ct.c_int,       # leaf_verify_each_solve
+  ]
+  fn.argtypes = argtypes
+
+
 for _name in (
   "jhps_dummy_two_leaf_test",
   "jhps_dummy_three_leaf_chain_test",
@@ -256,6 +320,12 @@ _set_poisson_mesh_tree_signature(libjpolyd.jhps_poisson_mesh_tree_solve)
 _set_elliptic_mesh_tree_signature(libjpolyd.jhps_elliptic_mesh_tree_solve)
 _set_elliptic_mesh_tree_leaf_mode_signature(
   libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_mode
+)
+_set_poisson_mesh_tree_leaf_options_signature(
+  libjpolyd.jhps_poisson_mesh_tree_solve_with_leaf_options
+)
+_set_elliptic_mesh_tree_leaf_options_signature(
+  libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_options
 )
 
 
@@ -344,6 +414,14 @@ def run_poisson_mesh_tree_solve(
   alpha: float = 1.0,
   beta: float = 0.0,
   verbose: bool = False,
+  leaf_operator_mode: HpsLeafOperatorMode | str | int = (
+    HpsLeafOperatorMode.DENSE
+  ),
+  leaf_least_squares_solver: (
+    HpsLeafLeastSquaresSolver | str | int
+  ) = HpsLeafLeastSquaresSolver.AUTO,
+  leaf_verify_tolerance: float = 0.0,
+  leaf_verify_each_solve: bool = True,
 ) -> HpsPoissonResult:
   """Solve Poisson on an external simplex mesh and external HPS merge tree.
 
@@ -422,7 +500,12 @@ def run_poisson_mesh_tree_solve(
   root_nb = ct.c_int()
   interface_nb = ct.c_int()
 
-  rc = libjpolyd.jhps_poisson_mesh_tree_solve(
+  leaf_mode = _coerce_leaf_operator_mode(leaf_operator_mode)
+  leaf_solver = _coerce_leaf_least_squares_solver(
+    leaf_least_squares_solver
+  )
+
+  rc = libjpolyd.jhps_poisson_mesh_tree_solve_with_leaf_options(
     ct.c_int(D),
     ct.c_int(n),
     ct.c_int(int(pc.q_pad)),
@@ -444,6 +527,10 @@ def run_poisson_mesh_tree_solve(
     ct.c_double(float(alpha)),
     ct.c_double(float(beta)),
     ct.c_int(1 if verbose else 0),
+    ct.c_int(int(leaf_mode)),
+    ct.c_int(int(leaf_solver)),
+    ct.c_double(float(leaf_verify_tolerance)),
+    ct.c_int(1 if leaf_verify_each_solve else 0),
     leaf_coeffs,
     ct.byref(root_res),
     ct.byref(iface_res),
@@ -455,7 +542,10 @@ def run_poisson_mesh_tree_solve(
     ct.byref(interface_nb),
   )
   if rc != 0:
-    raise RuntimeError(f"jhps_poisson_mesh_tree_solve failed with rc={rc}")
+    raise RuntimeError(
+      "jhps_poisson_mesh_tree_solve_with_leaf_options "
+      f"failed with rc={rc}"
+    )
 
   returned_dims = (M_out.value, m_int_out.value, kf_out.value)
   expected_dims = (int(pc.M), int(pc.m_int), int(pc.kf))
@@ -498,13 +588,16 @@ def run_elliptic_mesh_tree_solve(
   p1: int = -1,
   p0: int = -1,
   assume_symmetric: bool = True,
-  tau_C: float = 10.0,
+  tau_C: float = 1.0,
   alpha: float = 1.0,
   beta: float = 0.0,
   verbose: bool = False,
   leaf_operator_mode: HpsLeafOperatorMode | str | int = (
     HpsLeafOperatorMode.DENSE
   ),
+  leaf_least_squares_solver: (
+    HpsLeafLeastSquaresSolver | str | int
+  ) = HpsLeafLeastSquaresSolver.AUTO,
   leaf_verify_tolerance: float = 0.0,
   leaf_verify_each_solve: bool = True,
 ) -> HpsEllipticResult:
@@ -521,16 +614,25 @@ def run_elliptic_mesh_tree_solve(
     A_coeffs_elementmajor : (nelem, D, D, dimPi(D, p2))
     b_coeffs_elementmajor : (nelem, D, dimPi(D, p1)), or None when p1 == -1
     c_coeffs_elementmajor : (nelem, dimPi(D, p0)), or None when p0 == -1
-    f_int_elementmajor    : (nelem, pc.m_int)
+    f_int_elementmajor    : (nelem, pc.M)
+    Projected full elliptic residual/source coefficients through degree n.
     boundary_face_keys    : (nboundary_faces, D)
     boundary_g            : (nboundary_faces, pc.kf)
 
   Artificial interfaces and the current Robin path use ordinary normal
   derivative, not conormal flux. Pure Neumann is not implemented.
 
+  ``tau_C`` is the elliptic base stabilization constant. The C++ leaf uses
+  ``tau_C_effective = tau_C * mR / m2`` before forming
+  ``tau_f = tau_C_effective * (n+1)^2 / h_f``. This compensates for changing
+  the residual row space from ``Pi_{n-2}`` to ``Pi_R``. The Robin coefficients
+  ``alpha`` and ``beta`` are not absorbed into this normalization, so
+  ``tau_C`` remains problem dependent when ``beta`` is nonzero.
+
   ``leaf_operator_mode`` selects the leaf-local backend:
 
     Dense       legacy explicit L/T/F/A_tau path
+    DenseSparse dense L with sparse trace/flux reverse-communication actions
     MatrixFree  no dense leaf matrices; explicit HPS Ulam/S maps remain
     Verify      matrix-free solve with a retained dense comparison backend
 
@@ -543,6 +645,9 @@ def run_elliptic_mesh_tree_solve(
   p0 = int(p0)
   leaf_mode = _coerce_leaf_operator_mode(
     leaf_operator_mode
+  )
+  leaf_solver = _coerce_leaf_least_squares_solver(
+    leaf_least_squares_solver
   )
 
   if (
@@ -566,7 +671,7 @@ def run_elliptic_mesh_tree_solve(
       "the current C wrapper requires alpha != 0; pure Neumann is not implemented"
     )
   if not np.isfinite(tau_C) or float(tau_C) <= 0.0:
-    raise ValueError("tau_C must be finite and positive")
+    raise ValueError("elliptic tau_C base must be finite and positive")
 
   vertex_ids, coords, simplices, merge_pairs = _validate_mesh_tree_arrays(
     D, vertex_ids, coords, simplices, merge_pairs
@@ -622,10 +727,11 @@ def run_elliptic_mesh_tree_solve(
         f"({nelem}, {Mp0}), got {c_coeffs.shape}"
       )
 
+  elliptic_m_int = int(pc.M)
   f_int = np.ascontiguousarray(f_int_elementmajor, dtype=np.float64)
-  if f_int.shape != (nelem, int(pc.m_int)):
+  if f_int.shape != (nelem, elliptic_m_int):
     raise ValueError(
-      f"f_int_elementmajor must have shape ({nelem}, {pc.m_int}), "
+      f"f_int_elementmajor must have shape ({nelem}, {elliptic_m_int}), "
       f"got {f_int.shape}"
     )
 
@@ -705,34 +811,28 @@ def run_elliptic_mesh_tree_solve(
     ct.byref(leaf_threads_used),
   )
 
-  if leaf_mode == HpsLeafOperatorMode.DENSE:
-    # Preserve the original Python/C route exactly.
-    rc = libjpolyd.jhps_elliptic_mesh_tree_solve(
-      *(common_args + output_args)
+  rc = libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_options(
+    *(
+      common_args
+      + (
+          ct.c_int(int(leaf_mode)),
+          ct.c_int(int(leaf_solver)),
+          ct.c_double(float(leaf_verify_tolerance)),
+          ct.c_int(1 if leaf_verify_each_solve else 0),
+        )
+      + output_args
     )
-    c_symbol = "jhps_elliptic_mesh_tree_solve"
-  else:
-    rc = libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_mode(
-      *(
-        common_args
-        + (
-            ct.c_int(int(leaf_mode)),
-            ct.c_double(float(leaf_verify_tolerance)),
-            ct.c_int(1 if leaf_verify_each_solve else 0),
-          )
-        + output_args
-      )
-    )
-    c_symbol = "jhps_elliptic_mesh_tree_solve_with_leaf_mode"
+  )
+  c_symbol = "jhps_elliptic_mesh_tree_solve_with_leaf_options"
 
   if rc != 0:
     raise RuntimeError(
       f"{c_symbol} failed with rc={rc} "
-      f"(leaf mode {leaf_mode.name})"
+      f"(leaf mode {leaf_mode.name}, solver {leaf_solver.name})"
     )
 
   returned_dims = (M_out.value, m_int_out.value, kf_out.value)
-  expected_dims = (int(pc.M), int(pc.m_int), int(pc.kf))
+  expected_dims = (int(pc.M), elliptic_m_int, int(pc.kf))
   if returned_dims != expected_dims:
     raise RuntimeError(
       "Python/C++ RefSimplexPrecomp dimension mismatch: "

@@ -137,7 +137,7 @@ def projected_solution_coeffs(pc, symbols, u_expr, v0, B):
 
 def projected_residual(pc, symbols, expr, v0, B, detBabs):
   Xhat, W = pc.residual_quad()
-  V = pc.residual_basis()[:, :pc.m_int]
+  V = pc.residual_basis()[:, :pc.M]
   P = map_to_physical(v0, B, Xhat)
   return detBabs * project_expression(expr, symbols, P, W, V)
 

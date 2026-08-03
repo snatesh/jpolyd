@@ -115,7 +115,7 @@ def audit_L_for_degree(
 
   assembly_start = time.perf_counter()
   try:
-    out = np.empty((plan.m2, plan.M), dtype=np.float64, order="F")
+    out = np.empty((plan.mR, plan.M), dtype=np.float64, order="F")
 
     for element_id, simplex in enumerate(simplices):
       V_phys = base.element_vertices(vertex_row, coords, simplex)
@@ -194,7 +194,7 @@ def audit_L_for_degree(
   summary: dict[str, float | int] = {
     "p": p,
     "Mp": dimPi(pc.D, p),
-    "L_rows": int(plan.m2),
+    "L_rows": int(plan.mR),
     "L_cols": int(plan.M),
     "nelem": int(simplices.shape[0]),
     "total_entries": total_entries,

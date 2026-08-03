@@ -19,6 +19,9 @@
 #include <jmat.hh>
 #include <jmult.hh>
 #include <jprecomp.hh>
+#ifdef TIMING
+#include <timer.hh>
+#endif
 
 namespace jsimplex {
 
@@ -45,6 +48,82 @@ struct EllipticDegreeSpec
   int p1 = -1;
   int p0 = -1;
 };
+
+
+enum class EllipticResidualPolicy
+{
+  TrialDegree = 0,            // R = n
+  SecondDerivativeDegree = 1 // R = n - 2 (legacy/Poisson range)
+};
+
+enum class EllipticMultiplicationAssembler
+{
+  Quadrature = 0,
+  ClenshawColumns = 1
+};
+
+
+#ifdef TIMING
+/* Accumulated matrix-free action timings. */
+struct EllipticActionTimings
+{
+  long long forward_calls = 0;
+  long long transpose_calls = 0;
+  long long forward_principal_multiplier_calls = 0;
+  long long forward_first_multiplier_calls = 0;
+  long long forward_zero_multiplier_calls = 0;
+  long long transpose_principal_multiplier_calls = 0;
+  long long transpose_first_multiplier_calls = 0;
+  long long transpose_zero_multiplier_calls = 0;
+
+  double forward_total_seconds = 0.0;
+  double forward_partial_dag_seconds = 0.0;
+  double forward_principal_geometry_seconds = 0.0;
+  double forward_principal_clenshaw_seconds = 0.0;
+  double forward_first_geometry_seconds = 0.0;
+  double forward_first_clenshaw_seconds = 0.0;
+  double forward_zero_clenshaw_seconds = 0.0;
+  double forward_output_scale_seconds = 0.0;
+
+  double transpose_total_seconds = 0.0;
+  double transpose_residual_scale_seconds = 0.0;
+  double transpose_principal_clenshaw_seconds = 0.0;
+  double transpose_principal_geometry_seconds = 0.0;
+  double transpose_first_clenshaw_seconds = 0.0;
+  double transpose_first_geometry_seconds = 0.0;
+  double transpose_zero_clenshaw_seconds = 0.0;
+  double transpose_partial_dag_seconds = 0.0;
+
+  void reset() { *this = EllipticActionTimings{}; }
+  void add(const EllipticActionTimings& o)
+  {
+    forward_calls += o.forward_calls;
+    transpose_calls += o.transpose_calls;
+    forward_principal_multiplier_calls += o.forward_principal_multiplier_calls;
+    forward_first_multiplier_calls += o.forward_first_multiplier_calls;
+    forward_zero_multiplier_calls += o.forward_zero_multiplier_calls;
+    transpose_principal_multiplier_calls += o.transpose_principal_multiplier_calls;
+    transpose_first_multiplier_calls += o.transpose_first_multiplier_calls;
+    transpose_zero_multiplier_calls += o.transpose_zero_multiplier_calls;
+    forward_total_seconds += o.forward_total_seconds;
+    forward_partial_dag_seconds += o.forward_partial_dag_seconds;
+    forward_principal_geometry_seconds += o.forward_principal_geometry_seconds;
+    forward_principal_clenshaw_seconds += o.forward_principal_clenshaw_seconds;
+    forward_first_geometry_seconds += o.forward_first_geometry_seconds;
+    forward_first_clenshaw_seconds += o.forward_first_clenshaw_seconds;
+    forward_zero_clenshaw_seconds += o.forward_zero_clenshaw_seconds;
+    forward_output_scale_seconds += o.forward_output_scale_seconds;
+    transpose_total_seconds += o.transpose_total_seconds;
+    transpose_residual_scale_seconds += o.transpose_residual_scale_seconds;
+    transpose_principal_clenshaw_seconds += o.transpose_principal_clenshaw_seconds;
+    transpose_principal_geometry_seconds += o.transpose_principal_geometry_seconds;
+    transpose_first_clenshaw_seconds += o.transpose_first_clenshaw_seconds;
+    transpose_first_geometry_seconds += o.transpose_first_geometry_seconds;
+    transpose_zero_clenshaw_seconds += o.transpose_zero_clenshaw_seconds;
+    transpose_partial_dag_seconds += o.transpose_partial_dag_seconds;
+  }
+};
+#endif
 
 template<int D, class Real>
 struct EllipticElementCoefficientsView
@@ -93,10 +172,10 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   Matrix-free affine-element actions.
 
   Forward:
-    y = L_int x,  x has length M and y has length m2.
+    y = L_int x,  x has length M and y has length mR.
 
   Transpose:
-    x = L_int^T y, y has length m2 and x has length M.
+    x = L_int^T y, y has length mR and x has length M.
 
   Outputs are overwritten. The caller owns one EllipticActionWorkspace per
   concurrent application. This type contains no dense assembly matrices.
@@ -256,27 +335,52 @@ public:
 
   int n = 0;
   int M = 0;
-  int m2 = 0;
-  int m1 = 0;
+  int m2 = 0; // active second-derivative image dim(Pi_{n-2})
+  int m1 = 0; // active first-derivative image dim(Pi_{n-1})
+  int residual_degree = 0;
+  int mR = 0;
+  int q_mult = 0;
   EllipticDegreeSpec degrees{};
+  EllipticResidualPolicy residual_policy =
+    EllipticResidualPolicy::TrialDegree;
+  EllipticMultiplicationAssembler multiplication_assembler =
+    EllipticMultiplicationAssembler::Quadrature;
   std::array<Real, D + 1> kappa_res{};
   Real phi0_res = Real(0);
 
-  explicit EllipticPlan(const RefSimplexPrecomp<D,Real>& pre,
-                        const EllipticDegreeSpec& degree_spec,
-                        bool assume_symmetric = true)
+  explicit EllipticPlan(
+    const RefSimplexPrecomp<D,Real>& pre,
+    const EllipticDegreeSpec& degree_spec,
+    bool assume_symmetric = true,
+    EllipticResidualPolicy residual_policy_in =
+      EllipticResidualPolicy::TrialDegree,
+    EllipticMultiplicationAssembler multiplication_assembler_in =
+      EllipticMultiplicationAssembler::Quadrature,
+    bool build_clenshaw_plans = true)
     : EllipticPlan(
         pre.n,
         pre.kappa_res.data(),
         degree_spec,
-        assume_symmetric)
+        assume_symmetric,
+        residual_policy_in,
+        multiplication_assembler_in,
+        build_clenshaw_plans)
   {}
 
-  EllipticPlan(int n_in,
-               const Real* kappa_res_in,
-               const EllipticDegreeSpec& degree_spec,
-               bool assume_symmetric = true)
-    : n(n_in), degrees(degree_spec)
+  EllipticPlan(
+    int n_in,
+    const Real* kappa_res_in,
+    const EllipticDegreeSpec& degree_spec,
+    bool assume_symmetric = true,
+    EllipticResidualPolicy residual_policy_in =
+      EllipticResidualPolicy::TrialDegree,
+    EllipticMultiplicationAssembler multiplication_assembler_in =
+      EllipticMultiplicationAssembler::Quadrature,
+    bool build_clenshaw_plans = true)
+    : n(n_in),
+      degrees(degree_spec),
+      residual_policy(residual_policy_in),
+      multiplication_assembler(multiplication_assembler_in)
   {
     if (!kappa_res_in)
       throw std::invalid_argument("EllipticPlan: null kappa_res");
@@ -293,12 +397,52 @@ public:
     M = Basis<D,Real>::dim_Pi(n);
     m2 = Basis<D,Real>::dim_Pi(n - 2);
     m1 = Basis<D,Real>::dim_Pi(n - 1);
+    residual_degree =
+      residual_policy == EllipticResidualPolicy::TrialDegree
+      ? n
+      : n - 2;
+    mR = Basis<D,Real>::dim_Pi(residual_degree);
 
     phi0_res = evaluate_constant_basis_value();
 
-    plan_id_[0] = register_order_plan(2, degrees.p2, assume_symmetric);
-    plan_id_[1] = register_order_plan(1, degrees.p1, assume_symmetric);
-    plan_id_[2] = register_order_plan(0, degrees.p0, assume_symmetric);
+    if (build_clenshaw_plans ||
+        multiplication_assembler ==
+          EllipticMultiplicationAssembler::ClenshawColumns)
+    {
+      plan_id_[0] = register_order_plan(2, degrees.p2, assume_symmetric);
+      plan_id_[1] = register_order_plan(1, degrees.p1, assume_symmetric);
+      plan_id_[2] = register_order_plan(0, degrees.p0, assume_symmetric);
+    }
+
+    if (multiplication_assembler ==
+        EllipticMultiplicationAssembler::Quadrature)
+    {
+      int maximum_triple_degree = 0;
+      int maximum_basis_degree = residual_degree;
+      for (int order = 0; order <= 2; ++order)
+      {
+        const int p = coefficient_degree(order);
+        if (p < 0)
+          continue;
+        const int N = derivative_degree(order);
+        maximum_triple_degree = std::max(
+          maximum_triple_degree,
+          residual_degree + N + p);
+        maximum_basis_degree = std::max(
+          maximum_basis_degree,
+          std::max(N, p));
+      }
+
+      // A q-point Gauss-Jacobi rule is exact through degree 2q-1.
+      // This is the direct analogue of q_vol=n+1 (q_pad=1): choose the
+      // smallest q with 2q-1 >= the triple-product degree bound.
+      q_mult = maximum_triple_degree / 2 + 1;
+      quadrature_plan_ = std::make_unique<
+        MultByQQuadraturePlan<D,Real>>(
+          kappa_res.data(),
+          maximum_basis_degree,
+          q_mult);
+    }
   }
 
   int num_plans() const
@@ -343,8 +487,18 @@ public:
     return *plans_.at((std::size_t)id);
   }
 
+
+  const MultByQQuadraturePlan<D,Real>& quadrature_plan() const
+  {
+    if (!quadrature_plan_)
+      throw std::logic_error(
+        "EllipticPlan: quadrature multiplication plan is unavailable");
+    return *quadrature_plan_;
+  }
+
 private:
   std::vector<std::unique_ptr<elliptic_detail::OwnedClenshawPlan<D,Real>>> plans_;
+  std::unique_ptr<MultByQQuadraturePlan<D,Real>> quadrature_plan_;
   std::array<int, 3> plan_id_{{-1, -1, -1}};
 
   friend class EllipticActionWorkspace<D,Real>;
@@ -442,7 +596,7 @@ public:
     physical_derivative_.resize(
       (std::size_t)max_partial_size);
     scaled_residual_.resize(
-      (std::size_t)plan.m2);
+      (std::size_t)plan.mR);
   }
 
   bool compatible(
@@ -450,6 +604,11 @@ public:
   {
     return owner_ == &plan;
   }
+
+#ifdef TIMING
+  const EllipticActionTimings& timings() const { return timings_; }
+  void reset_timings() { timings_.reset(); }
+#endif
 
 protected:
   const EllipticPlan<D,Real>* owner_ = nullptr;
@@ -468,6 +627,9 @@ protected:
   std::vector<Real> dag_partial_adjoint_;
   std::vector<Real> physical_derivative_;
   std::vector<Real> scaled_residual_;
+#ifdef TIMING
+  EllipticActionTimings timings_{};
+#endif
 
   friend void jdsimplex_apply_elliptic<D,Real>(
     const RefSimplexPrecomp<D,Real>&,
@@ -503,16 +665,19 @@ public:
     : EllipticActionWorkspace<D,Real>(plan)
   {
     int max_MN = 0;
-    for (int id = 0; id < plan.num_plans(); ++id)
+    for (int order = 0; order <= 2; ++order)
     {
-      const auto& P = plan.entry(id);
-      max_MN = std::max(
-        max_MN,
-        Basis<D,Real>::dim_Pi(P.K - P.p));
+      if (plan.coefficient_degree(order) >= 0)
+      {
+        max_MN = std::max(
+          max_MN,
+          Basis<D,Real>::dim_Pi(
+            plan.derivative_degree(order)));
+      }
     }
 
     Mq_.resize(
-      (std::size_t)plan.m2
+      (std::size_t)plan.mR
       * (std::size_t)max_MN);
     Dphys_.resize(
       (std::size_t)plan.M
@@ -534,6 +699,7 @@ private:
   // Dense-only coefficient multiplication and physical derivative matrices.
   std::vector<Real> Mq_;
   std::vector<Real> Dphys_;
+  MultByQQuadratureWorkspace<Real> quadrature_work_;
 
   // Dense-only identity-column materialization of all unique DAG partials.
   std::vector<Real> dag_source_;
@@ -567,7 +733,7 @@ private:
     Lij_ref     M x M x D x D, Fortran order
     Li_ref      M x M x D, Fortran order
     L0_ref      M x M, column-major
-    L_int_out   m2 x M, column-major
+    L_int_out   mR x M, column-major
 
   The physical derivative contractions are
 
@@ -602,30 +768,45 @@ void jdsimplex_assemble_elliptic_L_int(
     throw std::invalid_argument("jdsimplex_assemble_elliptic_L_int: null c coefficients");
 
   const int M = plan.M;
+  const int mR = plan.mR;
   const int m2 = plan.m2;
   const int m1 = plan.m1;
   std::fill(
     L_int_out,
-    L_int_out + (std::size_t)m2 * (std::size_t)M,
+    L_int_out + (std::size_t)mR * (std::size_t)M,
     Real(0));
 
   auto build_restricted_mult = [&](int order, const Real* q, int MN) -> const Real*
   {
+    Real* Mq = work.Mq_.data();
+    std::fill(Mq, Mq + (std::size_t)mR * (std::size_t)MN, Real(0));
+
+    if (plan.multiplication_assembler ==
+        EllipticMultiplicationAssembler::Quadrature)
+    {
+      assemble_restricted_mult_quadrature<D,Real>(
+        plan.quadrature_plan(),
+        q,
+        plan.coefficient_degree(order),
+        plan.derivative_degree(order),
+        plan.residual_degree,
+        work.quadrature_work_,
+        Mq);
+      return Mq;
+    }
+
     const int id = plan.plan_id_for_order(order);
     if (id < 0)
-      throw std::logic_error("build_restricted_mult: disabled order");
-
+      throw std::logic_error("build_restricted_mult: missing Clenshaw plan");
     const auto& P = plan.entry(id);
-    Real* Mq = work.Mq_.data();
-    std::fill(Mq, Mq + (std::size_t)m2 * (std::size_t)MN, Real(0));
 
     if (P.scalar_only)
     {
       // q(x) = q_0 phi_0(x), so multiplication is by q_0*phi_0.
       const Real scalar = q[0] * plan.phi0_res;
-      const int ndiag = std::min(m2, MN);
+      const int ndiag = std::min(mR, MN);
       for (int j = 0; j < ndiag; ++j)
-        Mq[(std::size_t)j + (std::size_t)m2 * (std::size_t)j] = scalar;
+        Mq[(std::size_t)j + (std::size_t)mR * (std::size_t)j] = scalar;
       return Mq;
     }
 
@@ -638,8 +819,9 @@ void jdsimplex_assemble_elliptic_L_int(
       std::fill(cK, cK + P.MK, Real(0));
       cK[col] = Real(1);
       P.mult.apply(q, cK, yK, mult_work);
-      for (int row = 0; row < m2; ++row)
-        Mq[(std::size_t)row + (std::size_t)m2 * (std::size_t)col] = yK[row];
+      const int active_rows = std::min(mR, P.MK);
+      for (int row = 0; row < active_rows; ++row)
+        Mq[(std::size_t)row + (std::size_t)mR * (std::size_t)col] = yK[row];
     }
     return Mq;
   };
@@ -686,17 +868,17 @@ void jdsimplex_assemble_elliptic_L_int(
           CblasColMajor,
           CblasNoTrans,
           CblasNoTrans,
-          m2,
+          mR,
           M,
           MN,
           Real(1),
           Mq,
-          m2,
+          mR,
           Hrs,
           MN,
           Real(1),
           L_int_out,
-          m2);
+          mR);
       }
     }
   }
@@ -734,17 +916,17 @@ void jdsimplex_assemble_elliptic_L_int(
         CblasColMajor,
         CblasNoTrans,
         CblasNoTrans,
-        m2,
+        mR,
         M,
         MN,
         Real(1),
         Mq,
-        m2,
+        mR,
         Gr,
         MN,
         Real(1),
         L_int_out,
-        m2);
+        mR);
     }
   }
 
@@ -758,20 +940,20 @@ void jdsimplex_assemble_elliptic_L_int(
       CblasColMajor,
       CblasNoTrans,
       CblasNoTrans,
-      m2,
+      mR,
       M,
       MN,
       Real(1),
       Mq,
-      m2,
+      mR,
       L0_ref,
       M,
       Real(1),
       L_int_out,
-      m2);
+      mR);
   }
 
-  for (std::size_t k = 0; k < (std::size_t)m2 * (std::size_t)M; ++k)
+  for (std::size_t k = 0; k < (std::size_t)mR * (std::size_t)M; ++k)
     L_int_out[k] *= detBabs;
 }
 
@@ -813,7 +995,7 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   if (!work.compatible(plan))
     throw std::invalid_argument(
       "jdsimplex_assemble_elliptic_L_int_dag: incompatible workspace");
-  if (pre.n != plan.n || pre.M != plan.M || pre.m_int != plan.m2)
+  if (pre.n != plan.n || pre.M != plan.M)
     throw std::invalid_argument(
       "jdsimplex_assemble_elliptic_L_int_dag: precompute/plan mismatch");
   if (pre.partials.empty() || pre.partial_value_count == 0)
@@ -834,6 +1016,7 @@ void jdsimplex_assemble_elliptic_L_int_dag(
       "jdsimplex_assemble_elliptic_L_int_dag: null c coefficients");
 
   const int M = plan.M;
+  const int mR = plan.mR;
   const int m2 = plan.m2;
   const int m1 = plan.m1;
 
@@ -846,7 +1029,7 @@ void jdsimplex_assemble_elliptic_L_int_dag(
 
   std::fill(
     L_int_out,
-    L_int_out + (std::size_t)m2 * (std::size_t)M,
+    L_int_out + (std::size_t)mR * (std::size_t)M,
     Real(0));
 
   std::array<int, D> alpha_zero{};
@@ -923,27 +1106,41 @@ void jdsimplex_assemble_elliptic_L_int_dag(
   auto build_restricted_mult =
     [&](int order, const Real* q, int MN) -> const Real*
   {
-    const int id = plan.plan_id_for_order(order);
-    if (id < 0)
-      throw std::logic_error(
-        "jdsimplex_assemble_elliptic_L_int_dag: disabled order");
-
-    const auto& P = plan.entry(id);
     Real* Mq = work.Mq_.data();
     std::fill(
       Mq,
-      Mq + (std::size_t)m2 * (std::size_t)MN,
+      Mq + (std::size_t)mR * (std::size_t)MN,
       Real(0));
+
+    if (plan.multiplication_assembler ==
+        EllipticMultiplicationAssembler::Quadrature)
+    {
+      assemble_restricted_mult_quadrature<D,Real>(
+        plan.quadrature_plan(),
+        q,
+        plan.coefficient_degree(order),
+        plan.derivative_degree(order),
+        plan.residual_degree,
+        work.quadrature_work_,
+        Mq);
+      return Mq;
+    }
+
+    const int id = plan.plan_id_for_order(order);
+    if (id < 0)
+      throw std::logic_error(
+        "jdsimplex_assemble_elliptic_L_int_dag: missing Clenshaw plan");
+    const auto& P = plan.entry(id);
 
     if (P.scalar_only)
     {
       const Real scalar = q[0] * plan.phi0_res;
-      const int ndiag = std::min(m2, MN);
+      const int ndiag = std::min(mR, MN);
       for (int j = 0; j < ndiag; ++j)
       {
         Mq[
           (std::size_t)j
-          + (std::size_t)m2 * (std::size_t)j] =
+          + (std::size_t)mR * (std::size_t)j] =
           scalar;
       }
       return Mq;
@@ -960,11 +1157,12 @@ void jdsimplex_assemble_elliptic_L_int_dag(
       cK[col] = Real(1);
       P.mult.apply(q, cK, yK, mult_work);
 
-      for (int row = 0; row < m2; ++row)
+      const int active_rows = std::min(mR, P.MK);
+      for (int row = 0; row < active_rows; ++row)
       {
         Mq[
           (std::size_t)row
-          + (std::size_t)m2 * (std::size_t)col] =
+          + (std::size_t)mR * (std::size_t)col] =
           yK[row];
       }
     }
@@ -1043,17 +1241,17 @@ void jdsimplex_assemble_elliptic_L_int_dag(
           CblasColMajor,
           CblasNoTrans,
           CblasNoTrans,
-          m2,
+          mR,
           M,
           MN,
           Real(1),
           Mq,
-          m2,
+          mR,
           Hrs,
           MN,
           Real(1),
           L_int_out,
-          m2);
+          mR);
       }
     }
   }
@@ -1112,17 +1310,17 @@ void jdsimplex_assemble_elliptic_L_int_dag(
         CblasColMajor,
         CblasNoTrans,
         CblasNoTrans,
-        m2,
+        mR,
         M,
         MN,
         Real(1),
         Mq,
-        m2,
+        mR,
         Gr,
         MN,
         Real(1),
         L_int_out,
-        m2);
+        mR);
     }
   }
 
@@ -1139,21 +1337,21 @@ void jdsimplex_assemble_elliptic_L_int_dag(
       CblasColMajor,
       CblasNoTrans,
       CblasNoTrans,
-      m2,
+      mR,
       M,
       MN,
       Real(1),
       Mq,
-      m2,
+      mR,
       D0,
       MN,
       Real(1),
       L_int_out,
-      m2);
+      mR);
   }
 
   for (std::size_t entry = 0;
-       entry < (std::size_t)m2 * (std::size_t)M;
+       entry < (std::size_t)mR * (std::size_t)M;
        ++entry)
   {
     L_int_out[entry] *= geom.detBabs;
@@ -1191,8 +1389,7 @@ void jdsimplex_apply_elliptic(
   if (!work.compatible(plan))
     throw std::invalid_argument(
       "jdsimplex_apply_elliptic: incompatible workspace");
-  if (pre.n != plan.n || pre.M != plan.M ||
-      pre.m_int != plan.m2)
+  if (pre.n != plan.n || pre.M != plan.M)
     throw std::invalid_argument(
       "jdsimplex_apply_elliptic: precompute/plan mismatch");
   if (pre.partials.empty() || pre.partial_value_count == 0)
@@ -1213,6 +1410,7 @@ void jdsimplex_apply_elliptic(
       "jdsimplex_apply_elliptic: null c coefficients");
 
   const int M = plan.M;
+  const int mR = plan.mR;
   const int m2 = plan.m2;
   const int m1 = plan.m1;
 
@@ -1222,12 +1420,20 @@ void jdsimplex_apply_elliptic(
     throw std::runtime_error(
       "jdsimplex_apply_elliptic: undersized workspace");
 
-  std::fill(y, y + m2, Real(0));
-
+#ifdef TIMING
+  timer forward_total_timer; forward_total_timer.tic();
+#endif
+  std::fill(y, y + mR, Real(0));
+#ifdef TIMING
+  timer forward_partial_timer; forward_partial_timer.tic();
+#endif
   pre.apply_partials(
     x,
     work.dag_partial_column_.data(),
     work.dag_partial_work_);
+#ifdef TIMING
+  work.timings_.forward_partial_dag_seconds += forward_partial_timer.toc();
+#endif
 
   std::array<int, D> alpha_zero{};
   const PartialPlan& zero_plan =
@@ -1275,7 +1481,7 @@ void jdsimplex_apply_elliptic(
     if (P.scalar_only)
     {
       const Real scalar = q[0] * plan.phi0_res;
-      const int count = std::min(m2, input_size);
+      const int count = std::min(mR, input_size);
       for (int row = 0; row < count; ++row)
         y[row] += scalar * input[row];
       return;
@@ -1290,7 +1496,8 @@ void jdsimplex_apply_elliptic(
       work.mult_workspaces_[(std::size_t)id];
     P.mult.apply(q, cK, yK, mult_work);
 
-    for (int row = 0; row < m2; ++row)
+    const int active_rows = std::min(mR, P.MK);
+    for (int row = 0; row < active_rows; ++row)
       y[row] += yK[row];
   };
 
@@ -1303,6 +1510,9 @@ void jdsimplex_apply_elliptic(
     {
       for (int s = 0; s < D; ++s)
       {
+#ifdef TIMING
+        timer forward_principal_geometry_timer; forward_principal_geometry_timer.tic();
+#endif
         Real* Hrs = work.physical_derivative_.data();
         std::fill(Hrs, Hrs + m2, Real(0));
 
@@ -1334,14 +1544,23 @@ void jdsimplex_apply_elliptic(
           }
         }
 
+#ifdef TIMING
+        work.timings_.forward_principal_geometry_seconds += forward_principal_geometry_timer.toc();
+#endif
         const Real* q =
           coeffs.A
           + (
               (std::size_t)r * (std::size_t)D
               + (std::size_t)s
             ) * (std::size_t)Mp2;
-
+#ifdef TIMING
+        timer forward_principal_clenshaw_timer; forward_principal_clenshaw_timer.tic();
+#endif
         apply_restricted_multiplier(2, q, Hrs, m2);
+#ifdef TIMING
+        work.timings_.forward_principal_clenshaw_seconds += forward_principal_clenshaw_timer.toc();
+        ++work.timings_.forward_principal_multiplier_calls;
+#endif
       }
     }
   }
@@ -1353,6 +1572,9 @@ void jdsimplex_apply_elliptic(
 
     for (int r = 0; r < D; ++r)
     {
+#ifdef TIMING
+      timer forward_first_geometry_timer; forward_first_geometry_timer.tic();
+#endif
       Real* Gr = work.physical_derivative_.data();
       std::fill(Gr, Gr + m1, Real(0));
 
@@ -1373,11 +1595,20 @@ void jdsimplex_apply_elliptic(
           Gr[row] += Cir * Di[row];
       }
 
+#ifdef TIMING
+      work.timings_.forward_first_geometry_seconds += forward_first_geometry_timer.toc();
+#endif
       const Real* q =
         coeffs.b
         + (std::size_t)r * (std::size_t)Mp1;
-
+#ifdef TIMING
+      timer forward_first_clenshaw_timer; forward_first_clenshaw_timer.tic();
+#endif
       apply_restricted_multiplier(1, q, Gr, m1);
+#ifdef TIMING
+      work.timings_.forward_first_clenshaw_seconds += forward_first_clenshaw_timer.toc();
+      ++work.timings_.forward_first_multiplier_calls;
+#endif
     }
   }
 
@@ -1387,11 +1618,25 @@ void jdsimplex_apply_elliptic(
     const Real* D0 =
       work.dag_partial_column_.data()
       + zero_plan.value_offset;
+#ifdef TIMING
+    timer forward_zero_clenshaw_timer; forward_zero_clenshaw_timer.tic();
+#endif
     apply_restricted_multiplier(0, coeffs.c, D0, M);
+#ifdef TIMING
+    work.timings_.forward_zero_clenshaw_seconds += forward_zero_clenshaw_timer.toc();
+    ++work.timings_.forward_zero_multiplier_calls;
+#endif
   }
-
-  for (int row = 0; row < m2; ++row)
+#ifdef TIMING
+  timer forward_scale_timer; forward_scale_timer.tic();
+#endif
+  for (int row = 0; row < mR; ++row)
     y[row] *= geom.detBabs;
+#ifdef TIMING
+  work.timings_.forward_output_scale_seconds += forward_scale_timer.toc();
+  work.timings_.forward_total_seconds += forward_total_timer.toc();
+  ++work.timings_.forward_calls;
+#endif
 }
 
 
@@ -1426,8 +1671,7 @@ void jdsimplex_apply_elliptic_transpose(
   if (!work.compatible(plan))
     throw std::invalid_argument(
       "jdsimplex_apply_elliptic_transpose: incompatible workspace");
-  if (pre.n != plan.n || pre.M != plan.M ||
-      pre.m_int != plan.m2)
+  if (pre.n != plan.n || pre.M != plan.M)
     throw std::invalid_argument(
       "jdsimplex_apply_elliptic_transpose: precompute/plan mismatch");
   if (pre.partials.empty() || pre.partial_value_count == 0)
@@ -1448,6 +1692,7 @@ void jdsimplex_apply_elliptic_transpose(
       "jdsimplex_apply_elliptic_transpose: null c coefficients");
 
   const int M = plan.M;
+  const int mR = plan.mR;
   const int m2 = plan.m2;
   const int m1 = plan.m1;
 
@@ -1455,20 +1700,25 @@ void jdsimplex_apply_elliptic_transpose(
         pre.partial_value_count ||
       work.physical_derivative_.size() <
         (std::size_t)std::max(M, std::max(m1, m2)) ||
-      work.scaled_residual_.size() < (std::size_t)m2)
+      work.scaled_residual_.size() < (std::size_t)mR)
     throw std::runtime_error(
       "jdsimplex_apply_elliptic_transpose: undersized workspace");
-
+#ifdef TIMING
+  timer transpose_total_timer; transpose_total_timer.tic();
+  timer transpose_residual_scale_timer; transpose_residual_scale_timer.tic();
+#endif
   std::fill(
     work.dag_partial_adjoint_.begin(),
     work.dag_partial_adjoint_.begin()
       + pre.partial_value_count,
     Real(0));
 
-  for (int row = 0; row < m2; ++row)
+  for (int row = 0; row < mR; ++row)
     work.scaled_residual_[(std::size_t)row] =
       geom.detBabs * y[row];
-
+#ifdef TIMING
+  work.timings_.transpose_residual_scale_seconds += transpose_residual_scale_timer.toc();
+#endif
   std::array<int, D> alpha_zero{};
   const PartialPlan& zero_plan =
     pre.partial_plan(alpha_zero);
@@ -1516,7 +1766,7 @@ void jdsimplex_apply_elliptic_transpose(
     {
       const Real scalar = q[0] * plan.phi0_res;
       std::fill(output, output + output_size, Real(0));
-      const int count = std::min(m2, output_size);
+      const int count = std::min(mR, output_size);
       for (int row = 0; row < count; ++row)
       {
         output[row] =
@@ -1531,7 +1781,8 @@ void jdsimplex_apply_elliptic_transpose(
     std::fill(cK, cK + P.MK, Real(0));
     std::copy(
       work.scaled_residual_.begin(),
-      work.scaled_residual_.begin() + m2,
+      work.scaled_residual_.begin()
+        + std::min(mR, P.MK),
       cK);
 
     auto& mult_work =
@@ -1560,12 +1811,19 @@ void jdsimplex_apply_elliptic_transpose(
               + (std::size_t)s
             ) * (std::size_t)Mp2;
 
+#ifdef TIMING
+        timer transpose_principal_clenshaw_timer; transpose_principal_clenshaw_timer.tic();
+#endif
         apply_restricted_multiplier_transpose(
           2,
           q,
           Hrs_adjoint,
           m2);
-
+#ifdef TIMING
+        work.timings_.transpose_principal_clenshaw_seconds += transpose_principal_clenshaw_timer.toc();
+        ++work.timings_.transpose_principal_multiplier_calls;
+        timer transpose_principal_geometry_timer; transpose_principal_geometry_timer.tic();
+#endif
         for (int i = 0; i < D; ++i)
         {
           const Real Cir =
@@ -1594,6 +1852,9 @@ void jdsimplex_apply_elliptic_transpose(
                 scale * Hrs_adjoint[row];
           }
         }
+#ifdef TIMING
+        work.timings_.transpose_principal_geometry_seconds += transpose_principal_geometry_timer.toc();
+#endif
       }
     }
   }
@@ -1612,12 +1873,19 @@ void jdsimplex_apply_elliptic_transpose(
         coeffs.b
         + (std::size_t)r * (std::size_t)Mp1;
 
+#ifdef TIMING
+      timer transpose_first_clenshaw_timer; transpose_first_clenshaw_timer.tic();
+#endif
       apply_restricted_multiplier_transpose(
         1,
         q,
         Gr_adjoint,
         m1);
-
+#ifdef TIMING
+      work.timings_.transpose_first_clenshaw_seconds += transpose_first_clenshaw_timer.toc();
+      ++work.timings_.transpose_first_multiplier_calls;
+      timer transpose_first_geometry_timer; transpose_first_geometry_timer.tic();
+#endif
       for (int i = 0; i < D; ++i)
       {
         const Real Cir =
@@ -1634,6 +1902,9 @@ void jdsimplex_apply_elliptic_transpose(
         for (int row = 0; row < m1; ++row)
           Di_adjoint[row] += Cir * Gr_adjoint[row];
       }
+#ifdef TIMING
+      work.timings_.transpose_first_geometry_seconds += transpose_first_geometry_timer.toc();
+#endif
     }
   }
 
@@ -1643,12 +1914,18 @@ void jdsimplex_apply_elliptic_transpose(
     Real* D0_adjoint =
       work.physical_derivative_.data();
 
+#ifdef TIMING
+    timer transpose_zero_clenshaw_timer; transpose_zero_clenshaw_timer.tic();
+#endif
     apply_restricted_multiplier_transpose(
       0,
       coeffs.c,
       D0_adjoint,
       M);
-
+#ifdef TIMING
+    work.timings_.transpose_zero_clenshaw_seconds += transpose_zero_clenshaw_timer.toc();
+    ++work.timings_.transpose_zero_multiplier_calls;
+#endif
     Real* zero_adjoint =
       work.dag_partial_adjoint_.data()
       + zero_plan.value_offset;
@@ -1656,10 +1933,18 @@ void jdsimplex_apply_elliptic_transpose(
       zero_adjoint[row] += D0_adjoint[row];
   }
 
+#ifdef TIMING
+  timer transpose_partial_timer; transpose_partial_timer.tic();
+#endif
   pre.apply_partials_transpose(
     work.dag_partial_adjoint_.data(),
     x,
     work.dag_partial_work_);
+#ifdef TIMING
+  work.timings_.transpose_partial_dag_seconds += transpose_partial_timer.toc();
+  work.timings_.transpose_total_seconds += transpose_total_timer.toc();
+  ++work.timings_.transpose_calls;
+#endif
 }
 
 
@@ -1675,7 +1960,7 @@ void jdsimplex_assemble_elliptic_L_int(
 {
   if (!geom.valid)
     throw std::invalid_argument("jdsimplex_assemble_elliptic_L_int: invalid geometry");
-  if (pre.n != plan.n || pre.M != plan.M || pre.m_int != plan.m2)
+  if (pre.n != plan.n || pre.M != plan.M)
     throw std::invalid_argument("jdsimplex_assemble_elliptic_L_int: precompute/plan mismatch");
 
   jdsimplex_assemble_elliptic_L_int<D,Real>(

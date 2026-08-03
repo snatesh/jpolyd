@@ -19,6 +19,9 @@
 #include <jprecomp.hh>
 #include <jnode.hh>
 #include <jmerge.hh>
+#ifdef TIMING
+#include <timer.hh>
+#endif
 
 namespace {
 
@@ -36,6 +39,7 @@ Real inf_norm(const std::vector<Real>& x)
 template<class Real>
 jsimplex::LeafOptions<Real> leaf_options_from_c(
   int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve)
 {
@@ -53,6 +57,11 @@ jsimplex::LeafOptions<Real> leaf_options_from_c(
         jsimplex::LeafOperatorMode::MatrixFree;
       break;
 
+    case JHPS_LEAF_OPERATOR_DENSE_SPARSE:
+      options.operator_mode =
+        jsimplex::LeafOperatorMode::DenseSparse;
+      break;
+
     case JHPS_LEAF_OPERATOR_VERIFY:
       options.operator_mode =
         jsimplex::LeafOperatorMode::Verify;
@@ -61,6 +70,25 @@ jsimplex::LeafOptions<Real> leaf_options_from_c(
     default:
       throw std::invalid_argument(
         "HPS mesh-tree solve: invalid leaf_operator_mode");
+  }
+
+  switch (leaf_least_squares_solver)
+  {
+    case JHPS_LEAF_LS_AUTO:
+      options.least_squares_solver =
+        jsimplex::LeafLeastSquaresSolver::Auto;
+      break;
+    case JHPS_LEAF_LS_LSMR:
+      options.least_squares_solver =
+        jsimplex::LeafLeastSquaresSolver::LSMR;
+      break;
+    case JHPS_LEAF_LS_DENSE_QR:
+      options.least_squares_solver =
+        jsimplex::LeafLeastSquaresSolver::DenseQR;
+      break;
+    default:
+      throw std::invalid_argument(
+        "HPS mesh-tree solve: invalid leaf_least_squares_solver");
   }
 
   if (leaf_verify_tolerance > 0.0)
@@ -84,8 +112,38 @@ inline const char* leaf_operator_mode_name(
       return "Dense";
     case jsimplex::LeafOperatorMode::MatrixFree:
       return "MatrixFree";
+    case jsimplex::LeafOperatorMode::DenseSparse:
+      return "DenseSparse";
     case jsimplex::LeafOperatorMode::Verify:
       return "Verify";
+  }
+  return "Unknown";
+}
+
+inline jsimplex::LeafLeastSquaresSolver resolved_leaf_solver(
+  jsimplex::LeafOperatorMode operator_mode,
+  jsimplex::LeafLeastSquaresSolver solver)
+{
+  if (solver != jsimplex::LeafLeastSquaresSolver::Auto)
+    return solver;
+
+  return operator_mode == jsimplex::LeafOperatorMode::Dense
+    ? jsimplex::LeafLeastSquaresSolver::DenseQR
+    : jsimplex::LeafLeastSquaresSolver::LSMR;
+}
+
+inline const char* leaf_least_squares_solver_name(
+  jsimplex::LeafOperatorMode operator_mode,
+  jsimplex::LeafLeastSquaresSolver solver)
+{
+  switch (resolved_leaf_solver(operator_mode, solver))
+  {
+    case jsimplex::LeafLeastSquaresSolver::LSMR:
+      return "LSMR";
+    case jsimplex::LeafLeastSquaresSolver::DenseQR:
+      return "DenseQR";
+    case jsimplex::LeafLeastSquaresSolver::Auto:
+      break;
   }
   return "Unknown";
 }
@@ -105,6 +163,19 @@ void validate_leaf_backend_storage(
     {
       throw std::runtime_error(
         "HPS mesh-tree solve: MatrixFree leaf retained dense local matrices");
+    }
+  }
+  else if (leaf.operator_mode ==
+           jsimplex::LeafOperatorMode::DenseSparse)
+  {
+    if (!leaf.has_dense_interior_operator()
+        || leaf.has_dense_local_operator()
+        || !leaf.T.empty()
+        || !leaf.F.empty()
+        || !leaf.A_tau.empty())
+    {
+      throw std::runtime_error(
+        "HPS mesh-tree solve: DenseSparse leaf storage is inconsistent");
     }
   }
   else if (!leaf.has_dense_local_operator())
@@ -946,6 +1017,7 @@ int run_mesh_tree_poisson_impl(
   double beta,
   int verbose,
   int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,
@@ -970,6 +1042,7 @@ int run_mesh_tree_poisson_impl(
   const typename Leaf::Options leaf_options =
     leaf_options_from_c<Real>(
       leaf_operator_mode,
+      leaf_least_squares_solver,
       leaf_verify_tolerance,
       leaf_verify_each_solve);
 
@@ -991,50 +1064,33 @@ int run_mesh_tree_poisson_impl(
   std::vector<Node> leaves;
   leaves.reserve((std::size_t)nelem);
 
+  typename Leaf::SolveWorkspace response_workspace(
+    pre.m_int + (D + 1) * pre.kf,
+    pre.M);
+
   for (int e = 0; e < nelem; ++e)
   {
     Node leaf_node;
 
-    if (leaf_options.operator_mode ==
-        jsimplex::LeafOperatorMode::Dense)
-    {
-      // Preserve the legacy dense call path exactly.
-      leaf_node =
-        jsimplex::make_poisson_homogeneous_leaf_node<D,Real>(
-          mesh,
-          e,
-          pre,
-          poisson_leaves[(std::size_t)e],
-          Real(tau_C),
-          Real(1e-14),
-          Real(1e-14),
-          5000);
-    }
-    else
-    {
-      leaf_node =
-        jsimplex::make_poisson_homogeneous_leaf_node<D,Real>(
-          mesh,
-          e,
-          pre,
-          poisson_leaves[(std::size_t)e],
-          leaf_options,
-          Real(tau_C),
-          Real(1e-14),
-          Real(1e-14),
-          5000);
-    }
+    leaf_node =
+      jsimplex::make_poisson_homogeneous_leaf_node<D,Real>(
+        mesh,
+        e,
+        pre,
+        poisson_leaves[(std::size_t)e],
+        leaf_options,
+        Real(tau_C),
+        Real(1e-14),
+        Real(1e-14),
+        5000,
+        &response_workspace);
 
     validate_leaf_backend_storage(
       poisson_leaves[(std::size_t)e]);
 
-    const Real* f_e =
-      f_int_elementmajor + (std::size_t)e * pre.m_int;
-
-    jsimplex::set_poisson_leaf_source<D,Real>(
-      leaf_node,
-      poisson_leaves[(std::size_t)e],
-      f_e);
+    // The reusable Ulam/Uf/S/Gf maps now contain the complete local inverse
+    // action. Dense local operators and QR scratch are no longer needed.
+    poisson_leaves[(std::size_t)e] = Leaf{};
 
     leaves.push_back(std::move(leaf_node));
   }
@@ -1120,6 +1176,27 @@ int run_mesh_tree_poisson_impl(
   {
     throw std::invalid_argument(
       "HPS Poisson mesh-tree solve: merge pairs do not form one complete binary tree");
+  }
+
+  // Apply the runtime source after the operator-only tree has been built,
+  // then refresh only affine source offsets in the upward merge order.
+  for (int e = 0; e < nelem; ++e)
+  {
+    const Real* f_e =
+      f_int_elementmajor + (std::size_t)e * pre.m_int;
+    jsimplex::set_poisson_leaf_source<D,Real>(
+      nodes[(std::size_t)e],
+      f_e);
+  }
+  for (int m = 0; m < nmerge; ++m)
+  {
+    const int parent_id = nelem + m;
+    const int child_A = merge_pairs_rowmajor[(std::size_t)2 * m];
+    const int child_B = merge_pairs_rowmajor[(std::size_t)2 * m + 1];
+    jsimplex::update_merge_source<D,Real>(
+      nodes[(std::size_t)parent_id],
+      nodes[(std::size_t)child_A],
+      nodes[(std::size_t)child_B]);
   }
 
   const Node& root = nodes[(std::size_t)root_id];
@@ -1218,11 +1295,15 @@ int run_mesh_tree_poisson_impl(
     std::cout << "  leaf operator mode="
               << leaf_operator_mode_name(
                    leaf_options.operator_mode)
+              << " least-squares="
+              << leaf_least_squares_solver_name(
+                   leaf_options.operator_mode,
+                   leaf_options.least_squares_solver)
               << "\n";
     std::cout << "  quadrature q_vol=" << pre.q_vol
               << " q_face=" << pre.q_face
               << " tau_C=" << tau_C
-              << " LSMR(atol=1e-14, btol=1e-14, maxiter=5000)\n";
+              << " LSMR_fallback(atol=1e-14, btol=1e-14, maxiter=5000)\n";
     std::cout << "  mesh vertices=" << mesh.num_vertices()
               << " elements=" << mesh.num_elements()
               << " faces=" << mesh.face_incidence.size() << "\n";
@@ -1342,7 +1423,7 @@ void validate_elliptic_mesh_tree_inputs(
   if (!(tau_C > 0.0))
   {
     throw std::invalid_argument(
-      "HPS elliptic mesh-tree solve: tau_C must be positive");
+      "HPS elliptic mesh-tree solve: tau_C_base must be positive");
   }
   if (alpha == 0.0 && beta == 0.0)
   {
@@ -1391,6 +1472,7 @@ int run_mesh_tree_elliptic_impl(
   double beta,
   int verbose,
   int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,
@@ -1425,6 +1507,7 @@ int run_mesh_tree_elliptic_impl(
   const typename Leaf::Options leaf_options =
     leaf_options_from_c<Real>(
       leaf_operator_mode,
+      leaf_least_squares_solver,
       leaf_verify_tolerance,
       leaf_verify_each_solve);
 
@@ -1436,10 +1519,31 @@ int run_mesh_tree_elliptic_impl(
   degree_spec.p1 = p1;
   degree_spec.p0 = p0;
 
+  const bool need_clenshaw_actions =
+    leaf_options.operator_mode ==
+      jsimplex::LeafOperatorMode::MatrixFree
+    || leaf_options.operator_mode ==
+      jsimplex::LeafOperatorMode::Verify;
+
+  const auto multiplication_assembler =
+    leaf_options.operator_mode ==
+      jsimplex::LeafOperatorMode::MatrixFree
+    ? jsimplex::EllipticMultiplicationAssembler::ClenshawColumns
+    : jsimplex::EllipticMultiplicationAssembler::Quadrature;
+
   const Plan elliptic_plan(
     pre,
     degree_spec,
-    assume_symmetric != 0);
+    assume_symmetric != 0,
+    jsimplex::EllipticResidualPolicy::TrialDegree,
+    multiplication_assembler,
+    need_clenshaw_actions);
+
+  const Real tau_residual_row_factor =
+    static_cast<Real>(elliptic_plan.mR)
+    / static_cast<Real>(elliptic_plan.m2);
+  const Real tau_C_effective =
+    Real(tau_C) * tau_residual_row_factor;
 
   const auto mesh = build_mesh_from_c<D>(
     nverts, vertex_ids, coords_rowmajor, nelem, simplices_rowmajor);
@@ -1468,13 +1572,12 @@ int run_mesh_tree_elliptic_impl(
 
   const int max_threads = std::max(1, omp_get_max_threads());
 
-  // Dense preserves the old per-thread reusable assembly workspace. The
-  // MatrixFree path owns only one action workspace per Leaf. Verify creates
-  // its dense diagnostic workspace inside the mode-aware Leaf reset.
+  // Dense, DenseSparse, and Verify reuse one dense assembly workspace per
+  // thread. MatrixFree owns only one action workspace per Leaf.
   std::vector<std::unique_ptr<DenseWorkspace>>
     dense_workspaces;
-  if (leaf_options.operator_mode ==
-      jsimplex::LeafOperatorMode::Dense)
+  if (leaf_options.operator_mode !=
+      jsimplex::LeafOperatorMode::MatrixFree)
   {
     dense_workspaces.reserve(
       (std::size_t)max_threads);
@@ -1486,15 +1589,31 @@ int run_mesh_tree_elliptic_impl(
     }
   }
 
+  std::vector<std::unique_ptr<typename Leaf::SolveWorkspace>>
+    response_workspaces;
+  response_workspaces.reserve((std::size_t)max_threads);
+  for (int t = 0; t < max_threads; ++t)
+  {
+    response_workspaces.emplace_back(
+      std::make_unique<typename Leaf::SolveWorkspace>(
+        elliptic_plan.mR + (D + 1) * pre.kf,
+        pre.M));
+  }
+
   std::vector<unsigned char> thread_touched(
     (std::size_t)max_threads, 0);
   std::exception_ptr first_leaf_exception;
 
-  #pragma omp parallel
+#ifdef TIMING
+  timer leaf_wall_timer;
+  leaf_wall_timer.tic();
+#endif
+
+#pragma omp parallel
   {
     const int tid = omp_get_thread_num();
 
-    #pragma omp for schedule(static)
+#pragma omp for schedule(static)
     for (int e = 0; e < nelem; ++e)
     {
       try
@@ -1515,13 +1634,12 @@ int run_mesh_tree_elliptic_impl(
 
         Node leaf_node;
 
-        if (leaf_options.operator_mode ==
-            jsimplex::LeafOperatorMode::Dense)
+        if (leaf_options.operator_mode !=
+                 jsimplex::LeafOperatorMode::MatrixFree)
         {
           DenseWorkspace& work =
             *dense_workspaces[(std::size_t)tid];
 
-          // Preserve the legacy dense call path and per-thread workspace reuse.
           leaf_node =
             jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
               mesh,
@@ -1531,10 +1649,12 @@ int run_mesh_tree_elliptic_impl(
               coeffs,
               work,
               elliptic_leaves[(std::size_t)e],
+              leaf_options,
               Real(tau_C),
               Real(1e-14),
               Real(1e-14),
-              5000);
+              5000,
+              response_workspaces[(std::size_t)tid].get());
         }
         else
         {
@@ -1550,19 +1670,14 @@ int run_mesh_tree_elliptic_impl(
               Real(tau_C),
               Real(1e-14),
               Real(1e-14),
-              5000);
+              5000,
+              response_workspaces[(std::size_t)tid].get());
         }
 
         validate_leaf_backend_storage(
           elliptic_leaves[(std::size_t)e]);
 
-        const Real* f_e =
-          f_int_elementmajor + (std::size_t)e * pre.m_int;
-
-        jsimplex::set_leaf_source<D,Real>(
-          leaf_node,
-          elliptic_leaves[(std::size_t)e],
-          f_e);
+        elliptic_leaves[(std::size_t)e] = Leaf{};
 
         leaves[(std::size_t)e] = std::move(leaf_node);
       }
@@ -1575,7 +1690,7 @@ int run_mesh_tree_elliptic_impl(
             + " construction failed: "
             + ex.what()));
 
-  #pragma omp critical(jhps_elliptic_leaf_exception)
+#pragma omp critical(jhps_elliptic_leaf_exception)
         {
           if (!first_leaf_exception)
             first_leaf_exception = ep;
@@ -1589,7 +1704,7 @@ int run_mesh_tree_elliptic_impl(
             + std::to_string(e)
             + " construction failed with an unknown exception"));
 
-  #pragma omp critical(jhps_elliptic_leaf_exception)
+#pragma omp critical(jhps_elliptic_leaf_exception)
         {
           if (!first_leaf_exception)
             first_leaf_exception = ep;
@@ -1597,6 +1712,11 @@ int run_mesh_tree_elliptic_impl(
       }
     }
   }
+
+#ifdef TIMING
+  const double leaf_wall_seconds =
+    leaf_wall_timer.toc();
+#endif
 
   if (first_leaf_exception)
     std::rethrow_exception(first_leaf_exception);
@@ -1688,6 +1808,87 @@ int run_mesh_tree_elliptic_impl(
       "HPS elliptic mesh-tree solve: merge pairs do not form one complete binary tree");
   }
 
+  // The merge tree above is operator-only. A new projected source requires
+  // only leaf Uf/Gf applications followed by this affine upward source pass.
+  for (int e = 0; e < nelem; ++e)
+  {
+    const Real* f_e =
+      f_int_elementmajor + (std::size_t)e * elliptic_plan.mR;
+    jsimplex::set_leaf_source<D,Real>(
+      nodes[(std::size_t)e],
+      f_e);
+  }
+  for (int m = 0; m < nmerge; ++m)
+  {
+    const int parent_id = nelem + m;
+    const int child_A = merge_pairs_rowmajor[(std::size_t)2 * m];
+    const int child_B = merge_pairs_rowmajor[(std::size_t)2 * m + 1];
+    jsimplex::update_merge_source<D,Real>(
+      nodes[(std::size_t)parent_id],
+      nodes[(std::size_t)child_A],
+      nodes[(std::size_t)child_B]);
+  }
+
+#ifdef TIMING
+  double scale_seconds_sum = 0.0;
+  double ulam_seconds_sum = 0.0;
+  double homogeneous_boundary_seconds_sum = 0.0;
+  double source_seconds_sum = 0.0;
+  double source_boundary_seconds_sum = 0.0;
+
+  long long ulam_iterations_sum = 0;
+  long long source_iterations_sum = 0;
+  long long ulam_solve_count = 0;
+  long long source_solve_count = 0;
+
+  jsimplex::EllipticActionTimings scale_action_timings_sum;
+  jsimplex::EllipticActionTimings ulam_action_timings_sum;
+  jsimplex::EllipticActionTimings source_action_timings_sum;
+
+  for (int e = 0; e < nelem; ++e)
+  {
+    const Node& leaf_node = nodes[(std::size_t)e];
+    const auto& timing =
+      leaf_node.leaf_timing;
+
+    scale_seconds_sum +=
+      timing.interior_scale_seconds;
+    ulam_seconds_sum +=
+      timing.ulam_solve_seconds;
+    homogeneous_boundary_seconds_sum +=
+      timing.homogeneous_boundary_map_seconds;
+    source_seconds_sum +=
+      timing.source_solve_seconds;
+    source_boundary_seconds_sum +=
+      timing.source_boundary_map_seconds;
+
+    ulam_iterations_sum +=
+      timing.ulam_lsmr_iterations;
+    source_iterations_sum +=
+      timing.source_lsmr_iterations;
+
+    scale_action_timings_sum.add(timing.interior_scale_actions);
+    ulam_action_timings_sum.add(timing.ulam_actions);
+    source_action_timings_sum.add(timing.source_actions);
+
+    ulam_solve_count +=
+      static_cast<long long>(
+        leaf_node.nb() + leaf_node.source_dim);
+    source_solve_count += 1;
+  }
+
+  const double ulam_average_iterations =
+    ulam_solve_count > 0
+    ? static_cast<double>(ulam_iterations_sum)
+        / static_cast<double>(ulam_solve_count)
+    : 0.0;
+  const double source_average_iterations =
+    source_solve_count > 0
+    ? static_cast<double>(source_iterations_sum)
+        / static_cast<double>(source_solve_count)
+    : 0.0;
+#endif
+
   const Node& root = nodes[(std::size_t)root_id];
   if (root.kf != pre.kf)
   {
@@ -1774,17 +1975,56 @@ int run_mesh_tree_elliptic_impl(
 
   if (verbose)
   {
+#ifdef TIMING
+    const auto print_action_microbenchmark =
+      [](const char* label, const jsimplex::EllipticActionTimings& t)
+      {
+        const auto us = [](double s, long long n) {
+          return n > 0 ? 1.0e6 * s / static_cast<double>(n) : 0.0;
+        };
+        std::cout
+          << "    " << label << ":\n"
+          << "      forward total       = " << t.forward_total_seconds << " s calls=" << t.forward_calls << " us/call=" << us(t.forward_total_seconds,t.forward_calls) << "\n"
+          << "        partial DAG       = " << t.forward_partial_dag_seconds << " s\n"
+          << "        principal geom    = " << t.forward_principal_geometry_seconds << " s\n"
+          << "        principal Clenshaw= " << t.forward_principal_clenshaw_seconds << " s calls=" << t.forward_principal_multiplier_calls << " us/mult=" << us(t.forward_principal_clenshaw_seconds,t.forward_principal_multiplier_calls) << "\n"
+          << "        first geom        = " << t.forward_first_geometry_seconds << " s\n"
+          << "        first Clenshaw    = " << t.forward_first_clenshaw_seconds << " s calls=" << t.forward_first_multiplier_calls << " us/mult=" << us(t.forward_first_clenshaw_seconds,t.forward_first_multiplier_calls) << "\n"
+          << "        zero Clenshaw     = " << t.forward_zero_clenshaw_seconds << " s calls=" << t.forward_zero_multiplier_calls << " us/mult=" << us(t.forward_zero_clenshaw_seconds,t.forward_zero_multiplier_calls) << "\n"
+          << "        output scale      = " << t.forward_output_scale_seconds << " s\n"
+          << "      transpose total     = " << t.transpose_total_seconds << " s calls=" << t.transpose_calls << " us/call=" << us(t.transpose_total_seconds,t.transpose_calls) << "\n"
+          << "        residual scale    = " << t.transpose_residual_scale_seconds << " s\n"
+          << "        principal Clenshaw= " << t.transpose_principal_clenshaw_seconds << " s calls=" << t.transpose_principal_multiplier_calls << " us/mult=" << us(t.transpose_principal_clenshaw_seconds,t.transpose_principal_multiplier_calls) << "\n"
+          << "        principal geom^T  = " << t.transpose_principal_geometry_seconds << " s\n"
+          << "        first Clenshaw    = " << t.transpose_first_clenshaw_seconds << " s calls=" << t.transpose_first_multiplier_calls << " us/mult=" << us(t.transpose_first_clenshaw_seconds,t.transpose_first_multiplier_calls) << "\n"
+          << "        first geom^T      = " << t.transpose_first_geometry_seconds << " s\n"
+          << "        zero Clenshaw     = " << t.transpose_zero_clenshaw_seconds << " s calls=" << t.transpose_zero_multiplier_calls << " us/mult=" << us(t.transpose_zero_clenshaw_seconds,t.transpose_zero_multiplier_calls) << "\n"
+          << "        partial DAG^T     = " << t.transpose_partial_dag_seconds << " s\n";
+      };
+#endif
+
     std::cout << "HPS elliptic external mesh-tree solve D=" << D
               << " n=" << pre.n
               << " nelem=" << nelem
               << " nmerge=" << nmerge
               << " M=" << pre.M
-              << " m_int=" << pre.m_int
+              << " m_int=" << elliptic_plan.mR
               << " kf=" << pre.kf << "\n";
     std::cout << "  leaf operator mode="
               << leaf_operator_mode_name(
                    leaf_options.operator_mode)
+              << " least-squares="
+              << leaf_least_squares_solver_name(
+                   leaf_options.operator_mode,
+                   leaf_options.least_squares_solver)
               << "\n";
+    std::cout << "  elliptic residual degree R="
+              << elliptic_plan.residual_degree
+              << " multiplication="
+              << (elliptic_plan.multiplication_assembler ==
+                    jsimplex::EllipticMultiplicationAssembler::Quadrature
+                  ? "Quadrature" : "ClenshawColumns")
+              << " q_mult=" << elliptic_plan.q_mult << "\n";
     std::cout << "  coefficient degrees p2=" << p2
               << " p1=" << p1
               << " p0=" << p0
@@ -1792,10 +2032,48 @@ int run_mesh_tree_elliptic_impl(
               << (assume_symmetric != 0) << "\n";
     std::cout << "  quadrature q_vol=" << pre.q_vol
               << " q_face=" << pre.q_face
-              << " tau_C=" << tau_C
-              << " LSMR(atol=1e-14, btol=1e-14, maxiter=5000)\n";
+              << " tau_C_base=" << tau_C
+              << " residual_row_factor=" << tau_residual_row_factor
+              << " tau_C_effective=" << tau_C_effective
+              << " LSMR_fallback(atol=1e-14, btol=1e-14, maxiter=5000)\n";
     std::cout << "  leaf OpenMP threads used=" << leaf_threads_used
               << " max_threads=" << max_threads << "\n";
+#ifdef TIMING
+    std::cout << "  leaf phase timings:\n";
+    std::cout << "    parallel leaf wall time = "
+              << leaf_wall_seconds << " s\n";
+    std::cout << "    interior scale sum      = "
+              << scale_seconds_sum << " s\n";
+    std::cout << "    [Ulam Uf] solve sum     = "
+              << ulam_seconds_sum << " s";
+    if (resolved_leaf_solver(
+          leaf_options.operator_mode,
+          leaf_options.least_squares_solver) ==
+        jsimplex::LeafLeastSquaresSolver::DenseQR)
+    {
+      std::cout << "  factorizations=" << nelem
+                << "  rhs_columns=" << ulam_solve_count;
+    }
+    else
+    {
+      std::cout << "  solves=" << ulam_solve_count
+                << "  iterations=" << ulam_iterations_sum
+                << "  avg_iter=" << ulam_average_iterations;
+    }
+    std::cout << "\n";
+    std::cout << "    [S Gf] trace/flux sum   = "
+              << homogeneous_boundary_seconds_sum << " s\n";
+    std::cout << "    runtime source map sum  = "
+              << source_seconds_sum << " s"
+              << "  applications=" << source_solve_count
+              << "\n";
+    std::cout << "    source map boundary sum = "
+              << source_boundary_seconds_sum << " s\n";
+    std::cout << "  elliptic action microbenchmark (summed leaf CPU work):\n";
+    print_action_microbenchmark("interior-scale sweep", scale_action_timings_sum);
+    print_action_microbenchmark("[Ulam Uf] solves", ulam_action_timings_sum);
+    print_action_microbenchmark("source-map applies", source_action_timings_sum);
+#endif
     std::cout << "  mesh vertices=" << mesh.num_vertices()
               << " elements=" << mesh.num_elements()
               << " faces=" << mesh.face_incidence.size() << "\n";
@@ -1816,7 +2094,7 @@ int run_mesh_tree_elliptic_impl(
   if (parent_consistency_residual_inf_out)
     *parent_consistency_residual_inf_out = parent_res_inf;
   if (M_out) *M_out = pre.M;
-  if (m_int_out) *m_int_out = pre.m_int;
+  if (m_int_out) *m_int_out = elliptic_plan.mR;
   if (kf_out) *kf_out = pre.kf;
   if (root_nb_out) *root_nb_out = root.nb();
   if (interface_nb_out) *interface_nb_out = eliminated_nb;
@@ -2288,6 +2566,7 @@ int entry_poisson_mesh_tree_dispatch(
   double beta,
   int verbose,
   int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,
@@ -2308,7 +2587,8 @@ int entry_poisson_mesh_tree_dispatch(
       nelem, simplices_rowmajor, nmerge, merge_pairs_rowmajor, \
       f_int_elementmajor, nboundary_faces, boundary_face_keys_rowmajor, \
       boundary_g_rowmajor, tau_C, alpha, beta, verbose, \
-      leaf_operator_mode, leaf_verify_tolerance, leaf_verify_each_solve, \
+      leaf_operator_mode, leaf_least_squares_solver, \
+      leaf_verify_tolerance, leaf_verify_each_solve, \
       leaf_coeffs_elementmajor, root_robin_residual_inf_out, \
       interface_flux_residual_inf_out, parent_consistency_residual_inf_out, \
       M_out, m_int_out, kf_out, root_nb_out, interface_nb_out)
@@ -2359,6 +2639,7 @@ int entry_elliptic_mesh_tree_dispatch(
   double beta,
   int verbose,
   int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,
@@ -2382,7 +2663,8 @@ int entry_elliptic_mesh_tree_dispatch(
       nelem, simplices_rowmajor, nmerge, merge_pairs_rowmajor, \
       f_int_elementmajor, nboundary_faces, boundary_face_keys_rowmajor, \
       boundary_g_rowmajor, tau_C, alpha, beta, verbose, \
-      leaf_operator_mode, leaf_verify_tolerance, leaf_verify_each_solve, \
+      leaf_operator_mode, leaf_least_squares_solver, \
+      leaf_verify_tolerance, leaf_verify_each_solve, \
       leaf_coeffs_elementmajor, root_robin_residual_inf_out, \
       interface_flux_residual_inf_out, parent_consistency_residual_inf_out, \
       M_out, m_int_out, kf_out, root_nb_out, interface_nb_out, \
@@ -2617,6 +2899,7 @@ extern "C" int jhps_poisson_mesh_tree_solve(
       nboundary_faces, boundary_face_keys_rowmajor, boundary_g_rowmajor,
       tau_C, alpha, beta, verbose,
       JHPS_LEAF_OPERATOR_DENSE,
+      JHPS_LEAF_LS_AUTO,
       0.0,
       0,
       leaf_coeffs_elementmajor,
@@ -2691,6 +2974,7 @@ extern "C" int jhps_elliptic_mesh_tree_solve(
       nboundary_faces, boundary_face_keys_rowmajor, boundary_g_rowmajor,
       tau_C, alpha, beta, verbose,
       JHPS_LEAF_OPERATOR_DENSE,
+      JHPS_LEAF_LS_AUTO,
       0.0,
       0,
       leaf_coeffs_elementmajor,
@@ -2763,6 +3047,7 @@ extern "C" int jhps_poisson_mesh_tree_solve_with_leaf_mode(
       beta,
       verbose,
       leaf_operator_mode,
+      JHPS_LEAF_LS_AUTO,
       leaf_verify_tolerance,
       leaf_verify_each_solve,
       leaf_coeffs_elementmajor,
@@ -2856,6 +3141,7 @@ extern "C" int jhps_elliptic_mesh_tree_solve_with_leaf_mode(
       beta,
       verbose,
       leaf_operator_mode,
+      JHPS_LEAF_LS_AUTO,
       leaf_verify_tolerance,
       leaf_verify_each_solve,
       leaf_coeffs_elementmajor,
@@ -2881,6 +3167,185 @@ extern "C" int jhps_elliptic_mesh_tree_solve_with_leaf_mode(
   {
     std::cerr
       << "jhps_elliptic_mesh_tree_solve_with_leaf_mode failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
+
+extern "C" int jhps_poisson_mesh_tree_solve_with_leaf_options(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out)
+{
+  try
+  {
+    return entry_poisson_mesh_tree_dispatch(
+      D, n, q_pad, q_vol, q_face, kappa,
+      nverts, vertex_ids, coords_rowmajor,
+      nelem, simplices_rowmajor,
+      nmerge, merge_pairs_rowmajor,
+      f_int_elementmajor,
+      nboundary_faces,
+      boundary_face_keys_rowmajor,
+      boundary_g_rowmajor,
+      tau_C,
+      alpha,
+      beta,
+      verbose,
+      leaf_operator_mode,
+      leaf_least_squares_solver,
+      leaf_verify_tolerance,
+      leaf_verify_each_solve,
+      leaf_coeffs_elementmajor,
+      root_robin_residual_inf_out,
+      interface_flux_residual_inf_out,
+      parent_consistency_residual_inf_out,
+      M_out,
+      m_int_out,
+      kf_out,
+      root_nb_out,
+      interface_nb_out);
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_poisson_mesh_tree_solve_with_leaf_options failed: "
+      << e.what()
+      << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_poisson_mesh_tree_solve_with_leaf_options failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
+
+extern "C" int jhps_elliptic_mesh_tree_solve_with_leaf_options(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out)
+{
+  try
+  {
+    return entry_elliptic_mesh_tree_dispatch(
+      D, n, q_pad, q_vol, q_face, kappa,
+      p2, p1, p0, assume_symmetric,
+      A_coeffs_elementmajor,
+      b_coeffs_elementmajor,
+      c_coeffs_elementmajor,
+      nverts, vertex_ids, coords_rowmajor,
+      nelem, simplices_rowmajor,
+      nmerge, merge_pairs_rowmajor,
+      f_int_elementmajor,
+      nboundary_faces,
+      boundary_face_keys_rowmajor,
+      boundary_g_rowmajor,
+      tau_C,
+      alpha,
+      beta,
+      verbose,
+      leaf_operator_mode,
+      leaf_least_squares_solver,
+      leaf_verify_tolerance,
+      leaf_verify_each_solve,
+      leaf_coeffs_elementmajor,
+      root_robin_residual_inf_out,
+      interface_flux_residual_inf_out,
+      parent_consistency_residual_inf_out,
+      M_out,
+      m_int_out,
+      kf_out,
+      root_nb_out,
+      interface_nb_out,
+      leaf_threads_used_out);
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_elliptic_mesh_tree_solve_with_leaf_options failed: "
+      << e.what()
+      << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_elliptic_mesh_tree_solve_with_leaf_options failed: "
       << "unknown exception\n";
     return -1;
   }

@@ -81,7 +81,9 @@ SolveResult solve_legacy_dense()
   const std::array<int, 2> merge_pairs{
     0, 1};
 
-  const std::array<double, nelem * m_int> source{};
+  const std::array<double, nelem * m_int> source{
+    0.10, -0.04, 0.03,
+    -0.07, 0.05, 0.02};
   const std::array<int, 2> boundary_keys{
     0, 2};
   const std::array<double, 2> boundary_g{
@@ -127,7 +129,9 @@ SolveResult solve_legacy_dense()
   return result;
 }
 
-SolveResult solve_mode(int mode)
+SolveResult solve_mode(
+  int mode,
+  int solver = JHPS_LEAF_LS_AUTO)
 {
   constexpr int D = 1;
   constexpr int n = 4;
@@ -148,7 +152,9 @@ SolveResult solve_mode(int mode)
   const std::array<int, 2> merge_pairs{
     0, 1};
 
-  const std::array<double, nelem * m_int> source{};
+  const std::array<double, nelem * m_int> source{
+    0.10, -0.04, 0.03,
+    -0.07, 0.05, 0.02};
   const std::array<int, 2> boundary_keys{
     0, 2};
   const std::array<double, 2> boundary_g{
@@ -160,7 +166,7 @@ SolveResult solve_mode(int mode)
     0.0);
 
   result.rc =
-    jhps_poisson_mesh_tree_solve_with_leaf_mode(
+    jhps_poisson_mesh_tree_solve_with_leaf_options(
       D,
       n,
       2,
@@ -183,6 +189,7 @@ SolveResult solve_mode(int mode)
       0.0,
       0,
       mode,
+      solver,
       1.0e-8,
       1,
       result.coefficients.data(),
@@ -280,6 +287,16 @@ int main()
 
     const SolveResult explicit_dense =
       solve_mode(JHPS_LEAF_OPERATOR_DENSE);
+    const SolveResult dense_lsmr =
+      solve_mode(
+        JHPS_LEAF_OPERATOR_DENSE,
+        JHPS_LEAF_LS_LSMR);
+    const SolveResult dense_qr =
+      solve_mode(
+        JHPS_LEAF_OPERATOR_DENSE,
+        JHPS_LEAF_LS_DENSE_QR);
+    const SolveResult dense_sparse =
+      solve_mode(JHPS_LEAF_OPERATOR_DENSE_SPARSE);
     const SolveResult matrix_free =
       solve_mode(JHPS_LEAF_OPERATOR_MATRIX_FREE);
     const SolveResult verify =
@@ -289,6 +306,21 @@ int main()
       explicit_dense,
       legacy,
       "explicit Dense",
+      tolerance);
+    compare(
+      dense_lsmr,
+      legacy,
+      "Dense/LSMR",
+      tolerance);
+    compare(
+      dense_qr,
+      legacy,
+      "Dense/QR",
+      tolerance);
+    compare(
+      dense_sparse,
+      legacy,
+      "DenseSparse",
       tolerance);
     compare(
       matrix_free,

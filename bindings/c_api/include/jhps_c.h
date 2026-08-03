@@ -8,9 +8,13 @@ extern "C" {
 /*
   Leaf-local operator backend used by the mode-aware HPS entry points.
 
-  DENSE preserves the legacy explicit L/T/F/A_tau leaf path.
+  DENSE materializes the explicit L/T/F/A_tau leaf operator and supports
+  either dense QR or the compatibility LSMR solver.
+  DENSE_SPARSE stores only the composed dense interior matrix L and applies
+  trace/flux through the reference sparse blocks inside reverse-communication
+  LSMR.
   MATRIX_FREE avoids those dense local matrices but still materializes the
-  explicit HPS leaf solution and augmented-DtN maps Ulam and S.
+  reusable HPS response maps Ulam, Uf, S, and Gf.
   VERIFY builds both leaf backends, solves through MATRIX_FREE, and checks
   against DENSE.
 */
@@ -18,8 +22,24 @@ typedef enum jhps_leaf_operator_mode
 {
   JHPS_LEAF_OPERATOR_DENSE = 0,
   JHPS_LEAF_OPERATOR_MATRIX_FREE = 1,
-  JHPS_LEAF_OPERATOR_VERIFY = 2
+  JHPS_LEAF_OPERATOR_VERIFY = 2,
+  JHPS_LEAF_OPERATOR_DENSE_SPARSE = 3
 } jhps_leaf_operator_mode;
+
+/*
+  Leaf-local least-squares backend.
+
+  AUTO selects dense QR for JHPS_LEAF_OPERATOR_DENSE and LSMR for the
+  action-based operator modes. DENSE_QR requires a fully materialized dense
+  A_tau. The QR path factors once and solves the complete boundary-plus-source
+  response panel.
+*/
+typedef enum jhps_leaf_least_squares_solver
+{
+  JHPS_LEAF_LS_AUTO = 0,
+  JHPS_LEAF_LS_LSMR = 1,
+  JHPS_LEAF_LS_DENSE_QR = 2
+} jhps_leaf_least_squares_solver;
 
 /*
   Run HPS skeleton tests using dummy leaf DtN maps.
@@ -275,6 +295,48 @@ int jhps_poisson_mesh_tree_solve_with_leaf_mode(
   int* interface_nb_out
 );
 
+/*
+  Full leaf-option entry point. leaf_least_squares_solver must be one of
+  jhps_leaf_least_squares_solver. AUTO selects dense QR for Dense and LSMR for
+  the action-based operator modes.
+*/
+int jhps_poisson_mesh_tree_solve_with_leaf_options(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out
+);
+
 
 /*
   Solve a variable-coefficient nondivergence-form elliptic problem on an
@@ -322,8 +384,12 @@ int jhps_poisson_mesh_tree_solve_with_leaf_mode(
   multiplication-plan optimization; it does not change coefficient layout or
   verify A=A^T.
 
-  The source, boundary, tree, Robin, and output conventions are identical to
-  jhps_poisson_mesh_tree_solve.  Artificial interfaces currently enforce
+  Elliptic source data use the full trial-degree residual space:
+    f_int_elementmajor has shape nelem x M, where M=dim Pi_n^D.
+  The direct multiplication assembler projects all variable-coefficient terms
+  into Pi_n using an anti-aliased Jacobi quadrature rule.  Boundary, tree,
+  Robin, and output conventions otherwise match jhps_poisson_mesh_tree_solve.
+  Artificial interfaces currently enforce
   continuity of trace and ordinary normal derivative through the existing
   augmented-flux merge.  Pure Neumann is not implemented in this entry point.
 
@@ -375,6 +441,21 @@ int jhps_elliptic_mesh_tree_solve(
 
 
 /*
+  Variable-coefficient elliptic tau convention:
+
+    tau_C is the user-facing base constant.  The elliptic leaf rescales it by
+    mR/m2, where mR=dim Pi_R^D is the residual row count and
+    m2=dim Pi_{n-2}^D is the active second-derivative image size.  Thus
+
+      tau_C_effective = tau_C * mR / m2,
+      tau_f = tau_C_effective * (n+1)^2 / h_f.
+
+  Poisson entry points retain the unscaled convention because mR=m2 there.
+  Robin alpha,beta dependence is not normalized by this API; tau_C remains an
+  exposed tuning parameter for that purpose.
+*/
+
+/*
   Mode-aware variable-coefficient elliptic entry point.
 
   leaf_operator_mode must be one of jhps_leaf_operator_mode.
@@ -414,6 +495,56 @@ int jhps_elliptic_mesh_tree_solve_with_leaf_mode(
   double beta,
   int verbose,
   int leaf_operator_mode,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
+/*
+  Full leaf-option entry point. leaf_least_squares_solver must be one of
+  jhps_leaf_least_squares_solver. AUTO selects dense QR for Dense and LSMR for
+  the action-based operator modes.
+*/
+int jhps_elliptic_mesh_tree_solve_with_leaf_options(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  const double* f_int_elementmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  const double* boundary_g_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int verbose,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   double* leaf_coeffs_elementmajor,

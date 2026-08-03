@@ -37,6 +37,12 @@ int jelliptic_plan_dims(jelliptic_plan_t plan,
                         int* Mp1_out,
                         int* Mp0_out);
 
+/* Return the elliptic residual/output-space dimensions and mult quadrature. */
+int jelliptic_plan_dims_ex(jelliptic_plan_t plan,
+                           int* mR_out,
+                           int* residual_degree_out,
+                           int* q_mult_out);
+
 /* One independent mutable workspace per concurrent caller. */
 int jelliptic_workspace_create(jelliptic_plan_t plan,
                                jelliptic_workspace_t* workspace_out);
@@ -44,7 +50,8 @@ int jelliptic_workspace_create(jelliptic_plan_t plan,
 void jelliptic_workspace_destroy(jelliptic_workspace_t workspace);
 
 /*
-  Assemble L_int, shape (m2,M), column-major.
+  Assemble L_int, shape (mR,M), column-major.  The default elliptic
+  residual policy is mR=M (R=n); m2 remains the second-derivative image size.
 
   BinvT:   B^{-T}, shape (D,D), column-major.
   Lij_ref: shape (M,M,D,D), Fortran order.

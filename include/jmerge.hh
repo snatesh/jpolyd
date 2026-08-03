@@ -461,10 +461,25 @@ inline Node<D,Real> merge_nodes(
   hps_detail::dense_solve_in_place<Real>(nI, nBE, H, R_B);
   hps_detail::scale_in_place(R_B, Real(-1));
 
-  std::vector<Real> r = bA_I;
-  hps_detail::add_in_place(r, bB_I);
-  hps_detail::dense_solve_in_place<Real>(nI, 1, H, r);
-  hps_detail::scale_in_place(r, Real(-1));
+  // Precompute the source-only interface inverse and its exterior transfers.
+  // These depend only on the child DtN operators, not on the current source.
+  std::vector<Real> R_f((std::size_t)nI * nI, Real(0));
+  for (int i = 0; i < nI; ++i)
+  {
+    R_f[(std::size_t)i + (std::size_t)nI * i] = Real(1);
+  }
+  hps_detail::dense_solve_in_place<Real>(nI, nI, H, R_f);
+  hps_detail::scale_in_place(R_f, Real(-1));
+
+  std::vector<Real> P_A =
+    hps_detail::matmul_colmajor(SA_EI, nAE, nI, R_f, nI);
+  std::vector<Real> P_B =
+    hps_detail::matmul_colmajor(SB_EI, nBE, nI, R_f, nI);
+
+  std::vector<Real> source_interface = bA_I;
+  hps_detail::add_in_place(source_interface, bB_I);
+  std::vector<Real> r =
+    hps_detail::matmul_colmajor(R_f, nI, nI, source_interface, 1);
 
   std::vector<Real> TL = SA_EE;
   std::vector<Real> prod = hps_detail::matmul_colmajor(SA_EI, nAE, nI, R_A, nAE);
@@ -492,11 +507,13 @@ inline Node<D,Real> merge_nodes(
   hps_detail::set_block_colmajor(P.S, nP, nAE, nAE, BR, nBE, nBE);
 
   std::vector<Real> btop = bA_E;
-  std::vector<Real> brcorr = hps_detail::matmul_colmajor(SA_EI, nAE, nI, r, 1);
+  std::vector<Real> brcorr =
+    hps_detail::matmul_colmajor(P_A, nAE, nI, source_interface, 1);
   hps_detail::add_in_place(btop, brcorr);
 
   std::vector<Real> bbot = bB_E;
-  brcorr = hps_detail::matmul_colmajor(SB_EI, nBE, nI, r, 1);
+  brcorr =
+    hps_detail::matmul_colmajor(P_B, nBE, nI, source_interface, 1);
   hps_detail::add_in_place(bbot, brcorr);
 
   for (int i = 0; i < nAE; ++i)
@@ -522,12 +539,70 @@ inline Node<D,Real> merge_nodes(
   P.merge.R_A = R_A;
   P.merge.R_B = R_B;
   P.merge.r = r;
+  P.merge.R_f = R_f;
+  P.merge.P_A = P_A;
+  P.merge.P_B = P_B;
   P.merge.nAE = nAE;
   P.merge.nBE = nBE;
   P.merge.nI = nI;
 
   P.validate();
   return P;
+}
+
+template<int D, class Real>
+inline void update_merge_source(
+  Node<D,Real>& parent,
+  const Node<D,Real>& A,
+  const Node<D,Real>& B)
+{
+  parent.validate();
+  A.validate();
+  B.validate();
+
+  if (!parent.is_merge)
+  {
+    throw std::invalid_argument(
+      "update_merge_source: parent is not a merge node");
+  }
+
+  auto& md = parent.merge;
+  if (parent.kf != A.kf || parent.kf != B.kf)
+  {
+    throw std::invalid_argument(
+      "update_merge_source: child kf mismatch");
+  }
+
+  std::vector<Real> bA_E, bA_I, bB_E, bB_I;
+  hps_detail::extract_vector(A.b, md.A_E_idx, bA_E);
+  hps_detail::extract_vector(A.b, md.A_I_idx, bA_I);
+  hps_detail::extract_vector(B.b, md.B_E_idx, bB_E);
+  hps_detail::extract_vector(B.b, md.B_I_idx, bB_I);
+
+  std::vector<Real> source_interface = bA_I;
+  hps_detail::add_in_place(source_interface, bB_I);
+
+  md.r = hps_detail::matmul_colmajor(
+    md.R_f, md.nI, md.nI, source_interface, 1);
+
+  std::vector<Real> btop = bA_E;
+  std::vector<Real> correction = hps_detail::matmul_colmajor(
+    md.P_A, md.nAE, md.nI, source_interface, 1);
+  hps_detail::add_in_place(btop, correction);
+
+  std::vector<Real> bbot = bB_E;
+  correction = hps_detail::matmul_colmajor(
+    md.P_B, md.nBE, md.nI, source_interface, 1);
+  hps_detail::add_in_place(bbot, correction);
+
+  parent.b.assign((std::size_t)(md.nAE + md.nBE), Real(0));
+  std::copy(btop.begin(), btop.end(), parent.b.begin());
+  std::copy(
+    bbot.begin(),
+    bbot.end(),
+    parent.b.begin() + md.nAE);
+
+  parent.validate();
 }
 
 template<int D, class Real>

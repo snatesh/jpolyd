@@ -20,24 +20,43 @@
 #include <jperms.hh>
 #include <jprecomp.hh>
 #include <jlsmr.hh>
+#ifdef TIMING
+#include <timer.hh>
+#endif
 
 namespace jsimplex {
 
 enum class LeafOperatorMode
 {
-  MatrixFree,
-  Dense,
-  Verify
+  MatrixFree = 0,
+  Dense = 1,
+  Verify = 2,
+  DenseSparse = 3
+};
+
+enum class LeafLeastSquaresSolver
+{
+  Auto = 0,
+  LSMR = 1,
+  DenseQR = 2
 };
 
 template<class Real>
 struct LeafOptions
 {
   // Dense preserves every legacy constructor/reset call and every public
-  // dense diagnostic field. MatrixFree stores neither L, T, F, nor A_tau.
-  // Verify builds both backends, uses the matrix-free solve, and compares it
-  // with the dense fallback.
+  // dense diagnostic field. DenseSparse stores the composed dense interior
+  // matrix L, applies trace/flux through the reference CSC blocks, and uses
+  // reverse-communication LSMR without materializing T, F, or A_tau.
+  // MatrixFree stores neither L, T, F, nor A_tau. Verify builds both Dense
+  // and MatrixFree backends, solves through MatrixFree, and compares against
+  // Dense.
   LeafOperatorMode operator_mode = LeafOperatorMode::Dense;
+
+  // Auto selects DenseQR for the fully dense operator mode and LSMR for all
+  // action-based modes. DenseQR is valid only when A_tau is materialized.
+  LeafLeastSquaresSolver least_squares_solver =
+    LeafLeastSquaresSolver::Auto;
 
   Real verify_tolerance =
     std::is_same_v<Real,double> ? Real(1.0e-9) : Real(2.0e-4);
@@ -66,6 +85,7 @@ public:
   using LsmrOptions = detail::LsmrOptions<Real>;
   using LsmrInfo = detail::LsmrInfo<Real>;
   using Options = LeafOptions<Real>;
+  using LeastSquaresSolver = LeafLeastSquaresSolver;
 
   /*
     Caller-owned storage for repeated local LSMR solves.
@@ -82,6 +102,19 @@ public:
     // Stacked right-hand side in Real precision.
     std::vector<Real> rhs;
 
+    // Dense QR scratch. LAPACK stores Householder vectors and R in qr_factor.
+    // qr_panel is column-major with leading dimension row_count and is reused
+    // for the complete [boundary-response, source-response] RHS panel.
+    std::vector<Real> qr_factor;
+    std::vector<Real> qr_tau;
+    std::vector<Real> qr_panel;
+    std::vector<Real> qr_work;
+    lapack_int geqrf_lwork = 0;
+    lapack_int ormqr_lwork = 0;
+    int ormqr_nrhs = -1;
+    const Leaf* qr_owner = nullptr;
+    bool qr_factorized = false;
+
     // Reverse-communication LSMR arrays. The Fortran implementation is
     // double precision, matching the existing matrix-free solve path.
     std::vector<double> rhs_double;
@@ -97,6 +130,11 @@ public:
     explicit SolveWorkspace(const Leaf& leaf)
     {
       reset(leaf);
+    }
+
+    SolveWorkspace(int rows, int columns)
+    {
+      reset(rows, columns);
     }
 
     void reset(const Leaf& leaf)
@@ -116,6 +154,15 @@ public:
       column_count = columns;
 
       rhs.assign((std::size_t)rows, Real(0));
+      qr_factor.clear();
+      qr_tau.clear();
+      qr_panel.clear();
+      qr_work.clear();
+      geqrf_lwork = 0;
+      ormqr_lwork = 0;
+      ormqr_nrhs = -1;
+      qr_owner = nullptr;
+      qr_factorized = false;
       rhs_double.assign((std::size_t)rows, 0.0);
       u.assign((std::size_t)rows, 0.0);
       v.assign((std::size_t)columns, 0.0);
@@ -164,8 +211,8 @@ public:
   std::vector<Real> unit_normal;
   std::vector<Real> normal_scaled;
 
-  // Legacy dense diagnostics/fallback. These are populated only in Dense and
-  // Verify mode.
+  // Dense diagnostics/fallback. L is also populated in DenseSparse mode;
+  // T, F, and A_tau are populated only in Dense and Verify mode.
   //
   //   L:     m_int x M
   //   T,F:   nb x M
@@ -178,12 +225,29 @@ public:
   std::vector<Real> tau_face;
   std::vector<Real> tau_rows;
   std::vector<Real> sqrt_tau_rows;
-  Real tau_C = Real(10);
+
+  // tau_C_base is the user-facing stabilization constant.  Elliptic leaves
+  // scale it by mR/m2 so that changing the residual row space does not silently
+  // change the aggregate interior-versus-boundary least-squares balance.
+  // Poisson leaves use factor one because their residual space is Pi_{n-2}.
+  Real tau_C_base = Real(1);
+  Real tau_residual_row_factor = Real(1);
+  Real tau_C = Real(1); // effective constant used in tau_f=C(n+1)^2/h_f
   Real sL = Real(1);
+
+#ifdef TIMING
+  // Time spent computing the interior row-RMS scale. In MatrixFree mode this
+  // includes the exact identity-column action sweep. A user override reports
+  // zero because no scale computation is performed.
+  double timing_interior_scale_seconds = 0.0;
+  EllipticActionTimings timing_interior_scale_actions{};
+#endif
 
   LsmrOptions lsmr_options{};
   Options leaf_options{};
   LeafOperatorMode operator_mode = LeafOperatorMode::Dense;
+  LeafLeastSquaresSolver least_squares_solver =
+    LeafLeastSquaresSolver::LSMR;
 
   Leaf() = default;
 
@@ -215,7 +279,7 @@ public:
     const EllipticPlan<D,Real>& elliptic_plan,
     const EllipticElementCoefficientsView<D,Real>& coeffs,
     EllipticWorkspace<D,Real>& elliptic_work,
-    Real tau_C_in = Real(10),
+    Real tau_C_base_in = Real(1),
     const LsmrOptions& opts = LsmrOptions(),
     const Options& leaf_opts = Options())
   {
@@ -226,20 +290,21 @@ public:
       elliptic_plan,
       coeffs,
       elliptic_work,
-      tau_C_in,
+      tau_C_base_in,
       opts,
       leaf_opts);
   }
 
   // New mode-aware elliptic constructor. MatrixFree requires no dense
-  // workspace. Dense/Verify create a temporary dense workspace internally.
+  // workspace. Dense, DenseSparse, and Verify create a temporary dense
+  // workspace internally.
   Leaf(
     const RefSimplexPrecomp<D,Real>& pre_in,
     const Real* V_phys_colmajor,
     const int* global_vids_in,
     const EllipticPlan<D,Real>& elliptic_plan,
     const EllipticElementCoefficientsView<D,Real>& coeffs,
-    Real tau_C_in,
+    Real tau_C_base_in,
     const LsmrOptions& opts,
     const Options& leaf_opts)
   {
@@ -249,7 +314,7 @@ public:
       global_vids_in,
       elliptic_plan,
       coeffs,
-      tau_C_in,
+      tau_C_base_in,
       opts,
       leaf_opts);
   }
@@ -266,7 +331,9 @@ public:
       pre_in,
       V_phys_colmajor,
       global_vids_in,
+      pre_in.m_int,
       tau_C_in,
+      Real(1),
       opts,
       leaf_opts);
 
@@ -278,7 +345,11 @@ public:
     owned_elliptic_plan_ =
       std::make_unique<EllipticPlan<D,Real>>(
         *pre,
-        degree_spec);
+        degree_spec,
+        true,
+        EllipticResidualPolicy::SecondDerivativeDegree,
+        EllipticMultiplicationAssembler::ClenshawColumns,
+        true);
     elliptic_plan_ = owned_elliptic_plan_.get();
 
     std::array<Real, D * D> identity_coefficients{};
@@ -298,7 +369,7 @@ public:
     poisson_coefficients.b = nullptr;
     poisson_coefficients.c = nullptr;
 
-    if (uses_matrix_free_backend())
+    if (uses_clenshaw_backend())
     {
       initialize_action_backend(
         *elliptic_plan_,
@@ -310,6 +381,15 @@ public:
       EllipticDenseWorkspace<D,Real> dense_work(
         *elliptic_plan_);
       assemble_dense_backend(
+        *elliptic_plan_,
+        poisson_coefficients,
+        dense_work);
+    }
+    else if (operator_mode == LeafOperatorMode::DenseSparse)
+    {
+      EllipticDenseWorkspace<D,Real> dense_work(
+        *elliptic_plan_);
+      assemble_dense_sparse_backend(
         *elliptic_plan_,
         poisson_coefficients,
         dense_work);
@@ -331,7 +411,7 @@ public:
     const EllipticPlan<D,Real>& elliptic_plan,
     const EllipticElementCoefficientsView<D,Real>& coeffs,
     EllipticWorkspace<D,Real>& elliptic_work,
-    Real tau_C_in = Real(10),
+    Real tau_C_base_in = Real(1),
     const LsmrOptions& opts = LsmrOptions(),
     const Options& leaf_opts = Options())
   {
@@ -339,13 +419,15 @@ public:
       pre_in,
       V_phys_colmajor,
       global_vids_in,
-      tau_C_in,
+      elliptic_plan.mR,
+      tau_C_base_in,
+      elliptic_tau_residual_row_factor(elliptic_plan),
       opts,
       leaf_opts);
 
     elliptic_plan_ = &elliptic_plan;
 
-    if (uses_matrix_free_backend())
+    if (uses_clenshaw_backend())
     {
       initialize_action_backend(
         elliptic_plan,
@@ -359,6 +441,13 @@ public:
         coeffs,
         elliptic_work);
     }
+    else if (operator_mode == LeafOperatorMode::DenseSparse)
+    {
+      assemble_dense_sparse_backend(
+        elliptic_plan,
+        coeffs,
+        elliptic_work);
+    }
     else
     {
       clear_dense_storage();
@@ -368,15 +457,15 @@ public:
     finalize_operator_initialization();
   }
 
-  // New reset overload for MatrixFree/Verify callers that should not allocate a
-  // dense workspace unless the selected mode requires it.
+  // New reset overload for mode-aware callers that should not allocate a dense
+  // workspace unless the selected mode requires it.
   void reset(
     const RefSimplexPrecomp<D,Real>& pre_in,
     const Real* V_phys_colmajor,
     const int* global_vids_in,
     const EllipticPlan<D,Real>& elliptic_plan,
     const EllipticElementCoefficientsView<D,Real>& coeffs,
-    Real tau_C_in,
+    Real tau_C_base_in,
     const LsmrOptions& opts,
     const Options& leaf_opts)
   {
@@ -384,13 +473,15 @@ public:
       pre_in,
       V_phys_colmajor,
       global_vids_in,
-      tau_C_in,
+      elliptic_plan.mR,
+      tau_C_base_in,
+      elliptic_tau_residual_row_factor(elliptic_plan),
       opts,
       leaf_opts);
 
     elliptic_plan_ = &elliptic_plan;
 
-    if (uses_matrix_free_backend())
+    if (uses_clenshaw_backend())
     {
       initialize_action_backend(
         elliptic_plan,
@@ -406,6 +497,15 @@ public:
         coeffs,
         dense_work);
     }
+    else if (operator_mode == LeafOperatorMode::DenseSparse)
+    {
+      EllipticDenseWorkspace<D,Real> dense_work(
+        elliptic_plan);
+      assemble_dense_sparse_backend(
+        elliptic_plan,
+        coeffs,
+        dense_work);
+    }
     else
     {
       clear_dense_storage();
@@ -415,20 +515,44 @@ public:
     finalize_operator_initialization();
   }
 
-  bool uses_matrix_free_backend() const
+  bool uses_clenshaw_backend() const
   {
-    return operator_mode != LeafOperatorMode::Dense;
+    return operator_mode == LeafOperatorMode::MatrixFree
+        || operator_mode == LeafOperatorMode::Verify;
   }
 
   bool uses_dense_backend() const
   {
-    return operator_mode != LeafOperatorMode::MatrixFree;
+    return operator_mode == LeafOperatorMode::Dense
+        || operator_mode == LeafOperatorMode::Verify;
+  }
+
+  bool uses_action_solver() const
+  {
+    return operator_mode != LeafOperatorMode::Dense;
+  }
+
+  bool has_dense_interior_operator() const
+  {
+    return L.size() == (std::size_t)m_int * M;
   }
 
   bool has_dense_local_operator() const
   {
     return !L.empty() && !A_tau.empty();
   }
+
+#ifdef TIMING
+  EllipticActionTimings elliptic_action_timings() const
+  {
+    return elliptic_action_work_ ? elliptic_action_work_->timings() : EllipticActionTimings{};
+  }
+
+  void reset_elliptic_action_timings() const
+  {
+    if (elliptic_action_work_) elliptic_action_work_->reset_timings();
+  }
+#endif
 
   int face_offset(int face_id) const
   {
@@ -696,6 +820,89 @@ public:
       workspace);
   }
 
+  /*
+    Materialize the complete reusable local inverse action
+
+      [ U_lambda  U_f ] = A_tau^dagger [ D_lambda  D_f ],
+
+    where D_lambda has sqrt(tau) on the boundary block and D_f has -sL on
+    the interior block. response_out is M x (nb + m_int), column-major.
+
+    DenseQR factors A_tau once and solves the full panel with one Q^T apply
+    and one triangular solve. LSMR retains the historical columnwise solve
+    path, but produces the same complete reusable map.
+  */
+  void solve_response_maps(
+    Real* response_out,
+    int ldresponse,
+    SolveWorkspace& workspace,
+    long long* lsmr_iterations_out = nullptr) const
+  {
+    if (!response_out)
+    {
+      throw std::invalid_argument(
+        "Leaf::solve_response_maps: null output");
+    }
+    if (ldresponse < std::max(M, 1))
+    {
+      throw std::invalid_argument(
+        "Leaf::solve_response_maps: invalid leading dimension");
+    }
+
+    ensure_solve_workspace(workspace);
+    if (lsmr_iterations_out)
+    {
+      *lsmr_iterations_out = 0;
+    }
+
+    if (least_squares_solver ==
+        LeafLeastSquaresSolver::DenseQR)
+    {
+      solve_response_maps_dense_qr(
+        response_out,
+        ldresponse,
+        workspace);
+      return;
+    }
+
+    const int nrhs = nb + m_int;
+    for (int column = 0;
+         column < nrhs;
+         ++column)
+    {
+      std::fill(
+        workspace.rhs.begin(),
+        workspace.rhs.end(),
+        Real(0));
+
+      if (column < nb)
+      {
+        workspace.rhs[(std::size_t)m_int + column] =
+          sqrt_tau_rows[(std::size_t)column];
+      }
+      else
+      {
+        const int source_column = column - nb;
+        workspace.rhs[(std::size_t)source_column] = -sL;
+      }
+
+      const LsmrInfo info = solve_coefficients_from_rhs(
+        workspace.rhs.data(),
+        response_out
+          + (std::size_t)ldresponse
+            * (std::size_t)column,
+        workspace,
+        "Leaf::solve_response_maps");
+
+      if (lsmr_iterations_out)
+      {
+        *lsmr_iterations_out +=
+          static_cast<long long>(
+            std::max(info.itn, 0));
+      }
+    }
+  }
+
   LsmrInfo apply(
     const Real* lambda,
     const Real* f_int,
@@ -834,6 +1041,269 @@ private:
     }
   }
 
+  void factor_dense_qr(
+    SolveWorkspace& workspace) const
+  {
+    if (operator_mode != LeafOperatorMode::Dense
+        || A_tau.size()
+             != (std::size_t)ntau_rows * (std::size_t)M)
+    {
+      throw std::runtime_error(
+        "Leaf::factor_dense_qr: dense A_tau is unavailable");
+    }
+
+    if (workspace.qr_factorized
+        && workspace.qr_owner == this)
+    {
+      return;
+    }
+
+    workspace.qr_factor = A_tau;
+    workspace.qr_tau.assign(
+      (std::size_t)M,
+      Real(0));
+
+    lapack_int info = 0;
+    if (workspace.geqrf_lwork <= 0)
+    {
+      Real query = Real(0);
+      info = detail::LapackGeqrf<Real>::run(
+        (lapack_int)ntau_rows,
+        (lapack_int)M,
+        workspace.qr_factor.data(),
+        (lapack_int)ntau_rows,
+        workspace.qr_tau.data(),
+        &query,
+        (lapack_int)-1);
+      if (info != 0)
+      {
+        throw std::runtime_error(
+          "Leaf::factor_dense_qr: GEQRF workspace query failed");
+      }
+
+      workspace.geqrf_lwork = std::max<lapack_int>(
+        1,
+        static_cast<lapack_int>(std::ceil(query)));
+    }
+    if (workspace.qr_work.size()
+        < (std::size_t)workspace.geqrf_lwork)
+    {
+      workspace.qr_work.resize(
+        (std::size_t)workspace.geqrf_lwork);
+    }
+
+    info = detail::LapackGeqrf<Real>::run(
+      (lapack_int)ntau_rows,
+      (lapack_int)M,
+      workspace.qr_factor.data(),
+      (lapack_int)ntau_rows,
+      workspace.qr_tau.data(),
+      workspace.qr_work.data(),
+      workspace.geqrf_lwork);
+    if (info != 0)
+    {
+      throw std::runtime_error(
+        "Leaf::factor_dense_qr: GEQRF factorization failed");
+    }
+
+    Real max_diagonal = Real(0);
+    for (int i = 0; i < M; ++i)
+    {
+      max_diagonal = std::max(
+        max_diagonal,
+        std::abs(
+          workspace.qr_factor[
+            (std::size_t)i
+            + (std::size_t)ntau_rows
+              * (std::size_t)i]));
+    }
+    const Real rank_tolerance =
+      std::numeric_limits<Real>::epsilon()
+      * Real(std::max(ntau_rows, M))
+      * std::max(max_diagonal, Real(1));
+    for (int i = 0; i < M; ++i)
+    {
+      const Real diagonal = std::abs(
+        workspace.qr_factor[
+          (std::size_t)i
+          + (std::size_t)ntau_rows
+            * (std::size_t)i]);
+      if (!std::isfinite(diagonal)
+          || diagonal <= rank_tolerance)
+      {
+        throw std::runtime_error(
+          "Leaf::factor_dense_qr: A_tau is numerically rank deficient");
+      }
+    }
+
+    workspace.qr_owner = this;
+    workspace.qr_factorized = true;
+  }
+
+  void apply_dense_qr_pseudoinverse_panel(
+    Real* panel,
+    int nrhs,
+    SolveWorkspace& workspace) const
+  {
+    if (!panel || nrhs < 0)
+    {
+      throw std::invalid_argument(
+        "Leaf::apply_dense_qr_pseudoinverse_panel: invalid panel");
+    }
+    if (nrhs == 0)
+    {
+      return;
+    }
+
+    factor_dense_qr(workspace);
+
+    lapack_int info = 0;
+    if (workspace.ormqr_lwork <= 0
+        || workspace.ormqr_nrhs != nrhs)
+    {
+      Real query = Real(0);
+      info = detail::LapackOrmqr<Real>::run(
+        'L',
+        'T',
+        (lapack_int)ntau_rows,
+        (lapack_int)nrhs,
+        (lapack_int)M,
+        workspace.qr_factor.data(),
+        (lapack_int)ntau_rows,
+        workspace.qr_tau.data(),
+        panel,
+        (lapack_int)ntau_rows,
+        &query,
+        (lapack_int)-1);
+      if (info != 0)
+      {
+        throw std::runtime_error(
+          "Leaf::apply_dense_qr_pseudoinverse_panel: ORMQR workspace query failed");
+      }
+
+      workspace.ormqr_lwork = std::max<lapack_int>(
+        1,
+        static_cast<lapack_int>(std::ceil(query)));
+      workspace.ormqr_nrhs = nrhs;
+    }
+    if (workspace.qr_work.size()
+        < (std::size_t)workspace.ormqr_lwork)
+    {
+      workspace.qr_work.resize(
+        (std::size_t)workspace.ormqr_lwork);
+    }
+
+    info = detail::LapackOrmqr<Real>::run(
+      'L',
+      'T',
+      (lapack_int)ntau_rows,
+      (lapack_int)nrhs,
+      (lapack_int)M,
+      workspace.qr_factor.data(),
+      (lapack_int)ntau_rows,
+      workspace.qr_tau.data(),
+      panel,
+      (lapack_int)ntau_rows,
+      workspace.qr_work.data(),
+      workspace.ormqr_lwork);
+    if (info != 0)
+    {
+      throw std::runtime_error(
+        "Leaf::apply_dense_qr_pseudoinverse_panel: ORMQR failed");
+    }
+
+    detail::BlasTrsm<Real>::run(
+      CblasColMajor,
+      CblasLeft,
+      CblasUpper,
+      CblasNoTrans,
+      CblasNonUnit,
+      M,
+      nrhs,
+      Real(1),
+      workspace.qr_factor.data(),
+      ntau_rows,
+      panel,
+      ntau_rows);
+  }
+
+  void solve_response_maps_dense_qr(
+    Real* response_out,
+    int ldresponse,
+    SolveWorkspace& workspace) const
+  {
+    if (least_squares_solver !=
+        LeafLeastSquaresSolver::DenseQR)
+    {
+      throw std::runtime_error(
+        "Leaf::solve_response_maps_dense_qr: QR solver is not active");
+    }
+
+    const int nrhs = nb + m_int;
+    workspace.qr_panel.assign(
+      (std::size_t)ntau_rows * (std::size_t)nrhs,
+      Real(0));
+
+    for (int column = 0; column < nb; ++column)
+    {
+      workspace.qr_panel[
+        (std::size_t)m_int
+        + (std::size_t)column
+        + (std::size_t)ntau_rows
+          * (std::size_t)column] =
+        sqrt_tau_rows[(std::size_t)column];
+    }
+    for (int column = 0; column < m_int; ++column)
+    {
+      workspace.qr_panel[
+        (std::size_t)column
+        + (std::size_t)ntau_rows
+          * (std::size_t)(nb + column)] = -sL;
+    }
+
+    apply_dense_qr_pseudoinverse_panel(
+      workspace.qr_panel.data(),
+      nrhs,
+      workspace);
+
+    for (int column = 0;
+         column < nrhs;
+         ++column)
+    {
+      std::copy_n(
+        workspace.qr_panel.data()
+          + (std::size_t)ntau_rows
+            * (std::size_t)column,
+        M,
+        response_out
+          + (std::size_t)ldresponse
+            * (std::size_t)column);
+    }
+  }
+
+  void solve_dense_qr_rhs(
+    const Real* rhs,
+    Real* c_out,
+    SolveWorkspace& workspace) const
+  {
+    workspace.qr_panel.assign(
+      (std::size_t)ntau_rows,
+      Real(0));
+    std::copy_n(
+      rhs,
+      ntau_rows,
+      workspace.qr_panel.data());
+
+    apply_dense_qr_pseudoinverse_panel(
+      workspace.qr_panel.data(),
+      1,
+      workspace);
+    std::copy_n(
+      workspace.qr_panel.data(),
+      M,
+      c_out);
+  }
+
   LsmrInfo solve_coefficients_from_rhs(
     const Real* rhs,
     Real* c_out,
@@ -843,7 +1313,19 @@ private:
     LsmrInfo info{};
     int return_code = 0;
 
-    if (operator_mode == LeafOperatorMode::Dense)
+    if (least_squares_solver ==
+        LeafLeastSquaresSolver::DenseQR)
+    {
+      solve_dense_qr_rhs(
+        rhs,
+        c_out,
+        workspace);
+      info.istop = 0;
+      info.itn = 0;
+      info.stat = 0;
+      return_code = 0;
+    }
+    else if (operator_mode == LeafOperatorMode::Dense)
     {
       return_code =
         lsmr_dense_solve_colmajor<Real>(
@@ -857,7 +1339,7 @@ private:
     }
     else
     {
-      return_code = solve_matrix_free(
+      return_code = solve_action(
         rhs,
         c_out,
         workspace,
@@ -868,7 +1350,7 @@ private:
     {
       throw std::runtime_error(
         std::string(caller)
-        + ": LSMR solve failed");
+        + ": local least-squares solve failed");
     }
 
     if (operator_mode == LeafOperatorMode::Verify
@@ -1150,11 +1632,26 @@ private:
   mutable std::vector<Real> action_interior_scaled_;
   mutable std::vector<Real> action_boundary_scaled_;
 
+  static Real elliptic_tau_residual_row_factor(
+    const EllipticPlan<D,Real>& plan)
+  {
+    if (plan.m2 <= 0 || plan.mR <= 0)
+    {
+      throw std::invalid_argument(
+        "Leaf: invalid elliptic residual dimensions for tau scaling");
+    }
+
+    return static_cast<Real>(plan.mR)
+         / static_cast<Real>(plan.m2);
+  }
+
   void initialize_common(
     const RefSimplexPrecomp<D,Real>& pre_in,
     const Real* V_phys_colmajor,
     const int* global_vids_in,
-    Real tau_C_in,
+    int interior_dim,
+    Real tau_C_base_in,
+    Real tau_residual_row_factor_in,
     const LsmrOptions& opts,
     const Options& leaf_opts)
   {
@@ -1168,10 +1665,17 @@ private:
       throw std::invalid_argument(
         "Leaf: null global_vids");
     }
-    if (!(tau_C_in > Real(0)))
+    if (!(tau_C_base_in > Real(0))
+        || !std::isfinite(tau_C_base_in))
     {
       throw std::invalid_argument(
-        "Leaf: tau constant must be positive");
+        "Leaf: tau base constant must be finite and positive");
+    }
+    if (!(tau_residual_row_factor_in > Real(0))
+        || !std::isfinite(tau_residual_row_factor_in))
+    {
+      throw std::invalid_argument(
+        "Leaf: tau residual-row factor must be finite and positive");
     }
     if (leaf_opts.verify_tolerance < Real(0))
     {
@@ -1187,15 +1691,48 @@ private:
     pre = &pre_in;
     n = pre->n;
     M = pre->M;
-    m_int = pre->m_int;
+    if (interior_dim <= 0 || interior_dim > M)
+    {
+      throw std::invalid_argument(
+        "Leaf: invalid interior residual dimension");
+    }
+    m_int = interior_dim;
     kf = pre->kf;
     nface = D + 1;
     nb = nface * kf;
     ntau_rows = m_int + nb;
-    tau_C = tau_C_in;
+    tau_C_base = tau_C_base_in;
+    tau_residual_row_factor = tau_residual_row_factor_in;
+    tau_C = tau_C_base * tau_residual_row_factor;
+    if (!(tau_C > Real(0)) || !std::isfinite(tau_C))
+    {
+      throw std::invalid_argument(
+        "Leaf: effective tau constant must be finite and positive");
+    }
     lsmr_options = opts;
     leaf_options = leaf_opts;
     operator_mode = leaf_options.operator_mode;
+    least_squares_solver =
+      leaf_options.least_squares_solver;
+    if (least_squares_solver ==
+        LeafLeastSquaresSolver::Auto)
+    {
+      least_squares_solver =
+        operator_mode == LeafOperatorMode::Dense
+        ? LeafLeastSquaresSolver::DenseQR
+        : LeafLeastSquaresSolver::LSMR;
+    }
+    if (least_squares_solver ==
+          LeafLeastSquaresSolver::DenseQR
+        && operator_mode != LeafOperatorMode::Dense)
+    {
+      throw std::invalid_argument(
+        "Leaf: DenseQR requires LeafOperatorMode::Dense");
+    }
+#ifdef TIMING
+    timing_interior_scale_seconds = 0.0;
+    timing_interior_scale_actions.reset();
+#endif
 
     V_phys.assign(
       V_phys_colmajor,
@@ -1337,6 +1874,16 @@ private:
     A_tau.clear();
   }
 
+  void allocate_dense_interior_storage()
+  {
+    L.assign(
+      (std::size_t)m_int * M,
+      Real(0));
+    T.clear();
+    F.clear();
+    A_tau.clear();
+  }
+
   void allocate_dense_storage()
   {
     L.assign(
@@ -1348,6 +1895,7 @@ private:
     F.assign(
       (std::size_t)nb * M,
       Real(0));
+    A_tau.clear();
   }
 
   void assemble_dense_backend(
@@ -1357,6 +1905,33 @@ private:
   {
     allocate_dense_storage();
 
+    assemble_dense_interior(
+      plan,
+      coeffs,
+      dense_work);
+
+    assemble_dense_boundary_maps();
+  }
+
+  void assemble_dense_sparse_backend(
+    const EllipticPlan<D,Real>& plan,
+    const EllipticElementCoefficientsView<D,Real>& coeffs,
+    EllipticDenseWorkspace<D,Real>& dense_work)
+  {
+    allocate_dense_interior_storage();
+
+    assemble_dense_interior(
+      plan,
+      coeffs,
+      dense_work);
+  }
+
+  void assemble_dense_interior(
+    const EllipticPlan<D,Real>& plan,
+    const EllipticElementCoefficientsView<D,Real>& coeffs,
+    EllipticDenseWorkspace<D,Real>& dense_work)
+  {
+
     jdsimplex_assemble_elliptic_L_int_dag<D,Real>(
       *pre,
       geom,
@@ -1365,18 +1940,33 @@ private:
       dense_work,
       L.data());
 
-    assemble_dense_boundary_maps();
+#ifdef TIMING
+    timing_interior_scale_actions.reset();
+#endif
 
     if (leaf_options.interior_scale_override > Real(0))
     {
       sL = leaf_options.interior_scale_override;
+#ifdef TIMING
+      timing_interior_scale_seconds = 0.0;
+#endif
     }
     else
     {
+#ifdef TIMING
+      timer scale_timer;
+      scale_timer.tic();
+#endif
+
       sL = row_rms_scale(
         L.data(),
         m_int,
         M);
+
+#ifdef TIMING
+      timing_interior_scale_seconds =
+        scale_timer.toc();
+#endif
     }
   }
 
@@ -1385,14 +1975,28 @@ private:
     if (leaf_options.interior_scale_override > Real(0))
     {
       sL = leaf_options.interior_scale_override;
+#ifdef TIMING
+      timing_interior_scale_seconds = 0.0;
+      timing_interior_scale_actions.reset();
+      if (elliptic_action_work_) elliptic_action_work_->reset_timings();
+#endif
       return;
     }
+
+#ifdef TIMING
+    timer scale_timer;
+    scale_timer.tic();
+#endif
 
     if (!elliptic_plan_ || !elliptic_action_work_)
     {
       throw std::runtime_error(
         "Leaf: matrix-free scale without action backend");
     }
+
+#ifdef TIMING
+    elliptic_action_work_->reset_timings();
+#endif
 
     std::vector<Real> basis_vector(
       (std::size_t)M,
@@ -1444,6 +2048,13 @@ private:
 
     sL = static_cast<Real>(
       1.0L / std::max(rms, tiny));
+
+#ifdef TIMING
+    timing_interior_scale_seconds =
+      scale_timer.toc();
+    timing_interior_scale_actions = elliptic_action_work_->timings();
+    elliptic_action_work_->reset_timings();
+#endif
   }
 
   void build_boundary_action_metadata()
@@ -1865,7 +2476,8 @@ private:
     const Real* x,
     Real* y) const
   {
-    if (operator_mode == LeafOperatorMode::Dense)
+    if (operator_mode == LeafOperatorMode::Dense
+        || operator_mode == LeafOperatorMode::DenseSparse)
     {
       detail::BlasGemm<Real>::run(
         CblasColMajor,
@@ -1902,7 +2514,49 @@ private:
       y);
   }
 
-  void apply_stacked_matrix_free(
+  void apply_interior_operator_transpose(
+    const Real* y,
+    Real* x) const
+  {
+    if (operator_mode == LeafOperatorMode::Dense
+        || operator_mode == LeafOperatorMode::DenseSparse)
+    {
+      detail::BlasGemm<Real>::run(
+        CblasColMajor,
+        CblasTrans,
+        CblasNoTrans,
+        M,
+        1,
+        m_int,
+        Real(1),
+        L.data(),
+        m_int,
+        y,
+        m_int,
+        Real(0),
+        x,
+        M);
+      return;
+    }
+
+    if (!elliptic_plan_
+        || !elliptic_action_work_)
+    {
+      throw std::runtime_error(
+        "Leaf: missing matrix-free elliptic transpose backend");
+    }
+
+    jdsimplex_apply_elliptic_transpose<D,Real>(
+      *pre,
+      geom,
+      *elliptic_plan_,
+      owned_coeffs_,
+      *elliptic_action_work_,
+      y,
+      x);
+  }
+
+  void apply_stacked_action(
     const Real* x,
     Real* y) const
   {
@@ -1933,7 +2587,7 @@ private:
     }
   }
 
-  void apply_stacked_matrix_free_transpose(
+  void apply_stacked_action_transpose(
     const Real* y,
     Real* x) const
   {
@@ -1945,12 +2599,7 @@ private:
         sL * y[row];
     }
 
-    jdsimplex_apply_elliptic_transpose<D,Real>(
-      *pre,
-      geom,
-      *elliptic_plan_,
-      owned_coeffs_,
-      *elliptic_action_work_,
+    apply_interior_operator_transpose(
       action_interior_scaled_.data(),
       x);
 
@@ -1969,7 +2618,7 @@ private:
       true);
   }
 
-  int solve_matrix_free(
+  int solve_action(
     const Real* rhs,
     Real* x_out,
     SolveWorkspace& workspace,
@@ -1979,9 +2628,17 @@ private:
     {
       return -2;
     }
-    if (!uses_matrix_free_backend()
-        || !elliptic_plan_
-        || !elliptic_action_work_)
+    if (!uses_action_solver())
+    {
+      return -5;
+    }
+    if (uses_clenshaw_backend()
+        && (!elliptic_plan_ || !elliptic_action_work_))
+    {
+      return -5;
+    }
+    if (operator_mode == LeafOperatorMode::DenseSparse
+        && !has_dense_interior_operator())
     {
       return -5;
     }
@@ -2101,7 +2758,7 @@ private:
                 u[(std::size_t)row]);
           }
 
-          apply_stacked_matrix_free_transpose(
+          apply_stacked_action_transpose(
             action_row_input_.data(),
             action_coeff_output_.data());
 
@@ -2127,7 +2784,7 @@ private:
                 v[(std::size_t)column]);
           }
 
-          apply_stacked_matrix_free(
+          apply_stacked_action(
             action_coeff_input_.data(),
             action_row_output_.data());
 
@@ -2333,7 +2990,7 @@ private:
       M,
       x.data(),
       dense_forward.data());
-    apply_stacked_matrix_free(
+    apply_stacked_action(
       x.data(),
       action_forward.data());
 
@@ -2343,7 +3000,7 @@ private:
       M,
       y.data(),
       dense_transpose.data());
-    apply_stacked_matrix_free_transpose(
+    apply_stacked_action_transpose(
       y.data(),
       action_transpose.data());
 

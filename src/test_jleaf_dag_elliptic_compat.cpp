@@ -178,10 +178,10 @@ void compare_plan(
   coeffs.c = degrees.p0 >= 0 ? c.data() : nullptr;
 
   std::vector<double> dense(
-    (std::size_t)pre.m_int * (std::size_t)pre.M,
+    (std::size_t)plan.mR * (std::size_t)pre.M,
     0.0);
   std::vector<double> dag(
-    (std::size_t)pre.m_int * (std::size_t)pre.M,
+    (std::size_t)plan.mR * (std::size_t)pre.M,
     0.0);
 
   jsimplex::jdsimplex_assemble_elliptic_L_int<D,double>(
@@ -257,7 +257,8 @@ void run_dimension(
     << "D=" << D
     << ", n=" << n
     << ", M=" << pre.M
-    << ", m_int=" << pre.m_int
+    << ", legacy m_int=" << pre.m_int
+    << ", elliptic mR=" << pre.M
     << '\n';
 
   // Constant-coefficient Poisson/Laplace path used by the default Leaf.

@@ -129,6 +129,121 @@ struct BlasGemm<double>
   }
 };
 
+template<class Real>
+struct BlasTrsm;
+
+template<>
+struct BlasTrsm<float>
+{
+  static inline void run(
+      CBLAS_ORDER order,
+      CBLAS_SIDE side,
+      CBLAS_UPLO uplo,
+      CBLAS_TRANSPOSE transA,
+      CBLAS_DIAG diag,
+      int M, int N,
+      float alpha,
+      const float* A, int lda,
+      float* B, int ldb)
+  {
+    cblas_strsm(
+      order, side, uplo, transA, diag,
+      M, N, alpha, A, lda, B, ldb);
+  }
+};
+
+template<>
+struct BlasTrsm<double>
+{
+  static inline void run(
+      CBLAS_ORDER order,
+      CBLAS_SIDE side,
+      CBLAS_UPLO uplo,
+      CBLAS_TRANSPOSE transA,
+      CBLAS_DIAG diag,
+      int M, int N,
+      double alpha,
+      const double* A, int lda,
+      double* B, int ldb)
+  {
+    cblas_dtrsm(
+      order, side, uplo, transA, diag,
+      M, N, alpha, A, lda, B, ldb);
+  }
+};
+
+template<class Real>
+struct LapackGeqrf;
+
+template<>
+struct LapackGeqrf<float>
+{
+  static inline lapack_int run(
+      lapack_int m, lapack_int n,
+      float* A, lapack_int lda,
+      float* tau,
+      float* work, lapack_int lwork)
+  {
+    return LAPACKE_sgeqrf_work(
+      LAPACK_COL_MAJOR,
+      m, n, A, lda, tau, work, lwork);
+  }
+};
+
+template<>
+struct LapackGeqrf<double>
+{
+  static inline lapack_int run(
+      lapack_int m, lapack_int n,
+      double* A, lapack_int lda,
+      double* tau,
+      double* work, lapack_int lwork)
+  {
+    return LAPACKE_dgeqrf_work(
+      LAPACK_COL_MAJOR,
+      m, n, A, lda, tau, work, lwork);
+  }
+};
+
+template<class Real>
+struct LapackOrmqr;
+
+template<>
+struct LapackOrmqr<float>
+{
+  static inline lapack_int run(
+      char side, char trans,
+      lapack_int m, lapack_int n, lapack_int k,
+      const float* A, lapack_int lda,
+      const float* tau,
+      float* C, lapack_int ldc,
+      float* work, lapack_int lwork)
+  {
+    return LAPACKE_sormqr_work(
+      LAPACK_COL_MAJOR,
+      side, trans, m, n, k,
+      A, lda, tau, C, ldc, work, lwork);
+  }
+};
+
+template<>
+struct LapackOrmqr<double>
+{
+  static inline lapack_int run(
+      char side, char trans,
+      lapack_int m, lapack_int n, lapack_int k,
+      const double* A, lapack_int lda,
+      const double* tau,
+      double* C, lapack_int ldc,
+      double* work, lapack_int lwork)
+  {
+    return LAPACKE_dormqr_work(
+      LAPACK_COL_MAJOR,
+      side, trans, m, n, k,
+      A, lda, tau, C, ldc, work, lwork);
+  }
+};
+
 
 
 

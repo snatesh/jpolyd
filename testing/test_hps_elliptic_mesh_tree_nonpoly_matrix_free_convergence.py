@@ -388,8 +388,8 @@ def project_source_elementmajor(
 ) -> np.ndarray:
   """Project f for the leaf convention L u + f = 0."""
   Xhat, weights, V_res = pc_data.residual_quad_basis()
-  V_int = V_res[:, :pc_data.m_int]
-  out = np.empty((simplices.shape[0], pc_data.m_int), dtype=np.float64)
+  V_int = V_res[:, :pc_data.M]
+  out = np.empty((simplices.shape[0], pc_data.M), dtype=np.float64)
 
   for element_id, simplex in enumerate(simplices):
     V_phys = element_vertices(vertex_row, coords, simplex)
@@ -552,7 +552,8 @@ def save_results_csv(rows: list[dict[str, float | int | str]], path: Path) -> No
     "leaf_operator_mode",
     "D", "n", "dimPi", "p", "nverts", "nelem", "M", "m_int", "kf",
     "boundary_faces", "interior_faces", "tree_depth", "metis_splits",
-    "fallback_splits", "alpha", "beta", "tau_C", "q_solve_vol",
+    "fallback_splits", "alpha", "beta", "tau_C_base",
+    "tau_residual_row_factor", "tau_C_effective", "q_solve_vol",
     "q_solve_face", "q_data_vol", "q_data_face", "q_eval",
     "leaf_threads_used", "root_residual", "interface_residual",
     "parent_residual", "relative_L2_error", "best_relative_L2_error",
@@ -674,7 +675,13 @@ def main() -> None:
   )
   parser.add_argument("--alpha", type=float, default=1.0)
   parser.add_argument("--beta", type=float, default=0.0)
-  parser.add_argument("--tau-C", type=float, default=10.0)
+  parser.add_argument(
+    "--tau-C-base", "--tau-C", dest="tau_C", type=float, default=1.0,
+    help=(
+      "elliptic base tau constant; C++ uses "
+      "tau_C_effective=tau_C*(mR/m2)"
+    ),
+  )
   parser.add_argument("--residual-tol", type=float, default=5.0e-10)
   parser.add_argument("--min-reduction", type=float, default=0.0)
   parser.add_argument("--determinant-tol", type=float, default=1.0e-13)
@@ -890,7 +897,13 @@ def main() -> None:
         "fallback_splits": tree.fallback_splits,
         "alpha": float(args.alpha),
         "beta": float(args.beta),
-        "tau_C": float(args.tau_C),
+        "tau_C_base": float(args.tau_C),
+        "tau_residual_row_factor": (
+          result.m_int / dimPi(D, n - 2)
+        ),
+        "tau_C_effective": (
+          float(args.tau_C) * result.m_int / dimPi(D, n - 2)
+        ),
         "q_solve_vol": q_solve_vol,
         "q_solve_face": q_solve_face,
         "q_data_vol": q_data_vol,

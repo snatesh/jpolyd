@@ -6,6 +6,13 @@
 #include <cassert>
 #include <cmath>
 #include <algorithm>
+#include <array>
+#include <limits>
+#include <stdexcept>
+
+#include <jbasis.hh>
+#include <jdetail.hh>
+#include <jquad_tprod.hh>
 
 namespace jsimplex
 {
@@ -690,6 +697,212 @@ private:
     solve_upper_tri_sparse_many_rhs(Bt, s_inout, MK, true);
   }
 };
+
+
+/*
+  Direct Galerkin materialization of a restricted multiplication operator.
+
+    M_q^{R<-N} = V_R^T diag(W .* q(X)) V_N,
+
+  where q is represented in the same orthonormal Jacobi family through degree
+  p. The quadrature rule and the full basis table are immutable and shared;
+  the caller owns one workspace per concurrent assembly.
+*/
+template<int D, class Real>
+class MultByQQuadraturePlan
+{
+public:
+  int max_degree = 0;
+  int q_order = 0;
+  int nq = 0;
+  int Mmax = 0;
+  std::array<Real, D + 1> kappa{};
+  std::vector<Real> X; // row-major nq x D
+  std::vector<Real> W; // nq
+  std::vector<Real> V; // column-major nq x dim(Pi_max_degree)
+
+  MultByQQuadraturePlan() = default;
+
+  MultByQQuadraturePlan(
+    const Real* kappa_in,
+    int max_degree_in,
+    int q_order_in)
+    : max_degree(max_degree_in), q_order(q_order_in)
+  {
+    if (!kappa_in)
+      throw std::invalid_argument(
+        "MultByQQuadraturePlan: null kappa");
+    if (max_degree < 0 || q_order <= 0)
+      throw std::invalid_argument(
+        "MultByQQuadraturePlan: invalid degree/order");
+
+    for (int i = 0; i <= D; ++i)
+      kappa[(std::size_t)i] = kappa_in[i];
+
+    const unsigned int nq_unsigned =
+      QuadMapped<D,Real>::npoints((unsigned int)q_order);
+    if (nq_unsigned > (unsigned int)std::numeric_limits<int>::max())
+      throw std::overflow_error(
+        "MultByQQuadraturePlan: quadrature size overflow");
+    nq = (int)nq_unsigned;
+    Mmax = Basis<D,Real>::dim_Pi(max_degree);
+
+    X.assign((std::size_t)nq * D, Real(0));
+    W.assign((std::size_t)nq, Real(0));
+    const int built = QuadMapped<D,Real>::build_kappa(
+      (unsigned int)q_order,
+      kappa.data(),
+      X.data(),
+      W.data());
+    if (built != nq)
+      throw std::runtime_error(
+        "MultByQQuadraturePlan: quadrature build failed");
+
+    std::vector<int> alpha;
+    std::vector<int> tail;
+    std::vector<Real> invh;
+    Basis<D,Real>::build_structures(
+      max_degree,
+      kappa.data(),
+      alpha,
+      tail,
+      invh);
+
+    V.assign((std::size_t)nq * Mmax, Real(0));
+    Basis<D,Real>::eval_all(
+      X.data(), D, 1, nq,
+      kappa.data(), max_degree,
+      alpha.data(), tail.data(), invh.data(),
+      V.data(), nq, nullptr);
+  }
+
+  int size_for_degree(int degree) const
+  {
+    if (degree < 0 || degree > max_degree)
+      throw std::out_of_range(
+        "MultByQQuadraturePlan: requested degree is unavailable");
+    return Basis<D,Real>::dim_Pi(degree);
+  }
+};
+
+template<class Real>
+struct MultByQQuadratureWorkspace
+{
+  std::vector<Real> q_values;
+  std::vector<Real> weighted_input_panel;
+
+  void resize(int nq, int panel_width)
+  {
+    if (nq < 0 || panel_width < 0)
+      throw std::invalid_argument(
+        "MultByQQuadratureWorkspace: invalid dimensions");
+    q_values.resize((std::size_t)nq);
+    weighted_input_panel.resize(
+      (std::size_t)nq * (std::size_t)panel_width);
+  }
+};
+
+template<int D, class Real>
+void assemble_restricted_mult_quadrature(
+  const MultByQQuadraturePlan<D,Real>& plan,
+  const Real* q_coefficients,
+  int coefficient_degree,
+  int input_degree,
+  int output_degree,
+  MultByQQuadratureWorkspace<Real>& workspace,
+  Real* M_out)
+{
+  if (!q_coefficients || !M_out)
+    throw std::invalid_argument(
+      "assemble_restricted_mult_quadrature: null array");
+  if (coefficient_degree < 0 || input_degree < 0 || output_degree < 0 ||
+      coefficient_degree > plan.max_degree ||
+      input_degree > plan.max_degree ||
+      output_degree > plan.max_degree)
+    throw std::invalid_argument(
+      "assemble_restricted_mult_quadrature: degree outside plan");
+
+  const int Mp = plan.size_for_degree(coefficient_degree);
+  const int MN = plan.size_for_degree(input_degree);
+  const int MR = plan.size_for_degree(output_degree);
+  const int nq = plan.nq;
+
+  // Keep the temporary panel near eight MiB for double precision while
+  // retaining enough columns for efficient GEMM at moderate dimensions.
+  const std::size_t target_entries = (std::size_t)1 << 20;
+  const int panel_width = std::max(
+    1,
+    std::min(
+      MN,
+      std::min(
+        64,
+        (int)std::max<std::size_t>(
+          1,
+          target_entries / (std::size_t)std::max(nq, 1)))));
+  workspace.resize(nq, panel_width);
+
+  detail::BlasGemm<Real>::run(
+    CblasColMajor,
+    CblasNoTrans,
+    CblasNoTrans,
+    nq,
+    1,
+    Mp,
+    Real(1),
+    plan.V.data(),
+    nq,
+    q_coefficients,
+    Mp,
+    Real(0),
+    workspace.q_values.data(),
+    nq);
+
+  for (int first_column = 0;
+       first_column < MN;
+       first_column += panel_width)
+  {
+    const int width = std::min(
+      panel_width,
+      MN - first_column);
+
+    for (int local_column = 0;
+         local_column < width;
+         ++local_column)
+    {
+      const Real* input_column =
+        plan.V.data()
+        + (std::size_t)nq
+          * (std::size_t)(first_column + local_column);
+      Real* weighted_column =
+        workspace.weighted_input_panel.data()
+        + (std::size_t)nq * (std::size_t)local_column;
+
+      for (int point = 0; point < nq; ++point)
+      {
+        weighted_column[(std::size_t)point] =
+          plan.W[(std::size_t)point]
+          * workspace.q_values[(std::size_t)point]
+          * input_column[(std::size_t)point];
+      }
+    }
+
+    detail::BlasGemm<Real>::run(
+      CblasColMajor,
+      CblasTrans,
+      CblasNoTrans,
+      MR,
+      width,
+      nq,
+      Real(1),
+      plan.V.data(),
+      nq,
+      workspace.weighted_input_panel.data(),
+      nq,
+      Real(0),
+      M_out + (std::size_t)MR * (std::size_t)first_column,
+      MR);
+  }
+}
 
 } // namespace jsimplex
 

@@ -35,6 +35,14 @@ libjpolyd.jelliptic_plan_dims.argtypes = [
 ]
 libjpolyd.jelliptic_plan_dims.restype = ctypes.c_int
 
+libjpolyd.jelliptic_plan_dims_ex.argtypes = [
+  ctypes.c_void_p,
+  _int_p,
+  _int_p,
+  _int_p,
+]
+libjpolyd.jelliptic_plan_dims_ex.restype = ctypes.c_int
+
 libjpolyd.jelliptic_workspace_create.argtypes = [
   ctypes.c_void_p,
   _void_pp,
@@ -160,6 +168,16 @@ class EllipticPlan:
       self.Mp0,
     ) = [int(v.value) for v in vals]
 
+    extra = [ctypes.c_int(0) for _ in range(3)]
+    ret = libjpolyd.jelliptic_plan_dims_ex(
+      self._handle,
+      *[ctypes.byref(v) for v in extra],
+    )
+    _check(ret, "jelliptic_plan_dims_ex")
+    self.mR, self.residual_degree, self.q_mult = [
+      int(v.value) for v in extra
+    ]
+
   def create_workspace(self):
     return EllipticWorkspace(self)
 
@@ -215,12 +233,12 @@ class EllipticPlan:
       c = None
 
     if out is None:
-      out = np.empty((self.m2, self.M), dtype=np.float64, order="F")
+      out = np.empty((self.mR, self.M), dtype=np.float64, order="F")
     else:
       if not isinstance(out, np.ndarray):
         raise TypeError("out must be a numpy.ndarray")
-      if out.dtype != np.float64 or out.shape != (self.m2, self.M):
-        raise ValueError(f"out must have shape ({self.m2}, {self.M}) and dtype float64")
+      if out.dtype != np.float64 or out.shape != (self.mR, self.M):
+        raise ValueError(f"out must have shape ({self.mR}, {self.M}) and dtype float64")
       if not out.flags.f_contiguous:
         raise ValueError("out must be Fortran contiguous")
 

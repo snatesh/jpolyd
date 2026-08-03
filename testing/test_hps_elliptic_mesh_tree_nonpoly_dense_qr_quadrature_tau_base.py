@@ -22,7 +22,12 @@ from hps_mesh_tree_driver import (
   validate_merge_tree,
   visualize_case,
 )
-from jhps import HpsEllipticResult, run_elliptic_mesh_tree_solve
+from jhps import (
+  HpsEllipticResult,
+  HpsLeafLeastSquaresSolver,
+  HpsLeafOperatorMode,
+  run_elliptic_mesh_tree_solve,
+)
 from jperms import face_sigma_array, face_vertices
 from jprecomp import RefSimplexPrecomp, dimPi
 from thread_control import set_omp_threads, set_openblas_threads
@@ -31,7 +36,9 @@ from thread_control import set_omp_threads, set_openblas_threads
 _THIS = Path(__file__).resolve()
 _PROJECT_ROOT = _THIS.parents[1] if _THIS.parent.name == "python" else _THIS.parent
 _DEFAULT_OUTPUT_DIR = (
-  _PROJECT_ROOT / "build" / "hps_elliptic_nonpoly_convergence"
+  _PROJECT_ROOT
+  / "build"
+  / "hps_elliptic_nonpoly_dense_qr_quadrature_convergence"
 )
 
 # Keep one fixed mesh and merge tree for every polynomial degree in each
@@ -382,7 +389,10 @@ def project_source_elementmajor(
 ) -> np.ndarray:
   """Project f for the leaf convention L u + f = 0."""
   Xhat, weights, V_res = pc_data.residual_quad_basis()
-  V_int = V_res[:, :pc_data.M]
+  # The full elliptic residual policy is R=n, so the projected source has
+  # M=dimPi(D,n) coefficients. pc_data.m_int remains the legacy Poisson
+  # second-derivative-range size dimPi(D,n-2) and must not be used here.
+  V_R = V_res[:, :pc_data.M]
   out = np.empty((simplices.shape[0], pc_data.M), dtype=np.float64)
 
   for element_id, simplex in enumerate(simplices):
@@ -391,7 +401,7 @@ def project_source_elementmajor(
     detBabs = abs(float(np.linalg.det(B)))
     points = affine_map_ref_to_phys(V_phys, Xhat)
     values = eval_scalar_D(f_fun, points)
-    out[element_id, :] = detBabs * (V_int.T @ (weights * values))
+    out[element_id, :] = detBabs * (V_R.T @ (weights * values))
 
   return np.ascontiguousarray(out)
 
@@ -513,7 +523,7 @@ def assert_hps_result(
 
 
 def check_reduction(
-  rows: list[dict[str, float | int]],
+  rows: list[dict[str, float | int | str]],
   min_reduction: float,
 ) -> None:
   if min_reduction <= 0.0:
@@ -541,8 +551,10 @@ def check_reduction(
     )
 
 
-def save_results_csv(rows: list[dict[str, float | int]], path: Path) -> None:
+def save_results_csv(rows: list[dict[str, float | int | str]], path: Path) -> None:
   fieldnames = [
+    "leaf_operator_mode", "multiplication_assembler",
+    "residual_degree", "q_mult",
     "D", "n", "dimPi", "p", "nverts", "nelem", "M", "m_int", "kf",
     "boundary_faces", "interior_faces", "tree_depth", "metis_splits",
     "fallback_splits", "alpha", "beta", "tau_C_base",
@@ -558,7 +570,7 @@ def save_results_csv(rows: list[dict[str, float | int]], path: Path) -> None:
     writer.writerows(rows)
 
 
-def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
+def plot_l2_vs_n(rows: list[dict[str, float | int | str]], path: Path) -> None:
   plt.figure(figsize=(7.5, 5.2))
   for D in sorted({int(row["D"]) for row in rows}):
     subset = sorted(
@@ -571,7 +583,9 @@ def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
 
   plt.xlabel(r"polynomial degree $n$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("HPS variable-coefficient elliptic nonpolynomial convergence")
+  plt.title(
+    "Dense/QR HPS convergence with direct-quadrature multiplication"
+  )
   plt.xticks(sorted({int(row["n"]) for row in rows}))
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend()
@@ -580,7 +594,7 @@ def plot_l2_vs_n(rows: list[dict[str, float | int]], path: Path) -> None:
   plt.close()
 
 
-def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
+def plot_l2_vs_dimPi(rows: list[dict[str, float | int | str]], path: Path) -> None:
   plt.figure(figsize=(7.5, 5.2))
   for D in sorted({int(row["D"]) for row in rows}):
     subset = sorted(
@@ -593,7 +607,9 @@ def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
 
   plt.xlabel(r"$M=\dim(\Pi_n^D)$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("HPS elliptic convergence by approximation dimension")
+  plt.title(
+    "Dense/QR direct-quadrature convergence by approximation dimension"
+  )
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend()
   plt.tight_layout()
@@ -602,7 +618,7 @@ def plot_l2_vs_dimPi(rows: list[dict[str, float | int]], path: Path) -> None:
 
 
 def plot_hps_vs_best_l2_vs_n(
-  rows: list[dict[str, float | int]],
+  rows: list[dict[str, float | int | str]],
   path: Path,
 ) -> None:
   plt.figure(figsize=(8.4, 5.6))
@@ -627,7 +643,9 @@ def plot_hps_vs_best_l2_vs_n(
 
   plt.xlabel(r"polynomial degree $n$")
   plt.ylabel(r"relative weighted $L^2$ error")
-  plt.title("Elliptic HPS error versus best elementwise projection")
+  plt.title(
+    "Dense/QR direct-quadrature error versus best elementwise projection"
+  )
   plt.xticks(sorted({int(row["n"]) for row in rows}))
   plt.grid(True, which="both", linewidth=0.5)
   plt.legend(ncol=2, fontsize="small")
@@ -640,7 +658,8 @@ def main() -> None:
   parser = argparse.ArgumentParser(
     description=(
       "Nonpolynomial manufactured convergence study for the full "
-      "variable-coefficient nondivergence-form elliptic HPS solve."
+      "variable-coefficient nondivergence-form elliptic HPS solve, "
+      "using the Dense leaf backend, direct-quadrature multiplication-matrix assembly, the R=n residual space, and the batched DenseQR least-squares solver."
     )
   )
   parser.add_argument("--D", default="1,2,3")
@@ -660,12 +679,12 @@ def main() -> None:
     help="evaluation quadrature increment above the data quadrature",
   )
   parser.add_argument("--alpha", type=float, default=1.0)
-  parser.add_argument("--beta", type=float, default=0.0)
+  parser.add_argument("--beta", type=float, default=2.3)
   parser.add_argument(
     "--tau-C-base", "--tau-C", dest="tau_C", type=float, default=1.0,
     help=(
-      "elliptic base tau constant; C++ uses "
-      "tau_C_effective=tau_C*(mR/m2)"
+      "elliptic base tau constant; the leaf uses "
+      "tau_C_effective=tau_C_base*(mR/m2)"
     ),
   )
   parser.add_argument("--residual-tol", type=float, default=5.0e-10)
@@ -691,11 +710,26 @@ def main() -> None:
   if args.q_eval_extra < 0:
     raise ValueError("--q-eval-extra must be nonnegative")
 
-  # The current LSMR shim is serial. Keep both possible inner runtimes at one
-  # thread until LSMR owns independent state per concurrent solve.
+  # Keep BLAS single-threaded while parallelizing leaf construction with OpenMP.
+  # The C++ Dense backend selects EllipticMultiplicationAssembler::Quadrature:
+  # each restricted multiplication matrix is materialized directly as
+  # V_R^T diag(w*q(X)) V_N. The elliptic residual space is R=n. DenseQR then
+  # factors each A_tau once and solves the combined [U_lambda U_f] panel.
   set_openblas_threads(1)
   set_omp_threads(16)
-  print("thread control: OpenBLAS=1, OpenMP=1")
+  print("thread control: OpenBLAS=1, OpenMP=16")
+  print(
+    "leaf backend: Dense; multiplication: direct quadrature; residual: R=n; "
+    "least-squares solver: DenseQR"
+  )
+  print(
+    "response precompute: one QR factorization; batched [U_lambda U_f]; "
+    "reusable S/G_f maps retained"
+  )
+  print(
+    "tau convention: tau_C_effective=tau_C_base*(mR/m2); "
+    "Robin alpha/beta are not absorbed into this normalization"
+  )
 
   try:
     import pymetis
@@ -714,7 +748,7 @@ def main() -> None:
 
   args.output_dir.mkdir(parents=True, exist_ok=True)
   dimensions = parse_D_list(args.D)
-  rows: list[dict[str, float | int]] = []
+  rows: list[dict[str, float | int | str]] = []
 
   for D in dimensions:
     print(f"\nConstructing fixed mesh/tree and symbolic elliptic problem for D={D}")
@@ -756,6 +790,12 @@ def main() -> None:
 
     for n in range(args.min_n, args.max_n + 1):
       p = n
+      residual_degree = n
+      m2 = dimPi(D, n - 2)
+      tau_residual_row_factor = dimPi(D, residual_degree) / m2
+      tau_C_effective = float(args.tau_C) * tau_residual_row_factor
+      max_mult_integrand_degree = residual_degree + n + p
+      q_mult = max_mult_integrand_degree // 2 + 1
       q_solve_vol = n + args.q_pad
       q_solve_face = 1 if D == 1 else n + args.q_pad
       q_data_vol = max(
@@ -799,6 +839,13 @@ def main() -> None:
         mesh.simplices,
         problem.f_fun,
       )
+      expected_source_shape = (mesh.simplices.shape[0], pc_data.M)
+      if f_int.shape != expected_source_shape:
+        raise AssertionError(
+          "R=n source projection produced shape "
+          f"{f_int.shape}, expected {expected_source_shape}"
+        )
+
       boundary_keys, boundary_g = project_robin_boundary_data(
         pc_data,
         vertex_row,
@@ -831,6 +878,8 @@ def main() -> None:
         alpha=args.alpha,
         beta=args.beta,
         verbose=args.verbose,
+        leaf_operator_mode=HpsLeafOperatorMode.DENSE,
+        leaf_least_squares_solver=HpsLeafLeastSquaresSolver.DENSE_QR,
       )
       assert_hps_result(
         result,
@@ -859,7 +908,11 @@ def main() -> None:
         raise AssertionError(f"non-finite L2 error for D={D}, n={n}")
       hps_to_best = relative_l2 / max(best_relative_l2, 1.0e-300)
 
-      row: dict[str, float | int] = {
+      row: dict[str, float | int | str] = {
+        "leaf_operator_mode": "Dense/DenseQR",
+        "multiplication_assembler": "Quadrature",
+        "residual_degree": residual_degree,
+        "q_mult": q_mult,
         "D": D,
         "n": n,
         "dimPi": dimPi(D, n),
@@ -877,12 +930,8 @@ def main() -> None:
         "alpha": float(args.alpha),
         "beta": float(args.beta),
         "tau_C_base": float(args.tau_C),
-        "tau_residual_row_factor": (
-          result.m_int / dimPi(D, n - 2)
-        ),
-        "tau_C_effective": (
-          float(args.tau_C) * result.m_int / dimPi(D, n - 2)
-        ),
+        "tau_residual_row_factor": tau_residual_row_factor,
+        "tau_C_effective": tau_C_effective,
         "q_solve_vol": q_solve_vol,
         "q_solve_face": q_solve_face,
         "q_data_vol": q_data_vol,
@@ -901,6 +950,9 @@ def main() -> None:
       print(
         f"  n={n:2d} dimPi={row['dimPi']:5d} p={p:2d} "
         f"M={result.M:5d} m_int={result.m_int:5d} kf={result.kf:5d} "
+        f"R={residual_degree:2d} q_mult={q_mult:2d} "
+        f"tau_base={args.tau_C:g} tau_factor={tau_residual_row_factor:.3g} "
+        f"tau_eff={tau_C_effective:.3g} "
         f"rel_L2={relative_l2:.3e} best_L2={best_relative_l2:.3e} "
         f"HPS/best={hps_to_best:.3e} "
         f"root={result.root_robin_residual_inf:.3e} "
@@ -911,16 +963,31 @@ def main() -> None:
 
   check_reduction(rows, args.min_reduction)
 
-  csv_path = args.output_dir / "hps_elliptic_nonpoly_convergence.csv"
-  plot_n_path = args.output_dir / "hps_elliptic_nonpoly_l2_vs_n.png"
-  plot_dim_path = args.output_dir / "hps_elliptic_nonpoly_l2_vs_dimPi.png"
-  plot_best_path = args.output_dir / "hps_elliptic_nonpoly_hps_vs_best.png"
+  csv_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_qr_quadrature_convergence.csv"
+  )
+  plot_n_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_qr_quadrature_l2_vs_n.png"
+  )
+  plot_dim_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_qr_quadrature_l2_vs_dimPi.png"
+  )
+  plot_best_path = (
+    args.output_dir
+    / "hps_elliptic_nonpoly_dense_qr_quadrature_hps_vs_best.png"
+  )
   save_results_csv(rows, csv_path)
   plot_l2_vs_n(rows, plot_n_path)
   plot_l2_vs_dimPi(rows, plot_dim_path)
   plot_hps_vs_best_l2_vs_n(rows, plot_best_path)
 
-  print("\nall requested variable-coefficient elliptic HPS solves completed")
+  print(
+    "\nall requested Dense/DenseQR direct-quadrature variable-coefficient "
+    "elliptic HPS solves completed"
+  )
   print(f"results CSV: {csv_path}")
   print(f"L2 versus n plot: {plot_n_path}")
   print(f"L2 versus dimPi plot: {plot_dim_path}")

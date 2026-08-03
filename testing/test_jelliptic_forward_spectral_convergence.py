@@ -214,7 +214,7 @@ def weighted_residual_error(
   Lu_coeff: np.ndarray,
 ) -> tuple[float, float, float]:
   Xhat, W = pc_eval.residual_quad()
-  V = pc_eval.residual_basis()[:, :pc_eval.m_int]
+  V = pc_eval.residual_basis()[:, :pc_eval.M]
   P = map_to_physical(v0, B, Xhat)
 
   Lu_discrete = V @ Lu_coeff
@@ -288,7 +288,7 @@ def run_degree(
       D=D,
       n=n,
       M=pc.M,
-      m2=pc.m_int,
+      m2=plan.mR,
       p=p,
       q_proj=q_proj,
       q_eval=q_eval,

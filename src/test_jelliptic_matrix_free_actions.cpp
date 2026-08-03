@@ -289,7 +289,7 @@ void compare_plan(
     degrees.p0 >= 0 ? c.data() : nullptr;
 
   std::vector<double> dense_matrix(
-    (std::size_t)pre.m_int
+    (std::size_t)plan.mR
       * (std::size_t)pre.M,
     0.0);
 
@@ -305,7 +305,7 @@ void compare_plan(
     (std::size_t)pre.M,
     0.0);
   std::vector<double> y(
-    (std::size_t)pre.m_int,
+    (std::size_t)plan.mR,
     0.0);
 
   for (double& value : x)
@@ -318,14 +318,14 @@ void compare_plan(
   }
 
   std::vector<double> dense_forward(
-    (std::size_t)pre.m_int,
+    (std::size_t)plan.mR,
     0.0);
   std::vector<double> action_forward(
-    (std::size_t)pre.m_int,
+    (std::size_t)plan.mR,
     0.0);
 
   dense_apply(
-    pre.m_int,
+    plan.mR,
     pre.M,
     dense_matrix,
     x,
@@ -348,7 +348,7 @@ void compare_plan(
     0.0);
 
   dense_apply_transpose(
-    pre.m_int,
+    plan.mR,
     pre.M,
     dense_matrix,
     y,
@@ -365,7 +365,7 @@ void compare_plan(
 
   long double left = 0.0L;
   for (int row = 0;
-       row < pre.m_int;
+       row < plan.mR;
        ++row)
   {
     left +=
@@ -462,7 +462,7 @@ void run_dimension(
     << "D=" << D
     << ", n=" << n
     << ", M=" << pre.M
-    << ", m_int=" << pre.m_int
+    << ", mR=" << pre.M
     << '\n';
 
   compare_plan<D>(

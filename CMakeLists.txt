@@ -4,6 +4,11 @@ project(jpolyd LANGUAGES C CXX Fortran)
 # -------- options --------
 option(JPOLYD_BUILD_CAPI "Build the C API shared library" ON)
 option(JPOLYD_ENABLE_TEST "Add a python test target" ON)
+option(TIMING "Enable detailed elliptic/HPS timing instrumentation" OFF)
+
+if(TIMING)
+  add_compile_definitions(TIMING)
+endif()
 
 # Default to Release if nothing specified
 if(NOT CMAKE_BUILD_TYPE)
@@ -190,6 +195,27 @@ target_link_libraries(test_jelliptic_matrix_free_actions PRIVATE
   openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
   blas
   lapack
+)
+
+add_executable(test_jmult_quadrature_matrix
+  src/test_jmult_quadrature_matrix.cpp
+)
+
+target_include_directories(
+  test_jmult_quadrature_matrix
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(
+  test_jmult_quadrature_matrix
+  PRIVATE
+    jpolyd
+    OpenMP::OpenMP_CXX
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
+    ${LAPACKE_LIB}
+    openblas
 )
 
 add_executable(test_jleaf_operator_modes
