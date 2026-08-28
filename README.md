@@ -9,45 +9,35 @@ The current production solver path is dense and precomputed: local elliptic oper
 ## Mathematical conventions
 
 Let
-
 $$
 \Pi_n^D
 $$
-
 denote polynomials of total degree at most $n$ on the $D$-simplex. Its dimension is
-
 $$
 \dim \Pi_n^D = \binom{n+D}{D}.
 $$
-
 The Jacobi weight is
-
 $$
 w_\kappa(\lambda)
 \propto
 \prod_{r=0}^{D} \lambda_r^{\kappa_r-\frac12},
 $$
-
 with componentwise admissibility
-
 $$
 \kappa_r > -\frac12.
 $$
-
 Under this convention:
 
 - `kappa = 0` gives the Dirichlet-half / Chebyshev-type simplex weight
-  $$
-  w(\lambda)\propto \prod_r \lambda_r^{-1/2},
-  $$
+$$
+w(\lambda)\propto \prod_r \lambda_r^{-1/2},
+$$
 - `kappa = 1/2` gives the unweighted simplex measure.
 
 For second-order PDEs, derivative outputs are promoted into the common residual Jacobi family
-
 $$
 \kappa_{\mathrm{res}} = \kappa + 2.
 $$
-
 The variable-coefficient elliptic path currently uses the full trial-degree residual space $R=n$, while the constant-coefficient Poisson path retains the natural second-derivative range $R=n-2$.
 
 ## Main capabilities
@@ -91,7 +81,6 @@ Relevant headers:
 ### Multiplication operators
 
 For a coefficient field $q$, the dense elliptic path materializes restricted multiplication operators directly from their Galerkin definition,
-
 $$
 M_q^{R\leftarrow N}
 =
@@ -99,7 +88,6 @@ V_R^T
 \operatorname{diag}(w\,q(X))
 V_N,
 $$
-
 using anti-aliased quadrature chosen from the degree of the triple product.
 
 A lifted operator-valued Clenshaw implementation is also retained. It is used by the matrix-free backend and as an algebraic reference for verification.
@@ -122,17 +110,13 @@ Relevant headers:
 ### Poisson solver
 
 The Poisson path solves constant-coefficient problems on affine simplicial meshes with Robin boundary data
-
 $$
 \alpha u + \beta q = g.
 $$
-
 For Poisson,
-
 $$
 q = n\cdot\nabla u.
 $$
-
 The local PDE residual lies naturally in $\Pi_{n-2}^D$. Pure Neumann problems require the compatibility/gauge branch implemented by the local solver.
 
 Relevant headers:
@@ -145,7 +129,6 @@ Relevant headers:
 ### Variable-coefficient non-divergence elliptic solver
 
 The current general elliptic operator is written in non-divergence form,
-
 $$
 Lu
 =
@@ -157,21 +140,16 @@ b_r(x)\,\partial_{x_r}u
 +
 c(x)u.
 $$
-
 Coefficient fields are represented elementwise in the residual Jacobi family. Principal, first-order, and zero-order terms are assembled after derivative/promotion into the common residual space.
 
 The current elliptic residual policy is
-
 $$
 R=n,
 $$
-
 so
-
 $$
 L_{\mathrm{int}}:\Pi_n^D\to\Pi_n^D
 $$
-
 after projection.
 
 Relevant header:
@@ -181,34 +159,27 @@ Relevant header:
 ### HPS leaf maps and merge algebra
 
 Each leaf combines the interior PDE equations with trace penalty rows. With trace map $T$, flux map $F$, skeleton variable $\lambda$, and tau parameter $\tau$, the augmented flux is
-
 $$
 \widehat\mu
 =
 Fc+\tau(Tc-\lambda).
 $$
-
 The dense leaf path factorizes the stacked system once with Householder QR and precomputes reusable response maps:
-
 $$
 c = U_\lambda \lambda + U_f f,
 $$
-
 $$
 \widehat\mu = S\lambda + G_f f.
 $$
-
 These maps are then merged hierarchically. Source-transfer maps are retained through the tree so the expensive leaf factorization/materialization can be reused for new source terms and boundary data.
 
 The elliptic tau parameter is interpreted as a base constant and rescaled for the enlarged residual space,
-
 $$
 C_{\tau,\mathrm{eff}}
 =
 C_{\tau,\mathrm{base}}
 \frac{m_R}{m_2},
 $$
-
 before the usual face-size/degree scaling is applied. The base constant remains user-configurable; Robin data with nonzero $\beta$ can affect the most useful range.
 
 Relevant headers:
@@ -255,7 +226,6 @@ Builds/uses both representations and checks dense versus matrix-free actions.
 The current mesh-level variable-coefficient solver is a **non-divergence-form** elliptic solver. Its interface algebra uses the existing normal-derivative-style flux map.
 
 The planned next extension is divergence form,
-
 $$
 -\nabla\cdot(A\nabla u)
 +
@@ -265,9 +235,7 @@ cu
 =
 f,
 $$
-
 implemented by reusing the non-divergence volume machinery after expanding
-
 $$
 \nabla\cdot(A\nabla u)
 =
@@ -275,13 +243,10 @@ A:D^2u
 +
 (\operatorname{div}A)\cdot\nabla u,
 $$
-
 and replacing the face flux with the co-normal flux
-
 $$
 q = n^T A\nabla u.
 $$
-
 This will allow correct conservation across interfaces with anisotropic and elementwise discontinuous diffusion tensors while leaving the HPS merge algebra unchanged.
 
 ## Repository layout
