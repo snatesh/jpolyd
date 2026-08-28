@@ -534,10 +534,10 @@ The next solver-development target is divergence-form elliptic support with co-n
 
 If `jpolyd` contributes to published research, please cite the software.
 
-The preferred citation metadata is provided in
-[`CITATION.cff`](CITATION.cff). Versioned releases are permanently archived
-on [Zenodo](https://doi.org/10.5281/zenodo.22137637).
+The project-wide DOI is
+[10.5281/zenodo.22137636](https://doi.org/10.5281/zenodo.22137636),
+which always resolves to the latest archived release.
 
-For reproducible research, please cite the specific release used in the work.
-GitHub's **Cite this repository** menu provides the corresponding citation
-metadata.
+For reproducible research, please cite the DOI of the specific release used.
+The preferred citation metadata is provided in
+[`CITATION.cff`](CITATION.cff).
