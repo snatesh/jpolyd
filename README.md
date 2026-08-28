@@ -529,3 +529,15 @@ This repository is research software. The current emphasis is:
 5. separate solver mathematics from experimental optimization paths.
 
 The next solver-development target is divergence-form elliptic support with co-normal flux conservation.
+
+## Citation
+
+If `jpolyd` contributes to published research, please cite the software.
+
+The preferred citation metadata is provided in
+[`CITATION.cff`](CITATION.cff). Versioned releases are permanently archived
+on [Zenodo](https://doi.org/10.5281/zenodo.22137637).
+
+For reproducible research, please cite the specific release used in the work.
+GitHub's **Cite this repository** menu provides the corresponding citation
+metadata.
