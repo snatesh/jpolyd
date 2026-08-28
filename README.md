@@ -6,7 +6,8 @@ The core numerical library supports Jacobi bases on the $D$-simplex, quadrature,
 
 The current production solver path is dense and precomputed: local elliptic operators are materialized once, the tau-stabilized leaf least-squares problem is factorized with dense QR, and reusable leaf response maps are retained for subsequent boundary data and source terms. Matrix-free and dense/sparse variants remain available as alternative backends and research paths.
 
-## Mathematical conventions
+## Mathematical conventions 
+For the underlying simplex Jacobi definitions and notation, see [Dunkl & Xu](https://doi.org/10.1017/CBO9781107786134).
 
 Let
 
