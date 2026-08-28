@@ -10,19 +10,19 @@ The current production solver path is dense and precomputed: local elliptic oper
 
 Let
 
-$$
+```math
 \Pi_n^D
-$$
+```
 
 denote polynomials of total degree at most $n$ on the $D$-simplex. Its dimension is
 
-$$
+```math
 \dim \Pi_n^D = \binom{n+D}{D}.
-$$
+```
 
 We use the reference simplex in Cartesian coordinates,
 
-$$
+```math
 \widehat{\Delta}_D
 =
 \left\{
@@ -30,48 +30,42 @@ x\in\mathbb{R}^{D}:
 x_i\ge 0,\;
 \sum_{i=0}^{D-1}x_i\le 1
 \right\}.
-$$
+```
 
-Its barycentric coordinates are
+The Jacobi parameter vector has length $D+1$. Its first $D$ entries are associated with the Cartesian coordinates $x_0,\ldots,x_{D-1}$, while the final entry is associated with the remaining simplex factor $1-\sum_i x_i$. The Jacobi weight is
 
-$$
-\lambda_0
-=
-1-\sum_{i=0}^{D-1}x_i,
-\qquad
-\lambda_r=x_{r-1},
-\quad r=1,\ldots,D.
-$$
-
-The Jacobi weight is
-
-$$
-w_\kappa(\lambda)
+```math
+w_\kappa(x)
 \propto
-\prod_{r=0}^{D} \lambda_r^{\kappa_r-\frac12},
-$$
+\left(1-\sum_{i=0}^{D-1}x_i\right)^{\kappa_D-\frac12}
+\prod_{i=0}^{D-1}x_i^{\kappa_i-\frac12},
+```
 
 with componentwise admissibility
 
-$$
-\kappa_r > -\frac12.
-$$
+```math
+\kappa_i > -\frac12,
+\qquad i=0,\ldots,D.
+```
 
 Under this convention:
 
 - `kappa = 0` gives the Dirichlet-half / Chebyshev-type simplex weight
 
-$$
-  w(\lambda)\propto \prod_r \lambda_r^{-1/2},
-$$
+```math
+  w(x)
+  \propto
+  \left(1-\sum_{i=0}^{D-1}x_i\right)^{-\frac12}
+  \prod_{i=0}^{D-1}x_i^{-\frac12},
+```
 
 - `kappa = 1/2` gives the unweighted simplex measure.
 
 For second-order PDEs, derivative outputs are promoted into the common residual Jacobi family
 
-$$
+```math
 \kappa_{\mathrm{res}} = \kappa + 2.
-$$
+```
 
 The variable-coefficient elliptic path currently uses the full trial-degree residual space $R=n$, while the constant-coefficient Poisson path retains the natural second-derivative range $R=n-2$.
 
@@ -117,13 +111,13 @@ Relevant headers:
 
 For a coefficient field $q$, the dense elliptic path materializes restricted multiplication operators directly from their Galerkin definition,
 
-$$
+```math
 M_q^{R\leftarrow N}
 =
 V_R^T
 \operatorname{diag}(w\,q(X))
 V_N,
-$$
+```
 
 using anti-aliased quadrature chosen from the degree of the triple product.
 
@@ -148,15 +142,15 @@ Relevant headers:
 
 The Poisson path solves constant-coefficient problems on affine simplicial meshes with Robin boundary data
 
-$$
+```math
 \alpha u + \beta q = g.
-$$
+```
 
 For Poisson,
 
-$$
+```math
 q = n\cdot\nabla u.
-$$
+```
 
 The local PDE residual lies naturally in $\Pi_{n-2}^D$. Pure Neumann problems require the compatibility/gauge branch implemented by the local solver.
 
@@ -171,7 +165,7 @@ Relevant headers:
 
 The current general elliptic operator is written in non-divergence form,
 
-$$
+```math
 Lu
 =
 \sum_{r,s=0}^{D-1}
@@ -181,21 +175,21 @@ a_{rs}(x)\,\partial_{x_r x_s}u
 b_r(x)\,\partial_{x_r}u
 +
 c(x)u.
-$$
+```
 
 Coefficient fields are represented elementwise in the residual Jacobi family. Principal, first-order, and zero-order terms are assembled after derivative/promotion into the common residual space.
 
 The current elliptic residual policy is
 
-$$
+```math
 R=n,
-$$
+```
 
 so
 
-$$
+```math
 L_{\mathrm{int}}:\Pi_n^D\to\Pi_n^D
-$$
+```
 
 after projection.
 
@@ -207,32 +201,32 @@ Relevant header:
 
 Each leaf combines the interior PDE equations with trace penalty rows. With trace map $T$, flux map $F$, skeleton variable $\lambda$, and tau parameter $\tau$, the augmented flux is
 
-$$
+```math
 \widehat\mu
 =
 Fc+\tau(Tc-\lambda).
-$$
+```
 
 The dense leaf path factorizes the stacked system once with Householder QR and precomputes reusable response maps:
 
-$$
+```math
 c = U_\lambda \lambda + U_f f,
-$$
+```
 
-$$
+```math
 \widehat\mu = S\lambda + G_f f.
-$$
+```
 
 These maps are then merged hierarchically. Source-transfer maps are retained through the tree so the expensive leaf factorization/materialization can be reused for new source terms and boundary data.
 
 The elliptic tau parameter is interpreted as a base constant and rescaled for the enlarged residual space,
 
-$$
+```math
 C_{\tau,\mathrm{eff}}
 =
 C_{\tau,\mathrm{base}}
 \frac{m_R}{m_2},
-$$
+```
 
 before the usual face-size/degree scaling is applied. The base constant remains user-configurable; Robin data with nonzero $\beta$ can affect the most useful range.
 
@@ -281,7 +275,7 @@ The current mesh-level variable-coefficient solver is a **non-divergence-form** 
 
 The planned next extension is divergence form,
 
-$$
+```math
 -\nabla\cdot(A\nabla u)
 +
 b\cdot\nabla u
@@ -289,23 +283,23 @@ b\cdot\nabla u
 cu
 =
 f,
-$$
+```
 
 implemented by reusing the non-divergence volume machinery after expanding
 
-$$
+```math
 \nabla\cdot(A\nabla u)
 =
 A:D^2u
 +
 (\operatorname{div}A)\cdot\nabla u,
-$$
+```
 
 and replacing the face flux with the co-normal flux
 
-$$
+```math
 q = n^T A\nabla u.
-$$
+```
 
 This will allow correct conservation across interfaces with anisotropic and elementwise discontinuous diffusion tensors while leaving the HPS merge algebra unchanged.
 
