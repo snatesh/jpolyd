@@ -20,6 +20,29 @@ $$
 \dim \Pi_n^D = \binom{n+D}{D}.
 $$
 
+We use the reference simplex in Cartesian coordinates,
+
+$$
+\widehat{\Delta}_D
+=
+\left\{
+x\in\mathbb{R}^{D}:
+x_i\ge 0,\;
+\sum_{i=0}^{D-1}x_i\le 1
+\right\}.
+$$
+
+Its barycentric coordinates are
+
+$$
+\lambda_0
+=
+1-\sum_{i=0}^{D-1}x_i,
+\qquad
+\lambda_r=x_{r-1},
+\quad r=1,\ldots,D.
+$$
+
 The Jacobi weight is
 
 $$
