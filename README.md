@@ -115,7 +115,7 @@ For a coefficient field $q$, the dense elliptic path materializes restricted mul
 M_q^{R\leftarrow N}
 =
 V_R^T
-\operatorname{diag}(w\,q(X))
+\mathrm{diag}(w\,q(X))
 V_N,
 ```
 
@@ -292,7 +292,7 @@ implemented by reusing the non-divergence volume machinery after expanding
 =
 A:D^2u
 +
-(\operatorname{div}A)\cdot\nabla u,
+(\mathrm{div}A)\cdot\nabla u,
 ```
 
 and replacing the face flux with the co-normal flux
