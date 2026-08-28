@@ -1,6 +1,7 @@
 cff-version: 1.2.0
 message: "If you use jpolyd in research, please cite the software using the metadata below."
 title: "jpolyd: Jacobi Polynomial Operators and Hierarchical Elliptic Solvers on D-Simplices"
+doi: "10.5281/zenodo.22137637"
 type: software
 authors:
   - family-names: "Natesh"
