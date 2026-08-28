@@ -1,0 +1,85 @@
+LSMR — upstream provenance and license notice
+=============================================
+
+This directory contains vendored source code from the LSMR sparse
+least-squares solver project.
+
+Upstream provenance
+-------------------
+
+The original LSMR implementation is by:
+
+  David C. Fong
+  Michael A. Saunders
+  Systems Optimization Laboratory (SOL)
+  Stanford University
+
+Some files used by jpolyd are from the original SOL LSMR Fortran
+distribution.
+
+The reverse-communication Fortran implementation was contributed to the
+LSMR project in November 2015 by:
+
+  Nick Gould
+  Jennifer Scott
+  STFC Rutherford Appleton Laboratory, United Kingdom
+
+jpolyd uses files from both the original SOL LSMR distribution and the
+Gould/Scott reverse-communication distribution because the latter relies
+on components from the original implementation.
+
+Upstream project pages:
+
+  https://web.stanford.edu/group/SOL/software/lsmr/
+  https://convexoptimization.com/sol/BSDlicense.html
+
+Licensing note
+--------------
+
+The Systems Optimization Laboratory BSD license page explicitly lists
+"lsmr" among the SOL numerical software packages to which the BSD license
+below applies.
+
+The LSMR project page separately identifies the Gould/Scott
+reverse-communication implementation as an LSMR contribution. The
+reverse-communication download itself does not include a separate license
+file or license statement.
+
+This file therefore preserves the SOL BSD license notice together with
+the provenance of both source sets. It does not purport to relicense any
+upstream code. Anyone requiring independent confirmation of the licensing
+of a particular upstream file should consult the original LSMR sources,
+the related SPRAL distribution, or the upstream authors.
+
+SOL BSD License
+---------------
+
+Copyright (c) 2010, Systems Optimization Laboratory
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+* Redistributions of source code must retain the above copyright
+  notice, this list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright
+  notice, this list of conditions and the following disclaimer in the
+  documentation and/or other materials provided with the distribution.
+
+* Neither the name of the Systems Optimization Laboratory nor the names
+  of its contributors may be used to endorse or promote products derived
+  from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
