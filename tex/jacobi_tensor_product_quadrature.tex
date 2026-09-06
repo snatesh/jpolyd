@@ -1,0 +1,144 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{bm}
+\usepackage[hidelinks]{hyperref}
+
+\newcommand{\bs}[1]{\boldsymbol{#1}}
+
+\title{Mapped Tensor-Product Quadrature on the Simplex via Stick-Breaking}
+\author{Sachin Natesh}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Reference simplex and Dirichlet--Jacobi weight}
+
+Let
+\begin{equation}
+  \Delta_d
+  = \left\{x\in\mathbb{R}^d:\ x_i\ge 0,\ \sum_{i=1}^d x_i \le 1\right\}
+\end{equation}
+be the reference $d$-simplex. We use the Dirichlet-type Jacobi weight
+\begin{equation}
+  w_{\kappa}(x)
+  := C_{\kappa}\,
+  \left(\prod_{i=1}^d x_i^{\kappa_i-\frac12}\right)
+  \left(1-\sum_{i=1}^d x_i\right)^{\kappa_{d+1}-\frac12},
+\end{equation}
+where $\kappa\in\mathbb{R}^{d+1}$ and the parameters are chosen so that the weight is integrable.
+The normalization constant $C_{\kappa}$ is chosen so that
+\begin{equation}
+  \int_{\Delta_d} w_{\kappa}(x)\,dx = 1.
+\end{equation}
+
+\section{Stick-breaking map and Jacobian}
+
+Introduce variables
+\begin{equation}
+  t=(t_1,\dots,t_d)\in[0,1]^d
+\end{equation}
+and define the stick-breaking map
+\begin{align}
+  x_1 &= t_1,\\
+  x_2 &= (1-t_1)t_2,\\
+  x_3 &= (1-t_1)(1-t_2)t_3,\\
+      &\ \vdots\\
+  x_d &= \left(\prod_{j=1}^{d-1}(1-t_j)\right)t_d.
+  \label{eq:stick-breaking}
+\end{align}
+Then $x\in\Delta_d$, and the remaining barycentric coordinate is
+\begin{equation}
+  x_{d+1}
+  := 1-\sum_{i=1}^d x_i
+  = \prod_{j=1}^d (1-t_j).
+\end{equation}
+\noindent
+The Jacobian determinant of the transformation is
+\begin{equation}
+  \left|\frac{\partial x}{\partial t}\right|
+  = \prod_{j=1}^d (1-t_j)^{d-j}.
+  \label{eq:stick-jac}
+\end{equation}
+
+\section{Factorization of the weighted measure}
+
+Substituting the stick-breaking map into the weight and multiplying by the Jacobian gives a product measure on the cube:
+\begin{equation}
+  w_{\kappa}(x(t))
+  \left|\frac{\partial x}{\partial t}\right|
+  = C_{\kappa}
+  \prod_{j=1}^d
+  t_j^{\kappa_j-\frac12}
+  (1-t_j)^{\eta_j-\frac12},
+  \label{eq:weight-factor}
+\end{equation}
+where
+\begin{equation}
+  \eta_j
+  := \kappa_{j+1}+\kappa_{j+2}+\cdots+\kappa_{d+1}
+     + \frac{d-j}{2}.
+  \label{eq:eta-def}
+\end{equation}
+\noindent
+Equivalently, if the normalization is absorbed into the one-dimensional factors, the simplex integral becomes
+\begin{equation}
+  \int_{\Delta_d} f(x)w_{\kappa}(x)\,dx
+  =
+  \int_{[0,1]^d}
+  f(x(t))
+  \prod_{j=1}^d
+  \widetilde{w}_j(t_j)\,dt,
+  \label{eq:simplex-to-cube}
+\end{equation}
+with
+\begin{equation}
+  \widetilde{w}_j(t)
+  \propto
+  t^{\kappa_j-\frac12}
+  (1-t)^{\eta_j-\frac12}.
+\end{equation}
+
+\section{Mapped tensor-product quadrature}
+
+For each coordinate $j\in\{1,\dots,d\}$, let
+\begin{equation}
+  \left\{\left(t_q^{(j)},\omega_q^{(j)}\right)\right\}_{q=1}^{Q_j}
+\end{equation}
+be a Gauss--Jacobi quadrature rule on $[0,1]$ for the weight
+\begin{equation}
+  t^{\kappa_j-\frac12}(1-t)^{\eta_j-\frac12}.
+\end{equation}
+\noindent
+Taking the tensor product of these one-dimensional rules gives cube nodes
+\begin{equation}
+  t^{(q)}
+  = \left(t_{q_1}^{(1)},\dots,t_{q_d}^{(d)}\right)
+\end{equation}
+and tensor-product weights
+\begin{equation}
+  \Omega^{(q)}
+  = \prod_{j=1}^d \omega_{q_j}^{(j)}.
+\end{equation}
+\noindent
+Each cube node is mapped to the simplex by \eqref{eq:stick-breaking}:
+\begin{equation}
+  x^{(q)} = x\bigl(t^{(q)}\bigr).
+\end{equation}
+The resulting mapped tensor-product rule is
+\begin{equation}
+  \int_{\Delta_d} f(x)w_{\kappa}(x)\,dx
+  \approx
+  \sum_q \Omega^{(q)} f\bigl(x^{(q)}\bigr),
+  \label{eq:mapped-quadrature}
+\end{equation}
+with any overall normalization handled consistently by the one-dimensional Jacobi weights.
+\newline
+\newline
+\noindent
+This construction converts a weighted integral on the simplex into a tensor product of one-dimensional Jacobi-weighted integrals on $[0,1]$, while the stick-breaking map supplies the corresponding simplex nodes.
+
+\end{document}
