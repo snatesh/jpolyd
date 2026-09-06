@@ -474,11 +474,11 @@ inline void jacobi_tridiag_ON(int n, Real a, Real b, Real* d, Real* e)
 }
 
 
-/* 1D Gauss-Jacobi on [0,1] for weight t^k_1 (1-t)^k_2,
+/* 1D Gauss-Jacobi on [0,1] for weight t^(k_1-1/2) (1-t)^(k_2-1/2),
 
    Inputs:
      n     : number of nodes
-     kappa : k_1,k_2 > -1/2
+     kappa : kappa[0],kappa[1] > -1/2
 
    Outputs:
      t[0..n-1] : nodes in [0,1]

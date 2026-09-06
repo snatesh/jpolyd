@@ -153,7 +153,7 @@ struct QuadMapped
 
     Per-axis parameters on [0,1]:
       alpha_j = kappa[j] - 1/2
-      beta_j  = kappa[D] + sum_{m=j+1..D-1} kappa[m] + (D - j - 1)/2
+      beta_j  = kappa[D] + sum_{m=j+1..D-1} kappa[m] + (D - j - 2)/2
     We pass these into gauss_jacobi_unit via k2 = {alpha_j+1/2, beta_j+1/2}.
   */
   static int build_kappa(unsigned int n, const Real* kappa,
