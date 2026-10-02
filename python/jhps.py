@@ -308,6 +308,64 @@ def _set_elliptic_mesh_tree_leaf_options_signature(fn) -> None:
   fn.argtypes = argtypes
 
 
+
+def _set_elliptic_solver_create_signature(fn) -> None:
+  double_p = ct.POINTER(ct.c_double)
+  fn.argtypes = [
+    ct.c_int,       # D
+    ct.c_int,       # n
+    ct.c_int,       # q_pad
+    ct.c_int,       # q_vol
+    ct.c_int,       # q_face
+    _Float64C,      # kappa
+    ct.c_int,       # p2
+    ct.c_int,       # p1
+    ct.c_int,       # p0
+    ct.c_int,       # assume_symmetric
+    _Float64C,      # A coefficients
+    double_p,       # b coefficients, nullable
+    double_p,       # c coefficients, nullable
+    ct.c_int,       # nverts
+    _Int32C,        # vertex_ids
+    _Float64C,      # coords
+    ct.c_int,       # nelem
+    _Int32C,        # simplices
+    ct.c_int,       # nmerge
+    _Int32C,        # merge_pairs
+    ct.c_int,       # nboundary_faces
+    _Int32C,        # boundary_face_keys
+    ct.c_double,    # tau_C
+    ct.c_double,    # alpha
+    ct.c_double,    # beta
+    ct.c_int,       # leaf_operator_mode
+    ct.c_int,       # leaf_least_squares_solver
+    ct.c_double,    # leaf_verify_tolerance
+    ct.c_int,       # leaf_verify_each_solve
+    ct.POINTER(ct.c_void_p),
+    ct.POINTER(ct.c_int),  # M
+    ct.POINTER(ct.c_int),  # m_int
+    ct.POINTER(ct.c_int),  # kf
+    ct.POINTER(ct.c_int),  # root_nb
+    ct.POINTER(ct.c_int),  # interface_nb
+    ct.POINTER(ct.c_int),  # leaf_threads_used
+  ]
+  fn.restype = ct.c_int
+
+
+def _set_elliptic_solver_solve_signature(fn) -> None:
+  fn.argtypes = [
+    ct.c_void_p,
+    _Float64C,
+    _Float64C,
+    ct.c_int,
+    _Float64C,
+    ct.POINTER(ct.c_double),
+    ct.POINTER(ct.c_double),
+    ct.POINTER(ct.c_double),
+  ]
+  fn.restype = ct.c_int
+
+
 for _name in (
   "jhps_dummy_two_leaf_test",
   "jhps_dummy_three_leaf_chain_test",
@@ -327,6 +385,14 @@ _set_poisson_mesh_tree_leaf_options_signature(
 _set_elliptic_mesh_tree_leaf_options_signature(
   libjpolyd.jhps_elliptic_mesh_tree_solve_with_leaf_options
 )
+_set_elliptic_solver_create_signature(
+  libjpolyd.jhps_elliptic_solver_create
+)
+_set_elliptic_solver_solve_signature(
+  libjpolyd.jhps_elliptic_solver_solve
+)
+libjpolyd.jhps_elliptic_solver_destroy.argtypes = [ct.c_void_p]
+libjpolyd.jhps_elliptic_solver_destroy.restype = None
 
 
 def load_library() -> ct.CDLL:
@@ -858,6 +924,321 @@ def run_elliptic_mesh_tree_solve(
     leaf_coeffs=leaf_coeffs,
   )
 
+
+class HpsEllipticSolver:
+  """Persistent variable-coefficient elliptic HPS factorization.
+
+  Construction materializes the leaf response maps, builds the HPS merge
+  tree, and factors the fixed root Robin matrix. ``solve`` then updates only
+  the source-dependent affine state and performs the upward/root/downward
+  solve for new ``f`` and ``g`` data.
+  """
+
+  def __init__(
+    self,
+    pc,
+    vertex_ids: np.ndarray,
+    coords: np.ndarray,
+    simplices: np.ndarray,
+    merge_pairs: np.ndarray,
+    A_coeffs_elementmajor: np.ndarray,
+    b_coeffs_elementmajor: np.ndarray | None,
+    c_coeffs_elementmajor: np.ndarray | None,
+    boundary_face_keys: np.ndarray,
+    *,
+    p2: int,
+    p1: int = -1,
+    p0: int = -1,
+    assume_symmetric: bool = True,
+    tau_C: float = 1.0,
+    alpha: float = 1.0,
+    beta: float = 0.0,
+    leaf_operator_mode: HpsLeafOperatorMode | str | int = (
+      HpsLeafOperatorMode.DENSE
+    ),
+    leaf_least_squares_solver: (
+      HpsLeafLeastSquaresSolver | str | int
+    ) = HpsLeafLeastSquaresSolver.AUTO,
+    leaf_verify_tolerance: float = 0.0,
+    leaf_verify_each_solve: bool = True,
+  ) -> None:
+    self.D = int(pc.D)
+    self.n = int(pc.n)
+    self.p2 = int(p2)
+    self.p1 = int(p1)
+    self.p0 = int(p0)
+    self.alpha = float(alpha)
+    self.beta = float(beta)
+    self._handle = ct.c_void_p()
+
+    if self.D < 1 or self.D > 5:
+      raise ValueError("D must be in 1..5")
+    if self.n < 2:
+      raise ValueError("elliptic HPS requires n >= 2")
+    if self.p2 < 0:
+      raise ValueError("p2 must be nonnegative")
+    if self.p1 < -1 or self.p0 < -1:
+      raise ValueError("p1 and p0 must be at least -1")
+    if self.alpha == 0.0:
+      raise ValueError(
+        "the current C wrapper requires alpha != 0; pure Neumann is not implemented"
+      )
+    if not np.isfinite(tau_C) or float(tau_C) <= 0.0:
+      raise ValueError("elliptic tau_C base must be finite and positive")
+    if (
+      not np.isfinite(leaf_verify_tolerance)
+      or float(leaf_verify_tolerance) < 0.0
+    ):
+      raise ValueError(
+        "leaf_verify_tolerance must be finite and nonnegative"
+      )
+
+    vertex_ids, coords, simplices, merge_pairs = _validate_mesh_tree_arrays(
+      self.D, vertex_ids, coords, simplices, merge_pairs
+    )
+    self.nelem = int(simplices.shape[0])
+    nmerge = int(merge_pairs.shape[0])
+
+    kappa = np.ascontiguousarray(pc.kappa, dtype=np.float64)
+    if kappa.shape != (self.D + 1,):
+      raise ValueError(f"pc.kappa must have shape ({self.D + 1},)")
+
+    Mp2 = _dim_pi(self.D, self.p2)
+    A_coeffs = np.ascontiguousarray(
+      A_coeffs_elementmajor,
+      dtype=np.float64,
+    )
+    if A_coeffs.shape != (self.nelem, self.D, self.D, Mp2):
+      raise ValueError(
+        "A_coeffs_elementmajor must have shape "
+        f"({self.nelem}, {self.D}, {self.D}, {Mp2}), got {A_coeffs.shape}"
+      )
+
+    if self.p1 == -1:
+      if b_coeffs_elementmajor is not None:
+        raise ValueError("b_coeffs_elementmajor must be None when p1 == -1")
+      b_coeffs = None
+    else:
+      Mp1 = _dim_pi(self.D, self.p1)
+      if b_coeffs_elementmajor is None:
+        raise ValueError("b_coeffs_elementmajor is required when p1 >= 0")
+      b_coeffs = np.ascontiguousarray(
+        b_coeffs_elementmajor,
+        dtype=np.float64,
+      )
+      if b_coeffs.shape != (self.nelem, self.D, Mp1):
+        raise ValueError(
+          "b_coeffs_elementmajor must have shape "
+          f"({self.nelem}, {self.D}, {Mp1}), got {b_coeffs.shape}"
+        )
+
+    if self.p0 == -1:
+      if c_coeffs_elementmajor is not None:
+        raise ValueError("c_coeffs_elementmajor must be None when p0 == -1")
+      c_coeffs = None
+    else:
+      Mp0 = _dim_pi(self.D, self.p0)
+      if c_coeffs_elementmajor is None:
+        raise ValueError("c_coeffs_elementmajor is required when p0 >= 0")
+      c_coeffs = np.ascontiguousarray(
+        c_coeffs_elementmajor,
+        dtype=np.float64,
+      )
+      if c_coeffs.shape != (self.nelem, Mp0):
+        raise ValueError(
+          "c_coeffs_elementmajor must have shape "
+          f"({self.nelem}, {Mp0}), got {c_coeffs.shape}"
+        )
+
+    boundary_face_keys = np.ascontiguousarray(
+      boundary_face_keys,
+      dtype=np.int32,
+    )
+    if (
+      boundary_face_keys.ndim != 2
+      or boundary_face_keys.shape[1] != self.D
+    ):
+      raise ValueError(
+        "boundary_face_keys must have shape "
+        f"(nboundary_faces, {self.D}), got {boundary_face_keys.shape}"
+      )
+    self.nboundary_faces = int(boundary_face_keys.shape[0])
+    if self.nboundary_faces < 1:
+      raise ValueError(
+        "boundary_face_keys must contain at least one boundary face"
+      )
+
+    canonical_keys = np.sort(boundary_face_keys, axis=1)
+    if (
+      np.unique(canonical_keys, axis=0).shape[0]
+      != self.nboundary_faces
+    ):
+      raise ValueError(
+        "boundary_face_keys contains duplicate canonical face keys"
+      )
+    boundary_face_keys = np.ascontiguousarray(
+      canonical_keys,
+      dtype=np.int32,
+    )
+
+    leaf_mode = _coerce_leaf_operator_mode(leaf_operator_mode)
+    leaf_solver = _coerce_leaf_least_squares_solver(
+      leaf_least_squares_solver
+    )
+
+    M_out = ct.c_int()
+    m_int_out = ct.c_int()
+    kf_out = ct.c_int()
+    root_nb_out = ct.c_int()
+    interface_nb_out = ct.c_int()
+    leaf_threads_used_out = ct.c_int()
+
+    rc = libjpolyd.jhps_elliptic_solver_create(
+      ct.c_int(self.D),
+      ct.c_int(self.n),
+      ct.c_int(int(pc.q_pad)),
+      ct.c_int(int(pc.q_vol)),
+      ct.c_int(int(pc.q_face)),
+      kappa,
+      ct.c_int(self.p2),
+      ct.c_int(self.p1),
+      ct.c_int(self.p0),
+      ct.c_int(1 if assume_symmetric else 0),
+      A_coeffs,
+      _optional_float64_pointer(b_coeffs),
+      _optional_float64_pointer(c_coeffs),
+      ct.c_int(vertex_ids.size),
+      vertex_ids,
+      coords,
+      ct.c_int(self.nelem),
+      simplices,
+      ct.c_int(nmerge),
+      merge_pairs,
+      ct.c_int(self.nboundary_faces),
+      boundary_face_keys,
+      ct.c_double(float(tau_C)),
+      ct.c_double(self.alpha),
+      ct.c_double(self.beta),
+      ct.c_int(int(leaf_mode)),
+      ct.c_int(int(leaf_solver)),
+      ct.c_double(float(leaf_verify_tolerance)),
+      ct.c_int(1 if leaf_verify_each_solve else 0),
+      ct.byref(self._handle),
+      ct.byref(M_out),
+      ct.byref(m_int_out),
+      ct.byref(kf_out),
+      ct.byref(root_nb_out),
+      ct.byref(interface_nb_out),
+      ct.byref(leaf_threads_used_out),
+    )
+    if rc != 0 or not self._handle.value:
+      self._handle = ct.c_void_p()
+      raise RuntimeError(
+        f"jhps_elliptic_solver_create failed with rc={rc}"
+      )
+
+    self.M = M_out.value
+    self.m_int = m_int_out.value
+    self.kf = kf_out.value
+    self.root_nb = root_nb_out.value
+    self.interface_nb = interface_nb_out.value
+    self.leaf_threads_used = leaf_threads_used_out.value
+
+    expected_dims = (int(pc.M), int(pc.M), int(pc.kf))
+    returned_dims = (self.M, self.m_int, self.kf)
+    if returned_dims != expected_dims:
+      self.close()
+      raise RuntimeError(
+        "Python/C++ RefSimplexPrecomp dimension mismatch: "
+        f"C++ returned {returned_dims}, Python has {expected_dims}"
+      )
+
+  def solve(
+    self,
+    f_int_elementmajor: np.ndarray,
+    boundary_g: np.ndarray,
+    *,
+    check_residuals: bool = True,
+  ) -> HpsEllipticResult:
+    if not self._handle.value:
+      raise RuntimeError("HpsEllipticSolver is closed")
+
+    f_int = np.ascontiguousarray(
+      f_int_elementmajor,
+      dtype=np.float64,
+    )
+    if f_int.shape != (self.nelem, self.m_int):
+      raise ValueError(
+        "f_int_elementmajor must have shape "
+        f"({self.nelem}, {self.m_int}), got {f_int.shape}"
+      )
+
+    boundary_g = np.ascontiguousarray(boundary_g, dtype=np.float64)
+    if boundary_g.shape != (self.nboundary_faces, self.kf):
+      raise ValueError(
+        "boundary_g must have shape "
+        f"({self.nboundary_faces}, {self.kf}), got {boundary_g.shape}"
+      )
+
+    leaf_coeffs = np.empty(
+      (self.nelem, self.M),
+      dtype=np.float64,
+      order="C",
+    )
+    root_res = ct.c_double()
+    iface_res = ct.c_double()
+    parent_res = ct.c_double()
+
+    rc = libjpolyd.jhps_elliptic_solver_solve(
+      self._handle,
+      f_int,
+      boundary_g,
+      ct.c_int(1 if check_residuals else 0),
+      leaf_coeffs,
+      ct.byref(root_res),
+      ct.byref(iface_res),
+      ct.byref(parent_res),
+    )
+    if rc != 0:
+      raise RuntimeError(
+        f"jhps_elliptic_solver_solve failed with rc={rc}"
+      )
+
+    return HpsEllipticResult(
+      D=self.D,
+      n=self.n,
+      nelem=self.nelem,
+      M=self.M,
+      m_int=self.m_int,
+      kf=self.kf,
+      p2=self.p2,
+      p1=self.p1,
+      p0=self.p0,
+      root_nb=self.root_nb,
+      interface_nb=self.interface_nb,
+      leaf_threads_used=self.leaf_threads_used,
+      root_robin_residual_inf=root_res.value,
+      interface_flux_residual_inf=iface_res.value,
+      parent_consistency_residual_inf=parent_res.value,
+      leaf_coeffs=leaf_coeffs,
+    )
+
+  def close(self) -> None:
+    if self._handle.value:
+      libjpolyd.jhps_elliptic_solver_destroy(self._handle)
+      self._handle = ct.c_void_p()
+
+  def __enter__(self) -> "HpsEllipticSolver":
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback) -> None:
+    self.close()
+
+  def __del__(self) -> None:
+    try:
+      self.close()
+    except Exception:
+      pass
 
 def chain_simplex_mesh(D: int, nelem: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
   D = int(D)

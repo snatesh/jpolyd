@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <omp.h>
+#include <lapacke.h>
 
 #include <jelliptic.hh>
 #include <jmesh.hh>
@@ -2609,6 +2610,571 @@ int entry_poisson_mesh_tree_dispatch(
 #undef JHPS_POISSON_DISPATCH_CASE
 }
 
+struct EllipticSolverBase
+{
+  virtual ~EllipticSolverBase() = default;
+
+  virtual void solve(
+    const double* f_int_elementmajor,
+    const double* boundary_g_rowmajor,
+    bool check_residuals,
+    double* leaf_coeffs_elementmajor,
+    double* root_robin_residual_inf_out,
+    double* interface_flux_residual_inf_out,
+    double* parent_consistency_residual_inf_out) = 0;
+
+  int nelem = 0;
+  int M = 0;
+  int m_int = 0;
+  int kf = 0;
+  int root_nb = 0;
+  int interface_nb = 0;
+  int leaf_threads_used = 0;
+};
+
+template<int D>
+class EllipticSolverImpl final : public EllipticSolverBase
+{
+public:
+  using Real = double;
+  using Node = jsimplex::Node<D,Real>;
+  using Leaf = jsimplex::Leaf<D,Real>;
+  using Plan = jsimplex::EllipticPlan<D,Real>;
+  using DenseWorkspace = jsimplex::EllipticDenseWorkspace<D,Real>;
+  using CoeffView = jsimplex::EllipticElementCoefficientsView<D,Real>;
+  using Mesh = jsimplex::Mesh<D,Real>;
+
+  EllipticSolverImpl(
+    int n,
+    int q_pad,
+    int q_vol,
+    int q_face,
+    const double* kappa,
+    int p2,
+    int p1,
+    int p0,
+    int assume_symmetric,
+    const double* A_coeffs_elementmajor,
+    const double* b_coeffs_elementmajor,
+    const double* c_coeffs_elementmajor,
+    int nverts,
+    const int* vertex_ids,
+    const double* coords_rowmajor,
+    int nelem_in,
+    const int* simplices_rowmajor,
+    int nmerge_in,
+    const int* merge_pairs_rowmajor,
+    int nboundary_faces_in,
+    const int* boundary_face_keys_rowmajor,
+    double tau_C,
+    double alpha_in,
+    double beta_in,
+    int leaf_operator_mode,
+    int leaf_least_squares_solver,
+    double leaf_verify_tolerance,
+    int leaf_verify_each_solve)
+    : alpha(alpha_in),
+      beta(beta_in),
+      nmerge(nmerge_in),
+      nboundary_faces(nboundary_faces_in)
+  {
+    if (n < 2)
+      throw std::invalid_argument("HPS elliptic solver create: require n>=2");
+    if (p2 < 0 || p1 < -1 || p0 < -1)
+      throw std::invalid_argument("HPS elliptic solver create: invalid coefficient degree");
+    if (!kappa || !A_coeffs_elementmajor)
+      throw std::invalid_argument("HPS elliptic solver create: null coefficient input");
+    if (p1 >= 0 && !b_coeffs_elementmajor)
+      throw std::invalid_argument("HPS elliptic solver create: null b coefficients");
+    if (p0 >= 0 && !c_coeffs_elementmajor)
+      throw std::invalid_argument("HPS elliptic solver create: null c coefficients");
+    if (nverts <= 0 || nelem_in <= 0)
+      throw std::invalid_argument("HPS elliptic solver create: invalid mesh size");
+    if (nmerge != nelem_in - 1)
+      throw std::invalid_argument("HPS elliptic solver create: nmerge must equal nelem-1");
+    if (nmerge > 0 && !merge_pairs_rowmajor)
+      throw std::invalid_argument("HPS elliptic solver create: null merge pairs");
+    if (nboundary_faces <= 0 || !boundary_face_keys_rowmajor)
+      throw std::invalid_argument("HPS elliptic solver create: invalid boundary face keys");
+    if (!(tau_C > 0.0))
+      throw std::invalid_argument("HPS elliptic solver create: tau_C must be positive");
+    if (alpha == 0.0)
+      throw std::invalid_argument("HPS elliptic solver create: pure Neumann is not implemented");
+
+    const typename Leaf::Options leaf_options =
+      leaf_options_from_c<Real>(
+        leaf_operator_mode,
+        leaf_least_squares_solver,
+        leaf_verify_tolerance,
+        leaf_verify_each_solve);
+
+    const jsimplex::RefSimplexPrecomp<D,Real> pre(
+      n, q_pad, q_vol, q_face, kappa);
+
+    jsimplex::EllipticDegreeSpec degree_spec;
+    degree_spec.p2 = p2;
+    degree_spec.p1 = p1;
+    degree_spec.p0 = p0;
+
+    const bool need_clenshaw_actions =
+      leaf_options.operator_mode == jsimplex::LeafOperatorMode::MatrixFree
+      || leaf_options.operator_mode == jsimplex::LeafOperatorMode::Verify;
+
+    const auto multiplication_assembler =
+      leaf_options.operator_mode == jsimplex::LeafOperatorMode::MatrixFree
+      ? jsimplex::EllipticMultiplicationAssembler::ClenshawColumns
+      : jsimplex::EllipticMultiplicationAssembler::Quadrature;
+
+    const Plan elliptic_plan(
+      pre,
+      degree_spec,
+      assume_symmetric != 0,
+      jsimplex::EllipticResidualPolicy::TrialDegree,
+      multiplication_assembler,
+      need_clenshaw_actions);
+
+    mesh = build_mesh_from_c<D>(
+      nverts, vertex_ids, coords_rowmajor, nelem_in, simplices_rowmajor);
+
+    if (nboundary_faces !=
+        static_cast<int>(mesh.boundary_face_keys().size()))
+    {
+      throw std::invalid_argument(
+        "HPS elliptic solver create: supplied boundary face count does not match mesh");
+    }
+
+    nelem = nelem_in;
+    M = pre.M;
+    m_int = elliptic_plan.mR;
+    kf = pre.kf;
+
+    if (nmerge > 0)
+    {
+      merge_pairs.assign(
+        merge_pairs_rowmajor,
+        merge_pairs_rowmajor + (std::size_t)2 * nmerge);
+    }
+    boundary_face_keys.assign(
+      boundary_face_keys_rowmajor,
+      boundary_face_keys_rowmajor + (std::size_t)nboundary_faces * D);
+
+    const int Mp2 = elliptic_plan.coefficient_size(2);
+    const int Mp1 = elliptic_plan.coefficient_size(1);
+    const int Mp0 = elliptic_plan.coefficient_size(0);
+    const std::size_t A_stride =
+      (std::size_t)D * D * (std::size_t)Mp2;
+    const std::size_t b_stride =
+      p1 >= 0 ? (std::size_t)D * (std::size_t)Mp1 : 0;
+    const std::size_t c_stride =
+      p0 >= 0 ? (std::size_t)Mp0 : 0;
+
+    std::vector<Leaf> elliptic_leaves((std::size_t)nelem);
+    std::vector<Node> leaves((std::size_t)nelem);
+
+    const int max_threads = std::max(1, omp_get_max_threads());
+    std::vector<std::unique_ptr<DenseWorkspace>> dense_workspaces;
+    if (leaf_options.operator_mode != jsimplex::LeafOperatorMode::MatrixFree)
+    {
+      dense_workspaces.reserve((std::size_t)max_threads);
+      for (int t = 0; t < max_threads; ++t)
+      {
+        dense_workspaces.emplace_back(
+          std::make_unique<DenseWorkspace>(elliptic_plan));
+      }
+    }
+
+    std::vector<std::unique_ptr<typename Leaf::SolveWorkspace>>
+      response_workspaces;
+    response_workspaces.reserve((std::size_t)max_threads);
+    for (int t = 0; t < max_threads; ++t)
+    {
+      response_workspaces.emplace_back(
+        std::make_unique<typename Leaf::SolveWorkspace>(
+          elliptic_plan.mR + (D + 1) * pre.kf,
+          pre.M));
+    }
+
+    std::vector<unsigned char> thread_touched(
+      (std::size_t)max_threads, 0);
+    std::exception_ptr first_leaf_exception;
+
+#pragma omp parallel
+    {
+      const int tid = omp_get_thread_num();
+
+#pragma omp for schedule(static)
+      for (int e = 0; e < nelem; ++e)
+      {
+        try
+        {
+          thread_touched[(std::size_t)tid] = 1;
+
+          CoeffView coeffs;
+          coeffs.A = A_coeffs_elementmajor + (std::size_t)e * A_stride;
+          coeffs.b = p1 >= 0
+            ? b_coeffs_elementmajor + (std::size_t)e * b_stride
+            : nullptr;
+          coeffs.c = p0 >= 0
+            ? c_coeffs_elementmajor + (std::size_t)e * c_stride
+            : nullptr;
+
+          Node leaf_node;
+          if (leaf_options.operator_mode != jsimplex::LeafOperatorMode::MatrixFree)
+          {
+            DenseWorkspace& work = *dense_workspaces[(std::size_t)tid];
+            leaf_node = jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
+              mesh,
+              e,
+              pre,
+              elliptic_plan,
+              coeffs,
+              work,
+              elliptic_leaves[(std::size_t)e],
+              leaf_options,
+              Real(tau_C),
+              Real(1e-14),
+              Real(1e-14),
+              5000,
+              response_workspaces[(std::size_t)tid].get());
+          }
+          else
+          {
+            leaf_node = jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
+              mesh,
+              e,
+              pre,
+              elliptic_plan,
+              coeffs,
+              elliptic_leaves[(std::size_t)e],
+              leaf_options,
+              Real(tau_C),
+              Real(1e-14),
+              Real(1e-14),
+              5000,
+              response_workspaces[(std::size_t)tid].get());
+          }
+
+          validate_leaf_backend_storage(elliptic_leaves[(std::size_t)e]);
+          elliptic_leaves[(std::size_t)e] = Leaf{};
+          leaves[(std::size_t)e] = std::move(leaf_node);
+        }
+        catch (...)
+        {
+#pragma omp critical(jhps_elliptic_persistent_leaf_exception)
+          {
+            if (!first_leaf_exception)
+              first_leaf_exception = std::current_exception();
+          }
+        }
+      }
+    }
+
+    if (first_leaf_exception)
+      std::rethrow_exception(first_leaf_exception);
+
+    for (unsigned char used : thread_touched)
+      leaf_threads_used += used != 0;
+
+    const int total_nodes = nelem + nmerge;
+    nodes.resize((std::size_t)total_nodes);
+    std::vector<unsigned char> built((std::size_t)total_nodes, 0);
+    std::vector<unsigned char> active((std::size_t)total_nodes, 0);
+
+    for (int e = 0; e < nelem; ++e)
+    {
+      nodes[(std::size_t)e] = std::move(leaves[(std::size_t)e]);
+      built[(std::size_t)e] = 1;
+      active[(std::size_t)e] = 1;
+    }
+
+    for (int m = 0; m < nmerge; ++m)
+    {
+      const int parent_id = nelem + m;
+      const int child_A = merge_pairs[(std::size_t)2 * m];
+      const int child_B = merge_pairs[(std::size_t)2 * m + 1];
+
+      if (child_A < 0 || child_A >= parent_id
+          || child_B < 0 || child_B >= parent_id
+          || child_A == child_B
+          || !built[(std::size_t)child_A]
+          || !built[(std::size_t)child_B]
+          || !active[(std::size_t)child_A]
+          || !active[(std::size_t)child_B])
+      {
+        throw std::invalid_argument(
+          "HPS elliptic solver create: invalid merge tree");
+      }
+
+      nodes[(std::size_t)parent_id] = jsimplex::merge_nodes<D,Real>(
+        nodes[(std::size_t)child_A],
+        nodes[(std::size_t)child_B],
+        child_A,
+        child_B);
+
+      built[(std::size_t)parent_id] = 1;
+      active[(std::size_t)child_A] = 0;
+      active[(std::size_t)child_B] = 0;
+      active[(std::size_t)parent_id] = 1;
+      interface_nb += nodes[(std::size_t)parent_id].merge.nI;
+    }
+
+    root_id = total_nodes - 1;
+    int active_count = 0;
+    int active_id = -1;
+    for (int node_id = 0; node_id < total_nodes; ++node_id)
+    {
+      if (active[(std::size_t)node_id])
+      {
+        ++active_count;
+        active_id = node_id;
+      }
+    }
+    if (active_count != 1 || active_id != root_id
+        || !built[(std::size_t)root_id])
+    {
+      throw std::invalid_argument(
+        "HPS elliptic solver create: merge pairs do not form one complete binary tree");
+    }
+
+    Node& root = nodes[(std::size_t)root_id];
+    root_nb = root.nb();
+    if (root_nb <= 0)
+      throw std::invalid_argument("HPS elliptic solver create: empty root boundary");
+
+    // Validate and cache the boundary-face ordering once.  The solve path
+    // later accepts only the boundary data values in this same input order.
+    std::vector<Real> dummy_g(
+      (std::size_t)nboundary_faces * kf, Real(0));
+    std::vector<Real> root_g;
+    fill_root_g_from_face_data(
+      mesh,
+      root,
+      nboundary_faces,
+      boundary_face_keys.data(),
+      dummy_g.data(),
+      root_g);
+
+    // alpha*I + beta*S_root is source-independent, so factor it once.
+    root_lu = root.S;
+    for (Real& value : root_lu)
+      value *= beta;
+    add_scaled_identity_colmajor(root_lu, root_nb, alpha);
+    root_ipiv.resize((std::size_t)root_nb);
+    const lapack_int info = LAPACKE_dgetrf(
+      LAPACK_COL_MAJOR,
+      (lapack_int)root_nb,
+      (lapack_int)root_nb,
+      root_lu.data(),
+      (lapack_int)root_nb,
+      root_ipiv.data());
+    if (info != 0)
+      throw std::runtime_error("HPS elliptic solver create: root Robin LU failed");
+
+    node_lambdas.resize((std::size_t)total_nodes);
+    root_g_workspace.resize((std::size_t)root_nb);
+  }
+
+  void solve(
+    const double* f_int_elementmajor,
+    const double* boundary_g_rowmajor,
+    bool check_residuals,
+    double* leaf_coeffs_elementmajor,
+    double* root_robin_residual_inf_out,
+    double* interface_flux_residual_inf_out,
+    double* parent_consistency_residual_inf_out) override
+  {
+    if (!f_int_elementmajor || !boundary_g_rowmajor || !leaf_coeffs_elementmajor)
+      throw std::invalid_argument("HPS elliptic solver solve: null runtime input/output");
+
+    for (int e = 0; e < nelem; ++e)
+    {
+      const Real* f_e =
+        f_int_elementmajor + (std::size_t)e * m_int;
+      jsimplex::set_leaf_source<D,Real>(nodes[(std::size_t)e], f_e);
+    }
+
+    for (int m = 0; m < nmerge; ++m)
+    {
+      const int parent_id = nelem + m;
+      const int child_A = merge_pairs[(std::size_t)2 * m];
+      const int child_B = merge_pairs[(std::size_t)2 * m + 1];
+      jsimplex::update_merge_source<D,Real>(
+        nodes[(std::size_t)parent_id],
+        nodes[(std::size_t)child_A],
+        nodes[(std::size_t)child_B]);
+    }
+
+    Node& root = nodes[(std::size_t)root_id];
+    fill_root_g_from_face_data(
+      mesh,
+      root,
+      nboundary_faces,
+      boundary_face_keys.data(),
+      boundary_g_rowmajor,
+      root_g_workspace);
+
+    std::vector<Real>& lambda_root = node_lambdas[(std::size_t)root_id];
+    lambda_root = root_g_workspace;
+    for (int i = 0; i < root_nb; ++i)
+      lambda_root[(std::size_t)i] -= beta * root.b[(std::size_t)i];
+
+    const lapack_int info = LAPACKE_dgetrs(
+      LAPACK_COL_MAJOR,
+      'N',
+      (lapack_int)root_nb,
+      1,
+      root_lu.data(),
+      (lapack_int)root_nb,
+      root_ipiv.data(),
+      lambda_root.data(),
+      (lapack_int)root_nb);
+    if (info != 0)
+      throw std::runtime_error("HPS elliptic solver solve: root Robin solve failed");
+
+    Real root_res_inf = Real(0);
+    Real iface_res_inf = Real(0);
+    Real parent_res_inf = Real(0);
+
+    if (check_residuals)
+    {
+      std::vector<Real> mu((std::size_t)root_nb, Real(0));
+      jsimplex::apply_node_dtn<D,Real>(
+        root, lambda_root.data(), mu.data());
+      for (int i = 0; i < root_nb; ++i)
+      {
+        root_res_inf = std::max(
+          root_res_inf,
+          std::abs(
+            alpha * lambda_root[(std::size_t)i]
+            + beta * mu[(std::size_t)i]
+            - root_g_workspace[(std::size_t)i]));
+      }
+    }
+
+    for (int m = nmerge - 1; m >= 0; --m)
+    {
+      const int parent_id = nelem + m;
+      const Node& parent = nodes[(std::size_t)parent_id];
+      const int child_A = parent.merge.child_A;
+      const int child_B = parent.merge.child_B;
+
+      jsimplex::merge_reconstruct_child_traces<D,Real>(
+        parent,
+        nodes[(std::size_t)child_A],
+        nodes[(std::size_t)child_B],
+        node_lambdas[(std::size_t)parent_id].data(),
+        node_lambdas[(std::size_t)child_A],
+        node_lambdas[(std::size_t)child_B]);
+
+      if (check_residuals)
+      {
+        check_merge_residuals(
+          parent,
+          nodes[(std::size_t)child_A],
+          nodes[(std::size_t)child_B],
+          node_lambdas[(std::size_t)parent_id],
+          node_lambdas[(std::size_t)child_A],
+          node_lambdas[(std::size_t)child_B],
+          iface_res_inf,
+          parent_res_inf);
+      }
+    }
+
+    for (int e = 0; e < nelem; ++e)
+    {
+      const Node& leaf = nodes[(std::size_t)e];
+      const std::vector<Real>& lambda = node_lambdas[(std::size_t)e];
+      if (static_cast<int>(lambda.size()) != leaf.nb())
+        throw std::runtime_error("HPS elliptic solver solve: missing leaf trace");
+
+      Real* c_e = leaf_coeffs_elementmajor + (std::size_t)e * M;
+      jsimplex::reconstruct_leaf_volume<D,Real>(
+        leaf, lambda.data(), c_e);
+    }
+
+    if (root_robin_residual_inf_out)
+      *root_robin_residual_inf_out = check_residuals ? root_res_inf : -1.0;
+    if (interface_flux_residual_inf_out)
+      *interface_flux_residual_inf_out = check_residuals ? iface_res_inf : -1.0;
+    if (parent_consistency_residual_inf_out)
+      *parent_consistency_residual_inf_out = check_residuals ? parent_res_inf : -1.0;
+  }
+
+private:
+  Real alpha = Real(1);
+  Real beta = Real(0);
+  int nmerge = 0;
+  int nboundary_faces = 0;
+  int root_id = -1;
+  Mesh mesh;
+  std::vector<int> merge_pairs;
+  std::vector<int> boundary_face_keys;
+  std::vector<Node> nodes;
+  std::vector<std::vector<Real>> node_lambdas;
+  std::vector<Real> root_g_workspace;
+  std::vector<Real> root_lu;
+  std::vector<lapack_int> root_ipiv;
+};
+
+std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve)
+{
+#define JHPS_PERSISTENT_CASE(DIM) \
+  case DIM: \
+    return std::make_unique<EllipticSolverImpl<DIM>>( \
+      n, q_pad, q_vol, q_face, kappa, \
+      p2, p1, p0, assume_symmetric, \
+      A_coeffs_elementmajor, b_coeffs_elementmajor, c_coeffs_elementmajor, \
+      nverts, vertex_ids, coords_rowmajor, nelem, simplices_rowmajor, \
+      nmerge, merge_pairs_rowmajor, nboundary_faces, \
+      boundary_face_keys_rowmajor, tau_C, alpha, beta, \
+      leaf_operator_mode, leaf_least_squares_solver, \
+      leaf_verify_tolerance, leaf_verify_each_solve)
+
+  switch (D)
+  {
+    JHPS_PERSISTENT_CASE(1);
+    JHPS_PERSISTENT_CASE(2);
+    JHPS_PERSISTENT_CASE(3);
+    JHPS_PERSISTENT_CASE(4);
+    JHPS_PERSISTENT_CASE(5);
+    default:
+      throw std::invalid_argument(
+        "HPS elliptic solver create: supported D is 1..5");
+  }
+
+#undef JHPS_PERSISTENT_CASE
+}
+
+
 int entry_elliptic_mesh_tree_dispatch(
   int D,
   int n,
@@ -3349,4 +3915,146 @@ extern "C" int jhps_elliptic_mesh_tree_solve_with_leaf_options(
       << "unknown exception\n";
     return -1;
   }
+}
+
+extern "C" int jhps_elliptic_solver_create(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out)
+{
+  if (!handle_out)
+    return -1;
+
+  *handle_out = nullptr;
+  try
+  {
+    std::unique_ptr<EllipticSolverBase> solver = make_elliptic_solver(
+      D,
+      n,
+      q_pad,
+      q_vol,
+      q_face,
+      kappa,
+      p2,
+      p1,
+      p0,
+      assume_symmetric,
+      A_coeffs_elementmajor,
+      b_coeffs_elementmajor,
+      c_coeffs_elementmajor,
+      nverts,
+      vertex_ids,
+      coords_rowmajor,
+      nelem,
+      simplices_rowmajor,
+      nmerge,
+      merge_pairs_rowmajor,
+      nboundary_faces,
+      boundary_face_keys_rowmajor,
+      tau_C,
+      alpha,
+      beta,
+      leaf_operator_mode,
+      leaf_least_squares_solver,
+      leaf_verify_tolerance,
+      leaf_verify_each_solve);
+
+    if (M_out) *M_out = solver->M;
+    if (m_int_out) *m_int_out = solver->m_int;
+    if (kf_out) *kf_out = solver->kf;
+    if (root_nb_out) *root_nb_out = solver->root_nb;
+    if (interface_nb_out) *interface_nb_out = solver->interface_nb;
+    if (leaf_threads_used_out)
+      *leaf_threads_used_out = solver->leaf_threads_used;
+
+    *handle_out = solver.release();
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "jhps_elliptic_solver_create failed: "
+              << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr << "jhps_elliptic_solver_create failed: unknown exception\n";
+    return -1;
+  }
+}
+
+extern "C" int jhps_elliptic_solver_solve(
+  void* handle,
+  const double* f_int_elementmajor,
+  const double* boundary_g_rowmajor,
+  int check_residuals,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out)
+{
+  if (!handle)
+    return -1;
+
+  try
+  {
+    static_cast<EllipticSolverBase*>(handle)->solve(
+      f_int_elementmajor,
+      boundary_g_rowmajor,
+      check_residuals != 0,
+      leaf_coeffs_elementmajor,
+      root_robin_residual_inf_out,
+      interface_flux_residual_inf_out,
+      parent_consistency_residual_inf_out);
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "jhps_elliptic_solver_solve failed: "
+              << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr << "jhps_elliptic_solver_solve failed: unknown exception\n";
+    return -1;
+  }
+}
+
+extern "C" void jhps_elliptic_solver_destroy(void* handle)
+{
+  delete static_cast<EllipticSolverBase*>(handle);
 }

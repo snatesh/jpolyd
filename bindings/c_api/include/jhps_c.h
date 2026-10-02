@@ -559,6 +559,67 @@ int jhps_elliptic_mesh_tree_solve_with_leaf_options(
   int* leaf_threads_used_out
 );
 
+
+/*
+  Persistent variable-coefficient elliptic HPS solver.
+
+  create() performs the reusable operator work: leaf response construction,
+  HPS merge-tree construction, and LU factorization of the fixed root Robin
+  matrix alpha*I + beta*S_root.  solve() then accepts new projected source and
+  boundary data without rebuilding those operators.
+*/
+int jhps_elliptic_solver_create(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p2,
+  int p1,
+  int p0,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
+int jhps_elliptic_solver_solve(
+  void* handle,
+  const double* f_int_elementmajor,
+  const double* boundary_g_rowmajor,
+  int check_residuals,
+  double* leaf_coeffs_elementmajor,
+  double* root_robin_residual_inf_out,
+  double* interface_flux_residual_inf_out,
+  double* parent_consistency_residual_inf_out
+);
+
+void jhps_elliptic_solver_destroy(void* handle);
+
 #ifdef __cplusplus
 }
 #endif

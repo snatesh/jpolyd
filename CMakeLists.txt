@@ -266,6 +266,38 @@ target_link_libraries(
     lapack
 )
 
+add_executable(
+  profile_hps_elliptic_native
+  src/profile_hps_elliptic_native.cpp
+)
+
+target_include_directories(
+  profile_hps_elliptic_native
+  PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/bindings/c_api/include
+)
+
+target_link_libraries(
+  profile_hps_elliptic_native
+  PRIVATE
+    jpolyd
+    jpolyd_c
+    OpenMP::OpenMP_CXX
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES}
+    ${LAPACKE_LIB}
+    openblas #/usr/lib/x86_64-linux-gnu/openblas-openmp/libopenblas.so
+    blas
+    lapack
+)
+
+set_target_properties(
+  profile_hps_elliptic_native
+  PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY ${CMAKE_SOURCE_DIR}/bin
+)
+
+
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
