@@ -340,6 +340,7 @@ public:
   int residual_degree = 0;
   int mR = 0;
   int q_mult = 0;
+  int q_face_mult = 0;
   EllipticDegreeSpec degrees{};
   EllipticResidualPolicy residual_policy =
     EllipticResidualPolicy::TrialDegree;
@@ -445,6 +446,48 @@ public:
     }
   }
 
+  void configure_face_multiplication(
+    const RefSimplexPrecomp<D,Real>& pre,
+    int p_face_max,
+    int p_input_max)
+  {
+    if (pre.n != n)
+      throw std::invalid_argument(
+        "EllipticPlan: mismatched reference degree");
+  
+    if (p_face_max < 0 || p_face_max > n ||
+        p_input_max < n)
+      throw std::invalid_argument(
+        "EllipticPlan: invalid face multiplication degrees");
+  
+    const int max_degree =
+      std::max({n, p_face_max, p_input_max});
+  
+    const int max_triple_degree =
+      n + p_input_max + p_face_max;
+  
+    const int q =
+      max_triple_degree / 2 + 1;
+  
+    auto face_plan = std::make_unique<
+      MultByQQuadraturePlan<D-1,Real>>(
+        pre.kappa_face.data(),
+        max_degree,
+        q);
+  
+    face_quadrature_plan_ = std::move(face_plan);
+    q_face_mult = q;
+  }
+
+const MultByQQuadraturePlan<D-1,Real>& face_quadrature_plan() const
+{
+  if (!face_quadrature_plan_)
+    throw std::logic_error(
+      "EllipticPlan: face multiplication plan unavailable");
+
+  return *face_quadrature_plan_;
+}
+
   int num_plans() const
   {
     return (int)plans_.size();
@@ -499,6 +542,7 @@ public:
 private:
   std::vector<std::unique_ptr<elliptic_detail::OwnedClenshawPlan<D,Real>>> plans_;
   std::unique_ptr<MultByQQuadraturePlan<D,Real>> quadrature_plan_;
+  std::unique_ptr<MultByQQuadraturePlan<D-1,Real>> face_quadrature_plan_;
   std::array<int, 3> plan_id_{{-1, -1, -1}};
 
   friend class EllipticActionWorkspace<D,Real>;

@@ -785,6 +785,64 @@ public:
   }
 };
 
+
+/*
+  Zero-dimensional simplex quadrature.
+
+  Pi_p^0 = span{1} for all p >= 0.
+  The unique quadrature weight and basis value are both 1.
+*/
+template<class Real>
+class MultByQQuadraturePlan<0,Real>
+{
+public:
+  int max_degree = 0;
+  int q_order = 0;
+  int nq = 0;
+  int Mmax = 0;
+
+  std::array<Real,1> kappa{};
+  std::vector<Real> X;
+  std::vector<Real> W;
+  std::vector<Real> V;
+
+  MultByQQuadraturePlan() = default;
+
+  MultByQQuadraturePlan(
+    const Real* kappa_in,
+    int max_degree_in,
+    int q_order_in)
+    : max_degree(max_degree_in),
+      q_order(q_order_in)
+  {
+    if (!kappa_in)
+      throw std::invalid_argument(
+        "MultByQQuadraturePlan: null kappa");
+
+    if (max_degree < 0 || q_order <= 0)
+      throw std::invalid_argument(
+        "MultByQQuadraturePlan: invalid degree/order");
+
+    kappa[0] = kappa_in[0];
+
+    nq = 1;
+    Mmax = 1;
+
+    W.assign(1, Real(1));
+    V.assign(1, Real(1));
+  }
+
+  int size_for_degree(int degree) const
+  {
+    if (degree < 0 || degree > max_degree)
+      throw std::out_of_range(
+        "MultByQQuadraturePlan: requested degree is unavailable");
+
+    return 1;
+  }
+};
+
+
 template<class Real>
 struct MultByQQuadratureWorkspace
 {
