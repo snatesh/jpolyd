@@ -365,6 +365,204 @@ void fill_root_g_from_face_data(
   }
 }
 
+
+/*
+  Assemble facewise multiplication blocks in root boundary order.
+
+  q_coeffs contains one degree-p modal coefficient vector
+  per root boundary face, expressed in the common face
+  Jacobi basis (pre.kappa_face).
+
+  Input layout:
+    q_coeffs[f * Mp + j]
+
+  Output layout:
+    blocks[f * kf * kf + i + kf * j]
+
+  Each block represents
+    M_q = Pi_n^f (q * .) | Pi_n^f
+
+  All blocks are column-major.
+*/
+template<int D, class Real>
+void assemble_root_face_multiplier_blocks(
+  const jsimplex::Node<D,Real>& root,
+  const jsimplex::EllipticPlan<D,Real>& plan,
+  const Real* q_coeffs,
+  int p,
+  std::vector<Real>& blocks)
+{
+  if (!q_coeffs)
+    throw std::invalid_argument(
+      "assemble_root_face_multiplier_blocks: null coefficients");
+
+  if (p < 0 || p > plan.n)
+    throw std::invalid_argument(
+      "assemble_root_face_multiplier_blocks: invalid degree");
+
+  const int kf = root.kf;
+  const int Mp = jsimplex::Basis<D-1,Real>::dim_Pi(p);
+
+  if (kf != jsimplex::Basis<D-1,Real>::dim_Pi(plan.n))
+    throw std::invalid_argument(
+      "assemble_root_face_multiplier_blocks: face dimension mismatch");
+
+  blocks.resize(
+    (std::size_t)root.nfaces() * kf * kf);
+
+  jsimplex::MultByQQuadratureWorkspace<Real> work;
+
+  for (int f = 0; f < root.nfaces(); ++f)
+  {
+    const Real* q_f =
+      q_coeffs + (std::size_t)f * Mp;
+
+    Real* M_f =
+      blocks.data() + (std::size_t)f * kf * kf;
+
+    plan.assemble_face_mult(
+      q_f,
+      p,
+      plan.n,
+      plan.n,
+      work,
+      M_f);
+  }
+}
+
+
+/*
+  Assemble the variable-coefficient root Robin matrix
+
+    R_root = M_alpha + M_beta * S_root.
+
+  alpha_blocks and beta_blocks contain column-major
+  kf x kf blocks in root boundary-face order.
+
+  R_root is column-major, with dimensions nb x nb.
+
+  The global block-diagonal multiplication matrices
+  are never explicitly materialized.
+*/
+template<int D, class Real>
+void assemble_root_robin_matrix(
+  const jsimplex::Node<D,Real>& root,
+  const std::vector<Real>& alpha_blocks,
+  const std::vector<Real>& beta_blocks,
+  std::vector<Real>& R_root)
+{
+  const int kf = root.kf;
+  const int nf = root.nfaces();
+  const int nb = root.nb();
+
+  if (kf <= 0 || nf <= 0 || nb != nf * kf)
+    throw std::invalid_argument(
+      "assemble_root_robin_matrix: invalid root dimensions");
+
+  const std::size_t block_size = (std::size_t)kf * kf;
+  const std::size_t expected_size = (std::size_t)nf * block_size;
+
+  if (alpha_blocks.size() != expected_size ||
+      beta_blocks.size() != expected_size ||
+      root.S.size() != (std::size_t)nb * nb)
+    throw std::invalid_argument(
+      "assemble_root_robin_matrix: matrix size mismatch");
+
+  R_root.assign((std::size_t)nb * nb, Real(0));
+
+  for (int f = 0; f < nf; ++f)
+  {
+    const int row0 = f * kf;
+
+    const Real* Ma =
+      alpha_blocks.data() + (std::size_t)f * block_size;
+
+    const Real* Mb =
+      beta_blocks.data() + (std::size_t)f * block_size;
+
+    // Multiply the f-th block of M_beta against
+    // the corresponding kf rows of S_root.
+    jsimplex::detail::BlasGemm<Real>::run(
+      CblasColMajor,
+      CblasNoTrans,
+      CblasNoTrans,
+      kf, nb, kf,
+      Real(1),
+      Mb, kf,
+      root.S.data() + row0, nb,
+      Real(0),
+      R_root.data() + row0, nb);
+
+    // Add M_alpha to the f-th diagonal block.
+    for (int j = 0; j < kf; ++j)
+    {
+      for (int i = 0; i < kf; ++i)
+      {
+        R_root[
+          (std::size_t)(row0 + i)
+          + (std::size_t)nb * (row0 + j)
+        ] += Ma[(std::size_t)i + (std::size_t)kf * j];
+      }
+    }
+  }
+}
+
+
+/*
+  Assemble the variable-coefficient root Robin RHS
+
+    rhs = g_root - M_beta * root.b.
+
+  beta_blocks contains column-major kf x kf blocks
+  in root boundary-face order.
+
+  The block-diagonal M_beta is never materialized.
+*/
+template<int D, class Real>
+void assemble_root_robin_rhs(
+  const jsimplex::Node<D,Real>& root,
+  const std::vector<Real>& beta_blocks,
+  const std::vector<Real>& g_root,
+  std::vector<Real>& rhs)
+{
+  const int kf = root.kf;
+  const int nf = root.nfaces();
+  const int nb = root.nb();
+
+  if (kf <= 0 || nf <= 0 || nb != nf * kf)
+    throw std::invalid_argument(
+      "assemble_root_robin_rhs: invalid root dimensions");
+
+  if (beta_blocks.size() !=
+        (std::size_t)nf * kf * kf ||
+      g_root.size() != (std::size_t)nb ||
+      root.b.size() != (std::size_t)nb)
+    throw std::invalid_argument(
+      "assemble_root_robin_rhs: size mismatch");
+
+  rhs = g_root;
+
+  for (int f = 0; f < nf; ++f)
+  {
+    const int row0 = f * kf;
+
+    const Real* Mb =
+      beta_blocks.data() + (std::size_t)f * kf * kf;
+
+    for (int j = 0; j < kf; ++j)
+    {
+      const Real bj = root.b[(std::size_t)row0 + j];
+
+      for (int i = 0; i < kf; ++i)
+      {
+        rhs[(std::size_t)row0 + i] -=
+          Mb[(std::size_t)i + (std::size_t)kf * j] * bj;
+      }
+    }
+  }
+}
+
+
 template<int D, class Real>
 std::map<jsimplex::DSimplexFaceKey<D>,int> face_position_map(
   const std::vector<jsimplex::DSimplexFaceKey<D>>& faces)
