@@ -399,6 +399,10 @@ _set_elliptic_mesh_tree_leaf_options_signature(
 _set_elliptic_solver_create_signature(
   libjpolyd.jhps_elliptic_solver_create
 )
+# The divergence constructor has the same ABI as the expanded constructor.
+_set_elliptic_solver_create_signature(
+  libjpolyd.jhps_divergence_solver_create
+)
 _set_elliptic_solver_solve_signature(
   libjpolyd.jhps_elliptic_solver_solve
 )
@@ -975,6 +979,7 @@ class HpsEllipticSolver:
     ) = HpsLeafLeastSquaresSolver.AUTO,
     leaf_verify_tolerance: float = 0.0,
     leaf_verify_each_solve: bool = True,
+    _divergence_form: bool = False,
   ) -> None:
     self.D = int(pc.D)
     self.n = int(pc.n)
@@ -1099,6 +1104,8 @@ class HpsEllipticSolver:
     leaf_solver = _coerce_leaf_least_squares_solver(
       leaf_least_squares_solver
     )
+    if _divergence_form and leaf_mode != HpsLeafOperatorMode.DENSE:
+      raise ValueError("divergence form currently requires Dense leaf mode")
 
     M_out = ct.c_int()
     m_int_out = ct.c_int()
@@ -1107,7 +1114,15 @@ class HpsEllipticSolver:
     interface_nb_out = ct.c_int()
     leaf_threads_used_out = ct.c_int()
 
-    rc = libjpolyd.jhps_elliptic_solver_create(
+    create_fn = (
+      libjpolyd.jhps_divergence_solver_create if _divergence_form
+      else libjpolyd.jhps_elliptic_solver_create
+    )
+    create_name = (
+      "jhps_divergence_solver_create" if _divergence_form
+      else "jhps_elliptic_solver_create"
+    )
+    rc = create_fn(
       ct.c_int(self.D),
       ct.c_int(self.n),
       ct.c_int(int(pc.q_pad)),
@@ -1148,7 +1163,7 @@ class HpsEllipticSolver:
     if rc != 0 or not self._handle.value:
       self._handle = ct.c_void_p()
       raise RuntimeError(
-        f"jhps_elliptic_solver_create failed with rc={rc}"
+        f"{create_name} failed with rc={rc}"
       )
 
     self.M = M_out.value
@@ -1300,6 +1315,83 @@ class HpsEllipticSolver:
       self.close()
     except Exception:
       pass
+
+class HpsDivergenceSolver(HpsEllipticSolver):
+  """Persistent Dense-only divergence-form elliptic HPS solver.
+
+  Solves -div(A grad u) + b.grad(u) + c*u = f with the original A, b, c
+  expressed in the base kappa Jacobi family. The physical source moments
+  supplied to solve() are negated internally by the C++ divergence path.
+
+  Boundary data are physical co-normal Robin moments:
+    alpha*u + beta*(n.T @ A @ grad(u)) = g,
+  with spatially constant alpha and beta. The current scalar Robin root
+  matrix does not invoke the variable face multiplication backend.
+
+  Variable Robin updates are intentionally unavailable until high-order
+  co-normal flux corrections have been implemented and tested.
+  """
+
+  def __init__(
+    self,
+    pc,
+    vertex_ids: np.ndarray,
+    coords: np.ndarray,
+    simplices: np.ndarray,
+    merge_pairs: np.ndarray,
+    A_coeffs_elementmajor: np.ndarray,
+    b_coeffs_elementmajor: np.ndarray | None,
+    c_coeffs_elementmajor: np.ndarray | None,
+    boundary_face_keys: np.ndarray,
+    *,
+    p_A: int,
+    p_b: int = -1,
+    p_c: int = -1,
+    assume_symmetric: bool = True,
+    tau_C: float = 1.0,
+    alpha: float = 1.0,
+    beta: float = 0.0,
+    leaf_operator_mode: HpsLeafOperatorMode | str | int = (
+      HpsLeafOperatorMode.DENSE
+    ),
+    leaf_least_squares_solver: (
+      HpsLeafLeastSquaresSolver | str | int
+    ) = HpsLeafLeastSquaresSolver.DENSE_QR,
+    leaf_verify_tolerance: float = 0.0,
+    leaf_verify_each_solve: bool = True,
+  ) -> None:
+    super().__init__(
+      pc,
+      vertex_ids,
+      coords,
+      simplices,
+      merge_pairs,
+      A_coeffs_elementmajor,
+      b_coeffs_elementmajor,
+      c_coeffs_elementmajor,
+      boundary_face_keys,
+      p2=p_A,
+      p1=p_b,
+      p0=p_c,
+      assume_symmetric=assume_symmetric,
+      tau_C=tau_C,
+      alpha=alpha,
+      beta=beta,
+      leaf_operator_mode=leaf_operator_mode,
+      leaf_least_squares_solver=leaf_least_squares_solver,
+      leaf_verify_tolerance=leaf_verify_tolerance,
+      leaf_verify_each_solve=leaf_verify_each_solve,
+      _divergence_form=True,
+    )
+    # Result metadata inherited from HpsEllipticResult uses p2, p1, p0;
+    # for this mode those denote original input degrees p_A, p_b, p_c.
+
+  def update_variable_robin(self, *args, **kwargs) -> None:
+    raise NotImplementedError(
+      "variable Robin in divergence form requires the planned "
+      "high-order co-normal flux correction"
+    )
+
 
 def chain_simplex_mesh(D: int, nelem: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
   D = int(D)

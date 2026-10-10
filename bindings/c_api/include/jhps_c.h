@@ -609,6 +609,66 @@ int jhps_elliptic_solver_create(
 
 
 /*
+  Create a persistent Dense divergence-form HPS solver:
+
+    -div(A grad u) + b.grad(u) + c*u = f.
+
+  A, b, c are expressed in the base kappa Jacobi family.
+
+  Layout:
+    A: (nelem, D, D, dimPi(D, p_A))
+    b: (nelem, D, dimPi(D, p_b)), nullable if p_b == -1
+    c: (nelem, dimPi(D, p_c)), nullable if p_c == -1
+
+  The existing solver_solve() accepts physical source
+  moments f and performs the internal sign conversion.
+
+  Only JHPS_LEAF_OPERATOR_DENSE is supported.
+  The returned handle is compatible with
+  jhps_elliptic_solver_solve() and
+  jhps_elliptic_solver_destroy().
+*/
+int jhps_divergence_solver_create(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p_A,
+  int p_b,
+  int p_c,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
+
+/*
   Update facewise variable Robin coefficients on a
   persistent elliptic HPS solver.
 

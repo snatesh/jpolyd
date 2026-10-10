@@ -3106,15 +3106,21 @@ public:
       boundary_face_keys_rowmajor,
       boundary_face_keys_rowmajor + (std::size_t)nboundary_faces * D);
 
-    const int Mp2 = elliptic_plan.coefficient_size(2);
-    const int Mp1 = elliptic_plan.coefficient_size(1);
-    const int Mp0 = elliptic_plan.coefficient_size(0);
-    const std::size_t A_stride =
-      (std::size_t)D * D * (std::size_t)Mp2;
-    const std::size_t b_stride =
-      p1 >= 0 ? (std::size_t)D * (std::size_t)Mp1 : 0;
-    const std::size_t c_stride =
-      p0 >= 0 ? (std::size_t)Mp0 : 0;
+
+    // update stride definitions to handle input_form=divergence case
+    // eg) if p_A=3, p_b=-1 (no first order term in div form), p_c = 1,
+    //     the expanded interior operator still has first order coefficients
+    //     at degree 2 (from chain rule), evn though p_b=-1 means no input b 
+    //     array exists
+    const int MpA = jsimplex::Basis<D,Real>::dim_Pi(p2);
+    const int MpB = p1 >= 0
+      ? jsimplex::Basis<D,Real>::dim_Pi(p1) : 0;
+    const int MpC = p0 >= 0
+      ? jsimplex::Basis<D,Real>::dim_Pi(p0) : 0;
+    
+    const std::size_t A_stride = (std::size_t)D * D * MpA;
+    const std::size_t b_stride = (std::size_t)D * MpB;
+    const std::size_t c_stride = (std::size_t)MpC;
 
     std::vector<Leaf> elliptic_leaves((std::size_t)nelem);
     std::vector<Node> leaves((std::size_t)nelem);
@@ -3131,8 +3137,7 @@ public:
       }
     }
 
-    std::vector<std::unique_ptr<typename Leaf::SolveWorkspace>>
-      response_workspaces;
+    std::vector<std::unique_ptr<typename Leaf::SolveWorkspace>> response_workspaces;
     response_workspaces.reserve((std::size_t)max_threads);
     for (int t = 0; t < max_threads; ++t)
     {
@@ -3141,6 +3146,14 @@ public:
           elliptic_plan.mR + (D + 1) * pre.kf,
           pre.M));
     }
+
+
+    std::vector<jsimplex::MultByQQuadratureWorkspace<Real>> face_mult_workspaces;
+    if (input_form_ == EllipticInputForm::Divergence)
+    {
+      face_mult_workspaces.resize((std::size_t)max_threads);
+    }
+
 
     std::vector<unsigned char> thread_touched(
       (std::size_t)max_threads, 0);
@@ -3157,50 +3170,107 @@ public:
         {
           thread_touched[(std::size_t)tid] = 1;
 
-          CoeffView coeffs;
-          coeffs.A = A_coeffs_elementmajor + (std::size_t)e * A_stride;
-          coeffs.b = p1 >= 0
+
+          const Real* A_input =
+            A_coeffs_elementmajor + (std::size_t)e * A_stride;
+          
+          const Real* b_input = p1 >= 0
             ? b_coeffs_elementmajor + (std::size_t)e * b_stride
             : nullptr;
-          coeffs.c = p0 >= 0
+          
+          const Real* c_input = p0 >= 0
             ? c_coeffs_elementmajor + (std::size_t)e * c_stride
             : nullptr;
-
+          
           Node leaf_node;
-          if (leaf_options.operator_mode != jsimplex::LeafOperatorMode::MatrixFree)
+          
+          if (input_form_ == EllipticInputForm::Divergence)
           {
-            DenseWorkspace& work = *dense_workspaces[(std::size_t)tid];
-            leaf_node = jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
-              mesh,
-              e,
-              pre,
-              elliptic_plan,
-              coeffs,
-              work,
-              elliptic_leaves[(std::size_t)e],
-              leaf_options,
-              Real(tau_C),
-              Real(1e-14),
-              Real(1e-14),
-              5000,
-              response_workspaces[(std::size_t)tid].get());
+            // Convert base-kappa divergence coefficients into
+            // expanded coefficients in kappa_res.
+            const auto expanded =
+              jsimplex::expand_divergence_form_element<D,Real>(
+                pre,
+                mesh.element(e).geom,
+                p2,
+                A_input,
+                p1,
+                b_input,
+                p0,
+                c_input);
+          
+            DenseWorkspace& work =
+              *dense_workspaces[(std::size_t)tid];
+          
+            leaf_node =
+              jsimplex::make_divergence_form_homogeneous_leaf_node<D,Real>(
+                mesh,
+                e,
+                pre,
+                elliptic_plan,
+                expanded.view(),
+                p2,
+                A_input,
+                elliptic_plan.face_quadrature_plan(),
+                face_mult_workspaces[(std::size_t)tid],
+                work,
+                elliptic_leaves[(std::size_t)e],
+                leaf_options,
+                Real(tau_C),
+                Real(1e-14),
+                Real(1e-14),
+                5000,
+                response_workspaces[(std::size_t)tid].get());
           }
           else
           {
-            leaf_node = jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
-              mesh,
-              e,
-              pre,
-              elliptic_plan,
-              coeffs,
-              elliptic_leaves[(std::size_t)e],
-              leaf_options,
-              Real(tau_C),
-              Real(1e-14),
-              Real(1e-14),
-              5000,
-              response_workspaces[(std::size_t)tid].get());
+            // Preserve the original expanded non-divergence path.
+            CoeffView coeffs;
+            coeffs.A = A_input;
+            coeffs.b = b_input;
+            coeffs.c = c_input;
+          
+            if (leaf_options.operator_mode !=
+                jsimplex::LeafOperatorMode::MatrixFree)
+            {
+              DenseWorkspace& work =
+                *dense_workspaces[(std::size_t)tid];
+          
+              leaf_node =
+                jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
+                  mesh,
+                  e,
+                  pre,
+                  elliptic_plan,
+                  coeffs,
+                  work,
+                  elliptic_leaves[(std::size_t)e],
+                  leaf_options,
+                  Real(tau_C),
+                  Real(1e-14),
+                  Real(1e-14),
+                  5000,
+                  response_workspaces[(std::size_t)tid].get());
+            }
+            else
+            {
+              leaf_node =
+                jsimplex::make_elliptic_homogeneous_leaf_node<D,Real>(
+                  mesh,
+                  e,
+                  pre,
+                  elliptic_plan,
+                  coeffs,
+                  elliptic_leaves[(std::size_t)e],
+                  leaf_options,
+                  Real(tau_C),
+                  Real(1e-14),
+                  Real(1e-14),
+                  5000,
+                  response_workspaces[(std::size_t)tid].get());
+            }
           }
+
 
           validate_leaf_backend_storage(elliptic_leaves[(std::size_t)e]);
           elliptic_leaves[(std::size_t)e] = Leaf{};
@@ -3444,12 +3514,32 @@ public:
     if (!f_int_elementmajor || !boundary_g_rowmajor || !leaf_coeffs_elementmajor)
       throw std::invalid_argument("HPS elliptic solver solve: null runtime input/output");
 
+
+    // divergence form interface is for div_form_elliptic(u) = f
+    // while the expanded form internal solver works on L_expanded u = -f
+    // so here we just switch signs accordingly element-by element.
+    std::vector<Real> signed_source;
+    
+    if (input_form_ == EllipticInputForm::Divergence)
+      signed_source.resize((std::size_t)m_int);
+    
     for (int e = 0; e < nelem; ++e)
     {
       const Real* f_e =
         f_int_elementmajor + (std::size_t)e * m_int;
-      jsimplex::set_leaf_source<D,Real>(nodes[(std::size_t)e], f_e);
+    
+      if (input_form_ == EllipticInputForm::Divergence)
+      {
+        for (int i = 0; i < m_int; ++i)
+          signed_source[(std::size_t)i] = -f_e[i];
+    
+        f_e = signed_source.data();
+      }
+    
+      jsimplex::set_leaf_source<D,Real>(
+        nodes[(std::size_t)e], f_e);
     }
+
 
     for (int m = 0; m < nmerge; ++m)
     {
@@ -4530,6 +4620,126 @@ extern "C" int jhps_elliptic_solver_create(
     return -1;
   }
 }
+
+extern "C" int jhps_divergence_solver_create(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p_A,
+  int p_b,
+  int p_c,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out)
+{
+  if (!handle_out)
+    return -1;
+
+  *handle_out = nullptr;
+
+  if (leaf_operator_mode != JHPS_LEAF_OPERATOR_DENSE)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create: "
+      << "only Dense leaf mode is supported\n";
+    return -2;
+  }
+
+  try
+  {
+    std::unique_ptr<EllipticSolverBase> solver =
+      make_elliptic_solver(
+        D,
+        n,
+        q_pad,
+        q_vol,
+        q_face,
+        kappa,
+        p_A,
+        p_b,
+        p_c,
+        assume_symmetric,
+        A_coeffs_elementmajor,
+        b_coeffs_elementmajor,
+        c_coeffs_elementmajor,
+        nverts,
+        vertex_ids,
+        coords_rowmajor,
+        nelem,
+        simplices_rowmajor,
+        nmerge,
+        merge_pairs_rowmajor,
+        nboundary_faces,
+        boundary_face_keys_rowmajor,
+        tau_C,
+        alpha,
+        beta,
+        leaf_operator_mode,
+        leaf_least_squares_solver,
+        leaf_verify_tolerance,
+        leaf_verify_each_solve,
+        EllipticInputForm::Divergence);
+
+    if (M_out)
+      *M_out = solver->M;
+    if (m_int_out)
+      *m_int_out = solver->m_int;
+    if (kf_out)
+      *kf_out = solver->kf;
+    if (root_nb_out)
+      *root_nb_out = solver->root_nb;
+    if (interface_nb_out)
+      *interface_nb_out = solver->interface_nb;
+    if (leaf_threads_used_out)
+      *leaf_threads_used_out = solver->leaf_threads_used;
+
+    *handle_out = solver.release();
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create failed: "
+      << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
+
 
 
 extern "C" int jhps_elliptic_solver_update_variable_robin(
