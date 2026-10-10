@@ -3034,13 +3034,21 @@ public:
       ? jsimplex::EllipticMultiplicationAssembler::ClenshawColumns
       : jsimplex::EllipticMultiplicationAssembler::Quadrature;
 
-    const Plan elliptic_plan(
+    elliptic_plan_ = std::make_unique<Plan>(
       pre,
       degree_spec,
       assume_symmetric != 0,
       jsimplex::EllipticResidualPolicy::TrialDegree,
       multiplication_assembler,
       need_clenshaw_actions);
+    
+    // Configure face multiplication for variable Robin coefficients
+    // of degree at most n, with degree-n input/output spaces.
+    elliptic_plan_->configure_face_multiplication(
+      pre, n, n);
+    
+    // Preserve all existing constructor code using elliptic_plan.
+    const Plan& elliptic_plan = *elliptic_plan_;
 
     mesh = build_mesh_from_c<D>(
       nverts, vertex_ids, coords_rowmajor, nelem_in, simplices_rowmajor);
@@ -3418,6 +3426,7 @@ private:
   std::vector<Real> root_g_workspace;
   std::vector<Real> root_lu;
   std::vector<lapack_int> root_ipiv;
+  std::unique_ptr<Plan> elliptic_plan_;
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
