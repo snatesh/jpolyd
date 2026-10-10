@@ -20,6 +20,8 @@
 #include <jprecomp.hh>
 #include <jnode.hh>
 #include <jmerge.hh>
+#include <jdivergence.hh>
+
 #ifdef TIMING
 #include <timer.hh>
 #endif
@@ -2919,6 +2921,12 @@ int entry_poisson_mesh_tree_dispatch(
 #undef JHPS_POISSON_DISPATCH_CASE
 }
 
+enum class EllipticInputForm
+{
+  Expanded,
+  Divergence
+};
+
 struct EllipticSolverBase
 {
   virtual ~EllipticSolverBase() = default;
@@ -2985,11 +2993,13 @@ public:
     int leaf_operator_mode,
     int leaf_least_squares_solver,
     double leaf_verify_tolerance,
-    int leaf_verify_each_solve)
+    int leaf_verify_each_solve,
+    EllipticInputForm input_form = EllipticInputForm::Expanded)
     : alpha(alpha_in),
       beta(beta_in),
       nmerge(nmerge_in),
-      nboundary_faces(nboundary_faces_in)
+      nboundary_faces(nboundary_faces_in),
+      input_form_(input_form)
   {
     if (n < 2)
       throw std::invalid_argument("HPS elliptic solver create: require n>=2");
@@ -3021,14 +3031,31 @@ public:
         leaf_verify_tolerance,
         leaf_verify_each_solve);
 
+    // enforce dense-only restriction for divergence form input
+    if (input_form_ == EllipticInputForm::Divergence &&
+        leaf_options.operator_mode != jsimplex::LeafOperatorMode::Dense)
+    {
+      throw std::invalid_argument(
+        "HPS divergence-form solver requires Dense leaf mode");
+    }
+
+
     const jsimplex::RefSimplexPrecomp<D,Real> pre(
       n, q_pad, q_vol, q_face, kappa);
 
-    jsimplex::EllipticDegreeSpec degree_spec;
-    degree_spec.p2 = p2;
-    degree_spec.p1 = p1;
-    degree_spec.p0 = p0;
-
+    // (p_2,p_1,p_0) = {(p_A,p_b,p_c) if input expanded
+    //                  (p_A,max(p_b,p_A-1),p_c) if div form input
+    jsimplex::EllipticDegreeSpec degree_spec{};
+    if (input_form_ == EllipticInputForm::Divergence)
+    {
+      degree_spec = jsimplex::divergence_form_expanded_degrees(n, p2, p1, p0);
+    }
+    else
+    {
+      degree_spec.p2 = p2;
+      degree_spec.p1 = p1;
+      degree_spec.p0 = p0;
+    }
     const bool need_clenshaw_actions =
       leaf_options.operator_mode == jsimplex::LeafOperatorMode::MatrixFree
       || leaf_options.operator_mode == jsimplex::LeafOperatorMode::Verify;
@@ -3600,6 +3627,7 @@ private:
   bool variable_robin_enabled = false;
   std::vector<lapack_int> root_ipiv;
   std::unique_ptr<Plan> elliptic_plan_;
+  EllipticInputForm input_form_ = EllipticInputForm::Expanded;
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
@@ -3631,7 +3659,8 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
   int leaf_operator_mode,
   int leaf_least_squares_solver,
   double leaf_verify_tolerance,
-  int leaf_verify_each_solve)
+  int leaf_verify_each_solve,
+  EllipticInputForm input_form = EllipticInputForm::Expanded)
 {
 #define JHPS_PERSISTENT_CASE(DIM) \
   case DIM: \
@@ -3643,7 +3672,7 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
       nmerge, merge_pairs_rowmajor, nboundary_faces, \
       boundary_face_keys_rowmajor, tau_C, alpha, beta, \
       leaf_operator_mode, leaf_least_squares_solver, \
-      leaf_verify_tolerance, leaf_verify_each_solve)
+      leaf_verify_tolerance, leaf_verify_each_solve, input_form)
 
   switch (D)
   {
