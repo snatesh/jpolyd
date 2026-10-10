@@ -2922,7 +2922,11 @@ int entry_poisson_mesh_tree_dispatch(
 struct EllipticSolverBase
 {
   virtual ~EllipticSolverBase() = default;
-
+  virtual void update_variable_robin(
+    int p_alpha,
+    const double* alpha_coeffs_input,
+    int p_beta,
+    const double* beta_coeffs_input) = 0;
   virtual void solve(
     const double* f_int_elementmajor,
     const double* boundary_g_rowmajor,
@@ -3307,7 +3311,7 @@ public:
     int p_alpha,
     const Real* alpha_coeffs_input,
     int p_beta,
-    const Real* beta_coeffs_input)
+    const Real* beta_coeffs_input) override
   {
     if (!elliptic_plan_)
       throw std::logic_error(
@@ -4497,6 +4501,45 @@ extern "C" int jhps_elliptic_solver_create(
     return -1;
   }
 }
+
+
+extern "C" int jhps_elliptic_solver_update_variable_robin(
+  void* handle,
+  int p_alpha,
+  const double* alpha_coeffs_rowmajor,
+  int p_beta,
+  const double* beta_coeffs_rowmajor)
+{
+  if (!handle)
+    return -1;
+
+  try
+  {
+    static_cast<EllipticSolverBase*>(handle)
+      ->update_variable_robin(
+        p_alpha,
+        alpha_coeffs_rowmajor,
+        p_beta,
+        beta_coeffs_rowmajor);
+
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_update_variable_robin failed: "
+      << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_update_variable_robin failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
 
 extern "C" int jhps_elliptic_solver_solve(
   void* handle,

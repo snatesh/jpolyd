@@ -607,6 +607,35 @@ int jhps_elliptic_solver_create(
   int* leaf_threads_used_out
 );
 
+
+/*
+  Update facewise variable Robin coefficients on a
+  persistent elliptic HPS solver.
+
+  Coefficients are expressed in the common canonical
+  face Jacobi basis and supplied in the boundary-face
+  order specified during solver creation.
+
+  alpha_coeffs_rowmajor:
+    nboundary_faces x dim(Pi_p_alpha^{D-1})
+
+  beta_coeffs_rowmajor:
+    nboundary_faces x dim(Pi_p_beta^{D-1})
+
+  Updates the root Robin matrix and LU factorization.
+  Does not rebuild the HPS tree or leaf operators.
+
+  Returns 0 on success, nonzero on failure.
+*/
+int jhps_elliptic_solver_update_variable_robin(
+  void* handle,
+  int p_alpha,
+  const double* alpha_coeffs_rowmajor,
+  int p_beta,
+  const double* beta_coeffs_rowmajor
+);
+
+
 int jhps_elliptic_solver_solve(
   void* handle,
   const double* f_int_elementmajor,
