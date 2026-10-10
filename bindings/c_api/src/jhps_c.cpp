@@ -3287,6 +3287,120 @@ public:
     root_g_workspace.resize((std::size_t)root_nb);
   }
 
+
+  /*
+    Update variable Robin coefficients without rebuilding
+    the HPS tree.
+  
+    alpha_coeffs_input and beta_coeffs_input are facewise
+    modal coefficients in the supplied boundary-face order,
+    using the common canonical face Jacobi family.
+  
+    Each face has dim(Pi_p^{D-1}) coefficients.
+  
+    This operation updates:
+      M_alpha, M_beta, R_root, and its LU factorization.
+  
+    It does not update the source-dependent root RHS.
+  */
+  void update_variable_robin(
+    int p_alpha,
+    const Real* alpha_coeffs_input,
+    int p_beta,
+    const Real* beta_coeffs_input)
+  {
+    if (!elliptic_plan_)
+      throw std::logic_error(
+        "HPS elliptic solver: missing elliptic plan");
+  
+    if (!alpha_coeffs_input || !beta_coeffs_input)
+      throw std::invalid_argument(
+        "HPS elliptic solver: null Robin coefficients");
+  
+    if (p_alpha < 0 || p_alpha > elliptic_plan_->n ||
+        p_beta < 0 || p_beta > elliptic_plan_->n)
+      throw std::invalid_argument(
+        "HPS elliptic solver: invalid Robin degree");
+  
+    const Node& root = nodes[(std::size_t)root_id];
+  
+    const int m_alpha =
+      jsimplex::Basis<D-1,Real>::dim_Pi(p_alpha);
+  
+    const int m_beta =
+      jsimplex::Basis<D-1,Real>::dim_Pi(p_beta);
+  
+    // Convert coefficient arrays to root boundary-face order.
+    std::vector<Real> alpha_root;
+    std::vector<Real> beta_root;
+  
+    reorder_root_face_data(
+      root_face_input_positions,
+      m_alpha,
+      alpha_coeffs_input,
+      alpha_root);
+  
+    reorder_root_face_data(
+      root_face_input_positions,
+      m_beta,
+      beta_coeffs_input,
+      beta_root);
+  
+    // Assemble the facewise multiplication blocks.
+    std::vector<Real> next_alpha_blocks;
+    std::vector<Real> next_beta_blocks;
+  
+    assemble_root_face_multiplier_blocks<D,Real>(
+      root,
+      *elliptic_plan_,
+      alpha_root.data(),
+      p_alpha,
+      next_alpha_blocks);
+  
+    assemble_root_face_multiplier_blocks<D,Real>(
+      root,
+      *elliptic_plan_,
+      beta_root.data(),
+      p_beta,
+      next_beta_blocks);
+  
+    // Construct R_root = M_alpha + M_beta * S_root.
+    std::vector<Real> next_lu;
+  
+    assemble_root_robin_matrix<D,Real>(
+      root,
+      next_alpha_blocks,
+      next_beta_blocks,
+      next_lu);
+  
+    // Factor the new root matrix before replacing
+    // the existing valid factorization.
+    std::vector<lapack_int> next_ipiv(
+      (std::size_t)root_nb);
+  
+    const lapack_int info = LAPACKE_dgetrf(
+      LAPACK_COL_MAJOR,
+      (lapack_int)root_nb,
+      (lapack_int)root_nb,
+      next_lu.data(),
+      (lapack_int)root_nb,
+      next_ipiv.data());
+  
+    if (info != 0)
+      throw std::runtime_error(
+        "HPS elliptic solver: variable Robin LU failed");
+  
+    // Commit only after successful factorization.
+    robin_alpha_blocks = std::move(next_alpha_blocks);
+    robin_beta_blocks = std::move(next_beta_blocks);
+  
+    root_lu = std::move(next_lu);
+    root_ipiv = std::move(next_ipiv);
+  
+    variable_robin_enabled = true;
+  }
+
+
   void solve(
     const double* f_int_elementmajor,
     const double* boundary_g_rowmajor,
@@ -3325,10 +3439,20 @@ public:
       root_g_workspace);
 
     std::vector<Real>& lambda_root = node_lambdas[(std::size_t)root_id];
-    lambda_root = root_g_workspace;
-    for (int i = 0; i < root_nb; ++i)
-      lambda_root[(std::size_t)i] -= beta * root.b[(std::size_t)i];
-
+    if (variable_robin_enabled)
+    {
+        assemble_root_robin_rhs<D,Real>(
+          root,
+          robin_beta_blocks,
+          root_g_workspace,
+          lambda_root);
+    }
+    else
+    {
+      lambda_root = root_g_workspace;
+      for (int i = 0; i < root_nb; ++i)
+        lambda_root[(std::size_t)i] -= beta * root.b[(std::size_t)i];
+    }
     const lapack_int info = LAPACKE_dgetrs(
       LAPACK_COL_MAJOR,
       'N',
@@ -3351,14 +3475,56 @@ public:
       std::vector<Real> mu((std::size_t)root_nb, Real(0));
       jsimplex::apply_node_dtn<D,Real>(
         root, lambda_root.data(), mu.data());
-      for (int i = 0; i < root_nb; ++i)
+      if (variable_robin_enabled)
       {
-        root_res_inf = std::max(
-          root_res_inf,
-          std::abs(
-            alpha * lambda_root[(std::size_t)i]
-            + beta * mu[(std::size_t)i]
-            - root_g_workspace[(std::size_t)i]));
+        const int kf = root.kf;
+        const int nf = root.nfaces();
+        const std::size_t block_size =
+          (std::size_t)kf * kf;
+
+        for (int f = 0; f < nf; ++f)
+        {
+          const int row0 = f * kf;
+
+          const Real* Ma =
+            robin_alpha_blocks.data()
+            + (std::size_t)f * block_size;
+
+          const Real* Mb =
+            robin_beta_blocks.data()
+            + (std::size_t)f * block_size;
+
+          for (int i = 0; i < kf; ++i)
+          {
+            Real residual =
+              -root_g_workspace[(std::size_t)row0 + i];
+
+            for (int j = 0; j < kf; ++j)
+            {
+              const std::size_t ij =
+                (std::size_t)i + (std::size_t)kf * j;
+
+              residual +=
+                Ma[ij] * lambda_root[(std::size_t)row0 + j]
+                + Mb[ij] * mu[(std::size_t)row0 + j];
+            }
+
+            root_res_inf = std::max(
+              root_res_inf, std::abs(residual));
+          }
+        }
+      }
+      else
+      {
+        for (int i = 0; i < root_nb; ++i)
+        {
+          root_res_inf = std::max(
+            root_res_inf,
+            std::abs(
+              alpha * lambda_root[(std::size_t)i]
+              + beta * mu[(std::size_t)i]
+              - root_g_workspace[(std::size_t)i]));
+        }
       }
     }
 
@@ -3425,6 +3591,9 @@ private:
   std::vector<std::vector<Real>> node_lambdas;
   std::vector<Real> root_g_workspace;
   std::vector<Real> root_lu;
+  std::vector<Real> robin_alpha_blocks;
+  std::vector<Real> robin_beta_blocks;
+  bool variable_robin_enabled = false;
   std::vector<lapack_int> root_ipiv;
   std::unique_ptr<Plan> elliptic_plan_;
 };
