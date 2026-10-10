@@ -479,14 +479,64 @@ public:
     q_face_mult = q;
   }
 
-const MultByQQuadraturePlan<D-1,Real>& face_quadrature_plan() const
-{
-  if (!face_quadrature_plan_)
-    throw std::logic_error(
-      "EllipticPlan: face multiplication plan unavailable");
+  const MultByQQuadraturePlan<D-1,Real>& face_quadrature_plan() const
+  {
+    if (!face_quadrature_plan_)
+      throw std::logic_error(
+        "EllipticPlan: face multiplication plan unavailable");
+  
+    return *face_quadrature_plan_;
+  }
 
-  return *face_quadrature_plan_;
-}
+
+  /*
+    Assemble a restricted face multiplication operator
+  
+      M_q^{R<-N} = V_R^T diag(W .* q(Y)) V_N.
+  
+    Coefficients are expressed in the common canonical face
+    Jacobi family (pre.kappa_face).
+  
+    M_out is column-major with dimensions
+  
+      dim(Pi_R^{D-1}) x dim(Pi_N^{D-1}).
+  
+    The quadrature plan is shared; workspace is caller-owned.
+  */
+  void assemble_face_mult(
+    const Real* q_coeffs,
+    int p,
+    int N,
+    int R,
+    MultByQQuadratureWorkspace<Real>& workspace,
+    Real* M_out) const
+  {
+    const auto& face_plan = face_quadrature_plan();
+  
+    if (p < 0 || N < 0 || R < 0)
+      throw std::invalid_argument(
+        "EllipticPlan::assemble_face_mult: negative degree");
+  
+    // Ensure that the configured face quadrature integrates
+    // every polynomial triple product exactly.
+    const long long triple_degree =
+      (long long)p + N + R;
+  
+    if (triple_degree > 2LL * face_plan.q_order - 1)
+      throw std::invalid_argument(
+        "EllipticPlan::assemble_face_mult: insufficient face quadrature");
+  
+    assemble_restricted_mult_quadrature<D-1,Real>(
+      face_plan,
+      q_coeffs,
+      p,
+      N,
+      R,
+      workspace,
+      M_out);
+  }
+
+
 
   int num_plans() const
   {
