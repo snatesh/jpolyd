@@ -374,6 +374,26 @@ target_link_libraries(test_jconormal_dense_leaf PRIVATE
   lapack
 )
 
+add_executable(test_jdivergence_dense_leaf_node
+  src/test_jdivergence_dense_leaf_node.cpp
+)
+
+target_include_directories(test_jdivergence_dense_leaf_node PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jdivergence_dense_leaf_node PRIVATE
+  jpolyd
+  jpolyd_c
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include

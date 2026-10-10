@@ -585,6 +585,92 @@ inline Node<D,Real> make_elliptic_homogeneous_leaf_node(
 }
 
 
+/*
+  Materialize a divergence-form HPS leaf with co-normal flux.
+
+  Dense backend only.
+
+  expanded_coeffs:
+    Coefficients of the expanded non-divergence operator
+    in the kappa_res family.
+
+  A_base:
+    Original divergence-form diffusion tensor in the
+    base kappa family.
+
+  The co-normal map is installed before computing
+  Ulam, Uf, S, and Gf.
+*/
+template<int D, class Real>
+inline Node<D,Real> make_divergence_form_homogeneous_leaf_node(
+  const Mesh<D,Real>& mesh,
+  int element_id,
+  const RefSimplexPrecomp<D,Real>& pre,
+  const EllipticPlan<D,Real>& elliptic_plan,
+  const EllipticElementCoefficientsView<D,Real>& expanded_coeffs,
+  int p_A,
+  const Real* A_base,
+  const MultByQQuadraturePlan<D-1,Real>& face_quad,
+  MultByQQuadratureWorkspace<Real>& face_work,
+  EllipticDenseWorkspace<D,Real>& elliptic_work,
+  Leaf<D,Real>& leaf_out,
+  const typename Leaf<D,Real>::Options& leaf_options,
+  Real tau_C_base = Real(1),
+  Real atol = Real(1e-14),
+  Real btol = Real(1e-14),
+  int itnlim = 5000,
+  typename Leaf<D,Real>::SolveWorkspace* solve_workspace = nullptr)
+{
+  if (leaf_options.operator_mode != LeafOperatorMode::Dense)
+    throw std::invalid_argument(
+      "divergence-form leaf requires Dense mode");
+
+  if (!(tau_C_base > Real(0)))
+    throw std::invalid_argument(
+      "divergence-form leaf: tau_C_base must be positive");
+
+  if (!(atol >= Real(0)) || !(btol >= Real(0)) || itnlim <= 0)
+    throw std::invalid_argument(
+      "divergence-form leaf: invalid solver tolerances");
+
+  if (!A_base)
+    throw std::invalid_argument(
+      "divergence-form leaf: null diffusion coefficients");
+
+  const auto& elem = mesh.element(element_id);
+
+  typename Leaf<D,Real>::LsmrOptions opts{};
+  opts.atol = atol;
+  opts.btol = btol;
+  opts.itnlim = itnlim;
+
+  // Construct the ordinary Dense elliptic leaf.
+  leaf_out.reset(
+    pre,
+    elem.V_phys.data(),
+    elem.global_vids.data(),
+    elliptic_plan,
+    expanded_coeffs,
+    elliptic_work,
+    tau_C_base,
+    opts,
+    leaf_options);
+
+  // Replace normal flux with physical co-normal flux.
+  leaf_out.set_dense_conormal_flux(
+    p_A,
+    A_base,
+    face_quad,
+    face_work);
+
+  // Materialize HPS response operators using F_A.
+  return node_detail::materialize_homogeneous_leaf_node<D,Real>(
+    mesh,
+    element_id,
+    leaf_out,
+    solve_workspace);
+}
+
 
 /*
   Materialize reusable Poisson leaf maps
