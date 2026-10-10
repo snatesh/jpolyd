@@ -298,6 +298,63 @@ set_target_properties(
 )
 
 
+add_executable(test_jelliptic_face_mult
+  src/test_jelliptic_face_mult.cpp
+)
+
+target_include_directories(test_jelliptic_face_mult PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jelliptic_face_mult PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
+add_executable(test_jdivergence
+  src/test_jdivergence.cpp
+)
+
+target_include_directories(test_jdivergence PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jdivergence PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
+add_executable(test_jconormal
+  src/test_jconormal.cpp
+)
+
+target_include_directories(test_jconormal PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jconormal PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
