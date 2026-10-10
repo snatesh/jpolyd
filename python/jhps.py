@@ -352,6 +352,17 @@ def _set_elliptic_solver_create_signature(fn) -> None:
   fn.restype = ct.c_int
 
 
+def _set_elliptic_solver_update_variable_robin_signature(fn) -> None:
+  fn.argtypes = [
+    ct.c_void_p,  # persistent solver handle
+    ct.c_int,     # p_alpha
+    _Float64C,    # alpha coefficients, boundary-face-major
+    ct.c_int,     # p_beta
+    _Float64C,    # beta coefficients, boundary-face-major
+  ]
+  fn.restype = ct.c_int
+
+
 def _set_elliptic_solver_solve_signature(fn) -> None:
   fn.argtypes = [
     ct.c_void_p,
@@ -390,6 +401,9 @@ _set_elliptic_solver_create_signature(
 )
 _set_elliptic_solver_solve_signature(
   libjpolyd.jhps_elliptic_solver_solve
+)
+_set_elliptic_solver_update_variable_robin_signature(
+  libjpolyd.jhps_elliptic_solver_update_variable_robin
 )
 libjpolyd.jhps_elliptic_solver_destroy.argtypes = [ct.c_void_p]
 libjpolyd.jhps_elliptic_solver_destroy.restype = None
@@ -1151,6 +1165,53 @@ class HpsEllipticSolver:
       raise RuntimeError(
         "Python/C++ RefSimplexPrecomp dimension mismatch: "
         f"C++ returned {returned_dims}, Python has {expected_dims}"
+      )
+
+  def update_variable_robin(
+    self,
+    alpha_coeffs: np.ndarray,
+    beta_coeffs: np.ndarray,
+    *,
+    p_alpha: int,
+    p_beta: int,
+  ) -> None:
+    """Update the root Robin factorization without rebuilding the HPS tree.
+
+    Facewise coefficients use the common canonical face Jacobi family
+    and the same boundary-face order provided to the constructor.
+
+    alpha_coeffs: (nboundary_faces, dimPi(D-1, p_alpha))
+    beta_coeffs:  (nboundary_faces, dimPi(D-1, p_beta))
+    """
+    if not self._handle.value:
+      raise RuntimeError("HpsEllipticSolver is closed")
+
+    p_alpha = int(p_alpha)
+    p_beta = int(p_beta)
+    if not (0 <= p_alpha <= self.n and 0 <= p_beta <= self.n):
+      raise ValueError("Robin coefficient degrees must lie in [0, n]")
+
+    a = np.ascontiguousarray(alpha_coeffs, dtype=np.float64)
+    b = np.ascontiguousarray(beta_coeffs, dtype=np.float64)
+    expected_a = (self.nboundary_faces, _dim_pi(self.D - 1, p_alpha))
+    expected_b = (self.nboundary_faces, _dim_pi(self.D - 1, p_beta))
+    if a.shape != expected_a:
+      raise ValueError(f"alpha_coeffs must have shape {expected_a}, got {a.shape}")
+    if b.shape != expected_b:
+      raise ValueError(f"beta_coeffs must have shape {expected_b}, got {b.shape}")
+    if not np.all(np.isfinite(a)) or not np.all(np.isfinite(b)):
+      raise ValueError("Robin coefficients must be finite")
+
+    rc = libjpolyd.jhps_elliptic_solver_update_variable_robin(
+      self._handle,
+      ct.c_int(p_alpha),
+      a,
+      ct.c_int(p_beta),
+      b,
+    )
+    if rc != 0:
+      raise RuntimeError(
+        f"jhps_elliptic_solver_update_variable_robin failed with rc={rc}"
       )
 
   def solve(
