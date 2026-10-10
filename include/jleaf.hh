@@ -20,6 +20,7 @@
 #include <jperms.hh>
 #include <jprecomp.hh>
 #include <jlsmr.hh>
+#include <jconormal.hh>
 #ifdef TIMING
 #include <timer.hh>
 #endif
@@ -514,6 +515,52 @@ public:
 
     finalize_operator_initialization();
   }
+
+
+  /*
+    Replace the normal derivative map with the degree-n
+    co-normal flux map n^T A grad(u).
+  
+    Dense backend only.
+  
+    A_base is the original divergence-form diffusion
+    tensor in the base kappa family, not the expanded
+    principal coefficient -A in kappa_res.
+  
+    Call after reset() and BEFORE materializing the
+    homogeneous HPS leaf node.
+  */
+  void set_dense_conormal_flux(
+    int p_A,
+    const Real* A_base,
+    const MultByQQuadraturePlan<D-1,Real>& face_quad,
+    MultByQQuadratureWorkspace<Real>& workspace)
+  {
+    if (operator_mode != LeafOperatorMode::Dense)
+      throw std::invalid_argument(
+        "Leaf::set_dense_conormal_flux requires Dense mode");
+  
+    if (!pre || F.size() != (std::size_t)nb * M)
+      throw std::runtime_error(
+        "Leaf::set_dense_conormal_flux requires an initialized Dense leaf");
+  
+    std::vector<Real> conormal_F(
+      (std::size_t)nb * M, Real(0));
+  
+    jdsimplex_assemble_F_conormal_full_common_face<D,Real>(
+      *pre,
+      geom,
+      face_sigma_index.data(),
+      normal_scaled.data(),
+      p_A,
+      A_base,
+      face_quad,
+      workspace,
+      conormal_F.data());
+  
+    F.swap(conormal_F);
+  }
+
 
   bool uses_clenshaw_backend() const
   {

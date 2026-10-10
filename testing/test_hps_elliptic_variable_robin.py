@@ -259,7 +259,7 @@ def test_dimension(D, n=3):
 def main():
   parser = argparse.ArgumentParser()
   parser.add_argument('--D', default='1,2,3')
-  parser.add_argument('--n', type=int, default=3)
+  parser.add_argument('--n', type=int, default=5)
   args = parser.parse_args()
   for D in (int(x.strip()) for x in args.D.split(',') if x.strip()):
     if not 1 <= D <= 4:
