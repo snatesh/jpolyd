@@ -294,6 +294,117 @@ void fill_root_g(const jsimplex::Node<D,Real>& root, std::vector<Real>& g)
 }
 
 
+/*
+  Build the permutation from input boundary-face order
+  to root boundary-face order.
+
+  root_to_input[rf] gives the input face index
+  corresponding to root.boundary_faces[rf].
+
+  Face keys are sorted before lookup, and all supplied
+  faces are validated against the mesh boundary.
+*/
+template<int D, class Real>
+void build_root_face_permutation(
+  const jsimplex::Mesh<D,Real>& mesh,
+  const jsimplex::Node<D,Real>& root,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  std::vector<int>& root_to_input)
+{
+  using FaceKey = jsimplex::DSimplexFaceKey<D>;
+
+  if (nboundary_faces <= 0 ||
+      !boundary_face_keys_rowmajor)
+    throw std::invalid_argument(
+      "build_root_face_permutation: invalid boundary input");
+
+  if (root.nfaces() != nboundary_faces)
+    throw std::invalid_argument(
+      "build_root_face_permutation: boundary face count mismatch");
+
+  std::map<FaceKey,int> input_pos;
+
+  for (int f = 0; f < nboundary_faces; ++f)
+  {
+    FaceKey key{};
+
+    for (int i = 0; i < D; ++i)
+      key[(std::size_t)i] =
+        boundary_face_keys_rowmajor[(std::size_t)f * D + i];
+
+    std::sort(key.begin(), key.end());
+
+    if (!mesh.is_boundary_face(key))
+      throw std::invalid_argument(
+        "build_root_face_permutation: invalid boundary face");
+
+    if (!input_pos.emplace(key, f).second)
+      throw std::invalid_argument(
+        "build_root_face_permutation: duplicate boundary face");
+  }
+
+  root_to_input.resize((std::size_t)root.nfaces());
+
+  for (int rf = 0; rf < root.nfaces(); ++rf)
+  {
+    const FaceKey& key =
+      root.boundary_faces[(std::size_t)rf];
+
+    const auto it = input_pos.find(key);
+
+    if (it == input_pos.end())
+      throw std::invalid_argument(
+        "build_root_face_permutation: missing root boundary face");
+
+    root_to_input[(std::size_t)rf] = it->second;
+  }
+}
+
+
+/*
+  Reorder facewise modal data from input boundary-face
+  order into root boundary-face order.
+
+  root_to_input[rf] gives the corresponding input face.
+
+  Each face contains ncoeff contiguous modal coefficients.
+  Works for g, alpha, beta, or other facewise data.
+*/
+template<class Real>
+void reorder_root_face_data(
+  const std::vector<int>& root_to_input,
+  int ncoeff,
+  const Real* input,
+  std::vector<Real>& output)
+{
+  if (ncoeff <= 0 || !input)
+    throw std::invalid_argument(
+      "reorder_root_face_data: invalid input");
+
+  const int nf = static_cast<int>(root_to_input.size());
+
+  output.resize((std::size_t)nf * ncoeff);
+
+  for (int rf = 0; rf < nf; ++rf)
+  {
+    const int input_f = root_to_input[(std::size_t)rf];
+
+    if (input_f < 0 || input_f >= nf)
+      throw std::invalid_argument(
+        "reorder_root_face_data: invalid permutation");
+
+    const Real* src =
+      input + (std::size_t)input_f * ncoeff;
+
+    Real* dst =
+      output.data() + (std::size_t)rf * ncoeff;
+
+    std::copy_n(src, ncoeff, dst);
+  }
+}
+
+
 template<int D, class Real>
 void fill_root_g_from_face_data(
   const jsimplex::Mesh<D,Real>& mesh,
@@ -3141,16 +3252,12 @@ public:
 
     // Validate and cache the boundary-face ordering once.  The solve path
     // later accepts only the boundary data values in this same input order.
-    std::vector<Real> dummy_g(
-      (std::size_t)nboundary_faces * kf, Real(0));
-    std::vector<Real> root_g;
-    fill_root_g_from_face_data(
+    build_root_face_permutation(
       mesh,
       root,
       nboundary_faces,
       boundary_face_keys.data(),
-      dummy_g.data(),
-      root_g);
+      root_face_input_positions);
 
     // alpha*I + beta*S_root is source-independent, so factor it once.
     root_lu = root.S;
@@ -3201,13 +3308,11 @@ public:
         nodes[(std::size_t)child_A],
         nodes[(std::size_t)child_B]);
     }
-
+    
     Node& root = nodes[(std::size_t)root_id];
-    fill_root_g_from_face_data(
-      mesh,
-      root,
-      nboundary_faces,
-      boundary_face_keys.data(),
+    reorder_root_face_data(
+      root_face_input_positions,
+      kf,
       boundary_g_rowmajor,
       root_g_workspace);
 
@@ -3307,6 +3412,7 @@ private:
   Mesh mesh;
   std::vector<int> merge_pairs;
   std::vector<int> boundary_face_keys;
+  std::vector<int> root_face_input_positions;
   std::vector<Node> nodes;
   std::vector<std::vector<Real>> node_lambdas;
   std::vector<Real> root_g_workspace;
