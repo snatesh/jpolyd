@@ -1579,9 +1579,10 @@ struct KMat
         std::cerr << "discover_stencil_stable: alloc failed\n";
         std::exit(1);
       }
-  
+       const unsigned int q_test =
+        std::max(q, static_cast<unsigned int>(n_test + 1)); 
       // Build pruned dense (your existing routine)
-      build_tprod_natural_pruned_dense(n_test, q, kappa_src, kappa_tgt, Kdense); 
+      build_tprod_natural_pruned_dense(n_test, q_test, kappa_src, kappa_tgt, Kdense); 
   
       // Build alpha_table for this n_test
       Basis<D,Real>::build_alpha_table(n_test, alpha_table);
