@@ -3625,6 +3625,15 @@ public:
     
       jsimplex::set_leaf_source<D,Real>(
         nodes[(std::size_t)e], f_e);
+
+      if (high_conormal_enabled_)
+      {
+        jsimplex::update_high_conormal_leaf_source<D,Real>(
+          high_conormal_observations_[(std::size_t)e],
+          nodes[(std::size_t)e],
+          f_e);
+      }
+
     }
 
 
@@ -3637,6 +3646,18 @@ public:
         nodes[(std::size_t)parent_id],
         nodes[(std::size_t)child_A],
         nodes[(std::size_t)child_B]);
+
+      if (high_conormal_enabled_)
+      {
+        jsimplex::update_high_conormal_merge_source<D,Real>(
+          nodes[(std::size_t)parent_id],
+          nodes[(std::size_t)child_A],
+          high_conormal_observations_[(std::size_t)child_A],
+          nodes[(std::size_t)child_B],
+          high_conormal_observations_[(std::size_t)child_B],
+          high_conormal_observations_[(std::size_t)parent_id]);
+      }
+
     }
     
     Node& root = nodes[(std::size_t)root_id];
