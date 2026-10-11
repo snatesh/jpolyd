@@ -413,6 +413,26 @@ target_link_libraries(test_jconormal_high PRIVATE
   lapack
 )
 
+add_executable(test_jconormal_high_leaf_response
+  src/test_jconormal_high_leaf_response.cpp
+)
+
+target_include_directories(test_jconormal_high_leaf_response PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jconormal_high_leaf_response PRIVATE
+  jpolyd
+  jpolyd_c
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
