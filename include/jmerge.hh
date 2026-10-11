@@ -605,6 +605,247 @@ inline void update_merge_source(
   parent.validate();
 }
 
+/*
+  High-order PHYSICAL co-normal observations on selected exterior faces.
+  Face rows are in faces[] order, kH consecutive modes per face.
+
+    q_H = H * lambda + z.
+
+  H: (faces.size()*kH) x node.nb(), column-major.
+  z: faces.size()*kH.
+  Wf: (faces.size()*kH) x leaf.source_dim, leaf nodes only.
+
+  This is deliberately separate from Node: the standard degree-n HPS
+  skeleton, numerical flux, and merge algebra are unchanged.
+*/
+template<int D, class Real>
+struct HighConormalObservation
+{
+  using FaceKey = DSimplexFaceKey<D>;
+
+  int kH = 0;
+  std::vector<FaceKey> faces;
+  std::vector<Real> H;
+  std::vector<Real> z;
+  std::vector<Real> Wf;
+
+  int nrows() const { return kH * static_cast<int>(faces.size()); }
+};
+
+/* Build the leaf observation from the already tested Q_H*Ulam, Q_H*Uf. */
+template<int D, class Real>
+inline HighConormalObservation<D,Real> make_high_conormal_leaf_observation(
+  const Node<D,Real>& leaf,
+  int kH,
+  const std::vector<int>& selected_local_faces,
+  const std::vector<Real>& H,
+  const std::vector<Real>& Wf)
+{
+  if (!leaf.is_leaf || kH < 0 ||
+      static_cast<int>(selected_local_faces.size()) > leaf.nfaces())
+    throw std::invalid_argument("high leaf observation: invalid leaf/faces");
+
+  HighConormalObservation<D,Real> out;
+  out.kH = kH;
+  for (int f : selected_local_faces)
+  {
+    if (f < 0 || f >= leaf.nfaces() ||
+        std::find(out.faces.begin(), out.faces.end(),
+                  leaf.boundary_faces[(std::size_t)f]) != out.faces.end())
+      throw std::invalid_argument("high leaf observation: invalid/duplicate face");
+    out.faces.push_back(leaf.boundary_faces[(std::size_t)f]);
+  }
+  const int nh = out.nrows();
+  if (H.size() != (std::size_t)nh * leaf.nb() ||
+      Wf.size() != (std::size_t)nh * leaf.source_dim)
+    throw std::invalid_argument("high leaf observation: matrix size mismatch");
+
+  out.H = H;
+  out.Wf = Wf;
+  out.z.assign((std::size_t)nh, Real(0));
+  return out;
+}
+
+/* Refresh only the source-dependent leaf offset; H and Wf remain fixed. */
+template<int D, class Real>
+inline void update_high_conormal_leaf_source(
+  HighConormalObservation<D,Real>& obs,
+  const Node<D,Real>& leaf,
+  const Real* f_int)
+{
+  if (!leaf.is_leaf ||
+      obs.H.size() != (std::size_t)obs.nrows() * leaf.nb() ||
+      obs.Wf.size() != (std::size_t)obs.nrows() * leaf.source_dim ||
+      (leaf.source_dim > 0 && obs.nrows() > 0 && !f_int))
+    throw std::invalid_argument("high leaf source: incompatible observation/source");
+
+  obs.z.assign((std::size_t)obs.nrows(), Real(0));
+  for (int j = 0; j < leaf.source_dim; ++j)
+    for (int i = 0; i < obs.nrows(); ++i)
+      obs.z[(std::size_t)i] +=
+        obs.Wf[(std::size_t)i + (std::size_t)obs.nrows() * j] * f_int[j];
+}
+
+namespace high_conormal_detail {
+
+template<int D, class Real>
+inline int face_slot(
+  const HighConormalObservation<D,Real>& obs,
+  const DSimplexFaceKey<D>& key)
+{
+  const auto it = std::find(obs.faces.begin(), obs.faces.end(), key);
+  return it == obs.faces.end() ? -1 : static_cast<int>(it - obs.faces.begin());
+}
+
+template<int D, class Real>
+inline void check_child(
+  const Node<D,Real>& child,
+  const HighConormalObservation<D,Real>& obs,
+  const std::vector<DSimplexFaceKey<D>>& exterior)
+{
+  if (obs.kH < 0 ||
+      obs.H.size() != (std::size_t)obs.nrows() * child.nb() ||
+      obs.z.size() != (std::size_t)obs.nrows())
+    throw std::invalid_argument("high merge: child observation size mismatch");
+  for (std::size_t i = 0; i < obs.faces.size(); ++i)
+  {
+    if (std::find(exterior.begin(), exterior.end(), obs.faces[i]) == exterior.end())
+      throw std::invalid_argument("high merge: selected face is not exterior");
+    if (std::find(obs.faces.begin(), obs.faces.begin() + i, obs.faces[i])
+        != obs.faces.begin() + i)
+      throw std::invalid_argument("high merge: duplicate selected face");
+  }
+}
+
+} // namespace high_conormal_detail
+
+/*
+  Refresh z after the ordinary update_merge_source(parent,A,B) has refreshed r.
+  Child observations must already have their current source offsets.
+*/
+template<int D, class Real>
+inline void update_high_conormal_merge_source(
+  const Node<D,Real>& parent,
+  const Node<D,Real>& A,
+  const HighConormalObservation<D,Real>& obsA,
+  const Node<D,Real>& B,
+  const HighConormalObservation<D,Real>& obsB,
+  HighConormalObservation<D,Real>& out)
+{
+  if (!parent.is_merge || parent.kf != A.kf || parent.kf != B.kf ||
+      out.kH != obsA.kH || out.kH != obsB.kH ||
+      obsA.H.size() != (std::size_t)obsA.nrows() * A.nb() ||
+      obsB.H.size() != (std::size_t)obsB.nrows() * B.nb() ||
+      obsA.z.size() != (std::size_t)obsA.nrows() ||
+      obsB.z.size() != (std::size_t)obsB.nrows() ||
+      out.H.size() != (std::size_t)out.nrows() * parent.nb() ||
+      parent.merge.r.size() != (std::size_t)parent.merge.nI)
+    throw std::invalid_argument("high merge source: incompatible dimensions");
+  const auto& md = parent.merge;
+  const int nh = out.nrows();
+  out.z.assign((std::size_t)nh, Real(0));
+
+  for (int f = 0; f < static_cast<int>(out.faces.size()); ++f)
+  {
+    const int fa = high_conormal_detail::face_slot<D,Real>(obsA, out.faces[(std::size_t)f]);
+    const int fb = high_conormal_detail::face_slot<D,Real>(obsB, out.faces[(std::size_t)f]);
+    if ((fa >= 0) == (fb >= 0))
+      throw std::invalid_argument("high merge source: missing/ambiguous face");
+    const bool fromA = fa >= 0;
+    const auto& childObs = fromA ? obsA : obsB;
+    const auto& I_idx = fromA ? md.A_I_idx : md.B_I_idx;
+    const int row0 = (fromA ? fa : fb) * out.kH;
+    for (int k = 0; k < out.kH; ++k)
+    {
+      Real value = childObs.z[(std::size_t)(row0 + k)];
+      for (int i = 0; i < md.nI; ++i)
+        value += childObs.H[(std::size_t)(row0 + k)
+          + (std::size_t)childObs.nrows() * I_idx[(std::size_t)i]]
+          * md.r[(std::size_t)i];
+      out.z[(std::size_t)(f * out.kH + k)] = value;
+    }
+  }
+}
+
+/*
+  Compose the high-flux observation through the *existing* HPS merge.
+  All output face rows follow parent.boundary_faces order; inactive children
+  contribute zero rows. No high interface unknowns are introduced.
+*/
+template<int D, class Real>
+inline HighConormalObservation<D,Real> merge_high_conormal_observations(
+  const Node<D,Real>& parent,
+  const Node<D,Real>& A,
+  const HighConormalObservation<D,Real>& obsA,
+  const Node<D,Real>& B,
+  const HighConormalObservation<D,Real>& obsB)
+{
+  if (!parent.is_merge || parent.kf != A.kf || parent.kf != B.kf ||
+      obsA.kH != obsB.kH)
+    throw std::invalid_argument("high merge: incompatible nodes/kH");
+  const auto& md = parent.merge;
+  if (md.nAE + md.nBE != parent.nb() || md.nI <= 0)
+    throw std::invalid_argument("high merge: invalid interface partition");
+  high_conormal_detail::check_child<D,Real>(A, obsA, md.EA_faces);
+  high_conormal_detail::check_child<D,Real>(B, obsB, md.EB_faces);
+
+  HighConormalObservation<D,Real> out;
+  out.kH = obsA.kH;
+  for (const auto& face : parent.boundary_faces)
+  {
+    if (high_conormal_detail::face_slot<D,Real>(obsA, face) >= 0 ||
+        high_conormal_detail::face_slot<D,Real>(obsB, face) >= 0)
+      out.faces.push_back(face);
+  }
+
+  const int nh = out.nrows();
+  out.H.assign((std::size_t)nh * parent.nb(), Real(0));
+
+  for (int f = 0; f < static_cast<int>(out.faces.size()); ++f)
+  {
+    const int fa = high_conormal_detail::face_slot<D,Real>(obsA, out.faces[(std::size_t)f]);
+    const int fb = high_conormal_detail::face_slot<D,Real>(obsB, out.faces[(std::size_t)f]);
+    if ((fa >= 0) == (fb >= 0))
+      throw std::runtime_error("high merge: ambiguous observation ownership");
+
+    const bool fromA = fa >= 0;
+    const auto& childObs = fromA ? obsA : obsB;
+    const auto& E_idx = fromA ? md.A_E_idx : md.B_E_idx;
+    const auto& I_idx = fromA ? md.A_I_idx : md.B_I_idx;
+    const int nE = fromA ? md.nAE : md.nBE;
+    const int parent_col0 = fromA ? 0 : md.nAE;
+    const int child_row0 = (fromA ? fa : fb) * out.kH;
+
+    for (int k = 0; k < out.kH; ++k)
+    {
+      const int child_row = child_row0 + k;
+      const int parent_row = f * out.kH + k;
+
+      // Direct dependence on this child's surviving exterior trace.
+      for (int j = 0; j < nE; ++j)
+        out.H[(std::size_t)parent_row + (std::size_t)nh * (parent_col0 + j)] +=
+          childObs.H[(std::size_t)child_row
+            + (std::size_t)childObs.nrows() * E_idx[(std::size_t)j]];
+
+      // Dependence of eliminated interface trace on *both* exterior sides.
+      for (int i = 0; i < md.nI; ++i)
+      {
+        const Real hij = childObs.H[(std::size_t)child_row
+          + (std::size_t)childObs.nrows() * I_idx[(std::size_t)i]];
+        for (int j = 0; j < md.nAE; ++j)
+          out.H[(std::size_t)parent_row + (std::size_t)nh * j] +=
+            hij * md.R_A[(std::size_t)i + (std::size_t)md.nI * j];
+        for (int j = 0; j < md.nBE; ++j)
+          out.H[(std::size_t)parent_row + (std::size_t)nh * (md.nAE + j)] +=
+            hij * md.R_B[(std::size_t)i + (std::size_t)md.nI * j];
+      }
+    }
+  }
+
+  update_high_conormal_merge_source(parent, A, obsA, B, obsB, out);
+  return out;
+}
+
 template<int D, class Real>
 inline void merge_compute_gamma(
   const Node<D,Real>& parent,
