@@ -14,6 +14,7 @@
 #include <jelliptic.hh>
 #include <jmesh.hh>
 #include <jleaf.hh>
+#include <jconormal.hh>
 #ifdef TIMING
 #include <timer.hh>
 #endif
@@ -388,6 +389,104 @@ inline Node<D,Real> materialize_homogeneous_leaf_node(
 }
 
 } // namespace node_detail
+
+
+ /*
+  High-order PHYSICAL co-normal flux response on selected exterior leaf faces.
+
+  H_out  = Q_H * Ulam : (nselected*kH) x nb
+  Wf_out = Q_H * Uf   : (nselected*kH) x m_int
+
+  These maps use the same INTERNAL source f_int as Node::Uf.  For a
+  divergence-form physical right-hand side f, f_int = -f.
+  Neither Q_H nor these response maps contains the tau penalty.
+
+  Face indices are local to the leaf, in the requested output row order.
+  They must be selected from genuine exterior faces by the caller.
+  The input face quadrature must be configured through p_H=n+p_A-1,
+  not merely through n as for the degree-n numerical flux.
+*/
+template<int D, class Real>
+inline void build_dense_leaf_high_conormal_response(
+  const Leaf<D,Real>& leaf,
+  const Node<D,Real>& node,
+  int p_A,
+  const Real* A_base,
+  const MultByQQuadraturePlan<D-1,Real>& face_quad,
+  MultByQQuadratureWorkspace<Real>& face_work,
+  const std::vector<int>& selected_faces,
+  std::vector<Real>& H_out,
+  std::vector<Real>& Wf_out)
+{
+  if (leaf.operator_mode != LeafOperatorMode::Dense)
+    throw std::invalid_argument(
+      "high co-normal response requires Dense leaf mode");
+  if (!leaf.pre || !node.is_leaf ||
+      node.vol_dim != leaf.M || node.source_dim != leaf.m_int ||
+      node.nb() != leaf.nb ||
+      node.Ulam.size() != (std::size_t)leaf.M * leaf.nb ||
+      node.Uf.size() != (std::size_t)leaf.M * leaf.m_int)
+    throw std::invalid_argument(
+      "high co-normal response: incompatible leaf/node");
+  if (p_A < 0 || p_A > leaf.n)
+    throw std::invalid_argument(
+      "high co-normal response: invalid diffusion degree");
+  if (selected_faces.size() > (std::size_t)(D + 1))
+    throw std::invalid_argument(
+      "high co-normal response: too many faces");
+
+  std::array<bool,D+1> seen{};
+  for (int face : selected_faces)
+  {
+    if (face < 0 || face >= D + 1 || seen[(std::size_t)face])
+      throw std::invalid_argument(
+        "high co-normal response: invalid/duplicate face");
+    seen[(std::size_t)face] = true;
+  }
+
+  const int p_H = leaf.n + std::max(0, p_A - 1);
+  const int k_H = Basis<D-1,Real>::dim_Pi(p_H) - leaf.kf;
+  const int nh = static_cast<int>(selected_faces.size()) * k_H;
+  const int M = leaf.M;
+
+  H_out.assign((std::size_t)nh * leaf.nb, Real(0));
+  Wf_out.assign((std::size_t)nh * leaf.m_int, Real(0));
+  if (nh == 0)
+    return;
+
+  if (!A_base)
+    throw std::invalid_argument(
+      "high co-normal response: null diffusion coefficients");
+
+  std::vector<Real> QH((std::size_t)nh * M, Real(0));
+  jdsimplex_assemble_QH_conormal_selected_common_face<D,Real>(
+    *leaf.pre,
+    leaf.geom,
+    leaf.face_sigma_index.data(),
+    leaf.normal_scaled.data(),
+    p_A,
+    A_base,
+    face_quad,
+    face_work,
+    static_cast<int>(selected_faces.size()),
+    selected_faces.data(),
+    QH.data());
+
+  detail::BlasGemm<Real>::run(
+    CblasColMajor, CblasNoTrans, CblasNoTrans,
+    nh, leaf.nb, M,
+    Real(1), QH.data(), nh,
+    node.Ulam.data(), M,
+    Real(0), H_out.data(), nh);
+
+  detail::BlasGemm<Real>::run(
+    CblasColMajor, CblasNoTrans, CblasNoTrans,
+    nh, leaf.m_int, M,
+    Real(1), QH.data(), nh,
+    node.Uf.data(), M,
+    Real(0), Wf_out.data(), nh);
+}
+
 
 /*
   Materialize reusable elliptic leaf maps
