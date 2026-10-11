@@ -3146,17 +3146,47 @@ public:
           elliptic_plan.mR + (D + 1) * pre.kf,
           pre.M));
     }
-
-
+    
     std::vector<jsimplex::MultByQQuadratureWorkspace<Real>> face_mult_workspaces;
     if (input_form_ == EllipticInputForm::Divergence)
     {
       face_mult_workspaces.resize((std::size_t)max_threads);
     }
 
+    // High-order co-normal observations are required only
+    // when the physical flux can exceed face degree n.
+    high_conormal_enabled_ =
+      input_form_ == EllipticInputForm::Divergence
+      && p2 >= 2
+      && D > 1;
+    
+    using HighFacePlan =
+      jsimplex::MultByQQuadraturePlan<D-1,Real>;
+    
+    using HighFaceWorkspace =
+      jsimplex::MultByQQuadratureWorkspace<Real>;
+    
+    std::unique_ptr<HighFacePlan> high_face_plan;
+    std::vector<HighFaceWorkspace> high_face_workspaces;
+    
+    if (high_conormal_enabled_)
+    {
+      const int p_H = n + p2 - 1;
+      const int q_H = (p_H + n + p2) / 2 + 1;
+    
+      high_face_plan = std::make_unique<HighFacePlan>(
+        pre.kappa_face.data(),
+        p_H,
+        q_H);
+    
+      high_face_workspaces.resize((std::size_t)max_threads);
+    
+      high_conormal_observations_.resize(
+        (std::size_t)nelem + nmerge);
+    }
 
-    std::vector<unsigned char> thread_touched(
-      (std::size_t)max_threads, 0);
+
+    std::vector<unsigned char> thread_touched((std::size_t)max_threads, 0);
     std::exception_ptr first_leaf_exception;
 
 #pragma omp parallel
@@ -3271,6 +3301,50 @@ public:
             }
           }
 
+          if (high_conormal_enabled_)
+          {
+            const auto& elem = mesh.element(e);
+          
+            // Select only true global exterior faces.
+            std::vector<int> selected_faces;
+            selected_faces.reserve(D + 1);
+          
+            for (int f = 0; f < D + 1; ++f)
+            {
+              if (mesh.is_boundary_face(
+                    elem.face_keys[(std::size_t)f]))
+              {
+                selected_faces.push_back(f);
+              }
+            }
+          
+            std::vector<Real> H_leaf;
+            std::vector<Real> Wf_leaf;
+          
+            jsimplex::build_dense_leaf_high_conormal_response<D,Real>(
+              elliptic_leaves[(std::size_t)e],
+              leaf_node,
+              p2,
+              A_input,
+              *high_face_plan,
+              high_face_workspaces[(std::size_t)tid],
+              selected_faces,
+              H_leaf,
+              Wf_leaf);
+          
+            const int p_H = n + p2 - 1;
+            const int k_H =
+              jsimplex::Basis<D-1,Real>::dim_Pi(p_H) - kf;
+          
+            high_conormal_observations_[(std::size_t)e] =
+              jsimplex::make_high_conormal_leaf_observation<D,Real>(
+                leaf_node,
+                k_H,
+                selected_faces,
+                H_leaf,
+                Wf_leaf);
+          }
+
 
           validate_leaf_backend_storage(elliptic_leaves[(std::size_t)e]);
           elliptic_leaves[(std::size_t)e] = Leaf{};
@@ -3328,6 +3402,19 @@ public:
         nodes[(std::size_t)child_B],
         child_A,
         child_B);
+
+
+      if (high_conormal_enabled_)
+      {
+        high_conormal_observations_[(std::size_t)parent_id] =
+          jsimplex::merge_high_conormal_observations<D,Real>(
+            nodes[(std::size_t)parent_id],
+            nodes[(std::size_t)child_A],
+            high_conormal_observations_[(std::size_t)child_A],
+            nodes[(std::size_t)child_B],
+            high_conormal_observations_[(std::size_t)child_B]);
+      }
+
 
       built[(std::size_t)parent_id] = 1;
       active[(std::size_t)child_A] = 0;
@@ -3718,6 +3805,8 @@ private:
   std::vector<lapack_int> root_ipiv;
   std::unique_ptr<Plan> elliptic_plan_;
   EllipticInputForm input_form_ = EllipticInputForm::Expanded;
+  bool high_conormal_enabled_ = false;
+  std::vector<jsimplex::HighConormalObservation<D,Real>> high_conormal_observations_;
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
