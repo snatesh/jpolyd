@@ -1325,11 +1325,8 @@ class HpsDivergenceSolver(HpsEllipticSolver):
 
   Boundary data are physical co-normal Robin moments:
     alpha*u + beta*(n.T @ A @ grad(u)) = g,
-  with spatially constant alpha and beta. The current scalar Robin root
-  matrix does not invoke the variable face multiplication backend.
-
-  Variable Robin updates are intentionally unavailable until high-order
-  co-normal flux corrections have been implemented and tested.
+  with scalar or facewise polynomial alpha and beta. Variable Robin updates
+  use the high-order co-normal flux correction in the Dense backend.
   """
 
   def __init__(
@@ -1385,12 +1382,6 @@ class HpsDivergenceSolver(HpsEllipticSolver):
     )
     # Result metadata inherited from HpsEllipticResult uses p2, p1, p0;
     # for this mode those denote original input degrees p_A, p_b, p_c.
-
-  def update_variable_robin(self, *args, **kwargs) -> None:
-    raise NotImplementedError(
-      "variable Robin in divergence form requires the planned "
-      "high-order co-normal flux correction"
-    )
 
 
 def chain_simplex_mesh(D: int, nelem: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

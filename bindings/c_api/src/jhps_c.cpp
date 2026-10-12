@@ -545,6 +545,190 @@ void assemble_root_face_multiplier_blocks(
 
 
 /*
+  Assemble the high-mode columns of the root-face
+  Robin beta multiplication operator.
+
+  On each face:
+
+    M_beta^{n <- p_H} = [ M_LL | M_LH ]
+
+  Only M_LH is retained.
+
+  beta_coeffs_root_order:
+    root.nfaces() x dimPi(D-1, p_beta)
+
+  Output:
+    One column-major kf x kH block per root face,
+    stored in root.boundary_faces order.
+*/
+template<int D, class Real>
+void assemble_root_high_beta_blocks(
+  const jsimplex::Node<D,Real>& root,
+  const jsimplex::EllipticPlan<D,Real>& plan,
+  int p_beta,
+  const Real* beta_coeffs_root_order,
+  int p_H,
+  std::vector<Real>& high_blocks)
+{
+  const int n = plan.n;
+  const int nf = root.nfaces();
+
+  if (p_beta < 0 || p_beta > n || p_H < n)
+    throw std::invalid_argument(
+      "assemble_root_high_beta_blocks: invalid degrees");
+
+  if (nf > 0 && !beta_coeffs_root_order)
+    throw std::invalid_argument(
+      "assemble_root_high_beta_blocks: null beta coefficients");
+
+  const int kf =
+    jsimplex::Basis<D-1,Real>::dim_Pi(n);
+
+  const int k_all =
+    jsimplex::Basis<D-1,Real>::dim_Pi(p_H);
+
+  const int kH = k_all - kf;
+
+  const int k_beta =
+    jsimplex::Basis<D-1,Real>::dim_Pi(p_beta);
+
+  if (root.nb() != nf * kf)
+    throw std::invalid_argument(
+      "assemble_root_high_beta_blocks: root dimension mismatch");
+
+  const std::size_t block_size =
+    (std::size_t)kf * kH;
+
+  high_blocks.assign(
+    (std::size_t)nf * block_size, Real(0));
+
+  // No high modes, or constant beta:
+  // multiplication by a constant cannot couple
+  // high orthogonal face modes into the low space.
+  if (kH == 0 || p_beta == 0)
+    return;
+
+  jsimplex::MultByQQuadratureWorkspace<Real> workspace;
+
+  std::vector<Real> full_block(
+    (std::size_t)kf * k_all, Real(0));
+
+  for (int f = 0; f < nf; ++f)
+  {
+    const Real* beta_f =
+      beta_coeffs_root_order
+      + (std::size_t)f * k_beta;
+
+    plan.assemble_face_mult(
+      beta_f,
+      p_beta,
+      p_H,
+      n,
+      workspace,
+      full_block.data());
+
+    // Column-major extraction:
+    // columns [0, kf) are the low-mode block;
+    // columns [kf, k_all) are the high-mode block.
+    const Real* high_columns =
+      full_block.data() + (std::size_t)kf * kf;
+
+    Real* high_f =
+      high_blocks.data() + (std::size_t)f * block_size;
+
+    std::copy(
+      high_columns,
+      high_columns + block_size,
+      high_f);
+  }
+}
+
+
+template<int D, class Real>
+void add_root_high_robin_matrix(
+  const jsimplex::Node<D,Real>& root,
+  const jsimplex::HighConormalObservation<D,Real>& high,
+  const std::vector<Real>& beta_high_blocks,
+  std::vector<Real>& R_root)
+{
+  const int nf = root.nfaces();
+  const int kf = root.kf;
+  const int kH = high.kH;
+  const int nb = root.nb();
+  const int nh = high.nrows();
+
+  if (high.faces != root.boundary_faces ||
+      high.H.size() != (std::size_t)nh * nb ||
+      beta_high_blocks.size() != (std::size_t)nf * kf * kH ||
+      R_root.size() != (std::size_t)nb * nb)
+    throw std::invalid_argument(
+      "add_root_high_robin_matrix: incompatible dimensions");
+
+  if (kH == 0)
+    return;
+
+  for (int f = 0; f < nf; ++f)
+  {
+    const Real* Mb =
+      beta_high_blocks.data() + (std::size_t)f * kf * kH;
+
+    const Real* Hf =
+      high.H.data() + (std::size_t)f * kH;
+
+    Real* Rf =
+      R_root.data() + (std::size_t)f * kf;
+
+    jsimplex::detail::BlasGemm<Real>::run(
+      CblasColMajor, CblasNoTrans, CblasNoTrans,
+      kf, nb, kH,
+      Real(1), Mb, kf,
+      Hf, nh,
+      Real(1), Rf, nb);
+  }
+}
+
+
+template<int D, class Real>
+void add_root_high_beta_projection(
+  const jsimplex::Node<D,Real>& root,
+  const jsimplex::HighConormalObservation<D,Real>& high,
+  const std::vector<Real>& beta_high_blocks,
+  const Real* q_high,
+  Real scale,
+  Real* output)
+{
+  const int nf = root.nfaces();
+  const int kf = root.kf;
+  const int kH = high.kH;
+
+  if (high.faces != root.boundary_faces ||
+      beta_high_blocks.size() != (std::size_t)nf * kf * kH)
+    throw std::invalid_argument(
+      "add_root_high_beta_projection: incompatible dimensions");
+
+  if (kH == 0)
+    return;
+
+  if (!q_high || !output)
+    throw std::invalid_argument(
+      "add_root_high_beta_projection: null pointer");
+
+  for (int f = 0; f < nf; ++f)
+  {
+    const Real* Mb =
+      beta_high_blocks.data() + (std::size_t)f * kf * kH;
+
+    const Real* qf = q_high + (std::size_t)f * kH;
+    Real* out_f = output + (std::size_t)f * kf;
+
+    for (int j = 0; j < kH; ++j)
+      for (int i = 0; i < kf; ++i)
+        out_f[i] += scale * Mb[i + (std::size_t)kf * j] * qf[j];
+  }
+}
+
+
+/*
   Assemble the variable-coefficient root Robin matrix
 
     R_root = M_alpha + M_beta * S_root.
@@ -3074,9 +3258,17 @@ public:
       need_clenshaw_actions);
     
     // Configure face multiplication for variable Robin coefficients
-    // of degree at most n, with degree-n input/output spaces.
+    // and handle the divergence form high order case
+    const int robin_face_input_degree =
+      input_form_ == EllipticInputForm::Divergence
+      && p2 >= 2
+      && D > 1
+        ? n + p2 - 1
+        : n;
     elliptic_plan_->configure_face_multiplication(
-      pre, n, n);
+      pre, n, robin_face_input_degree);
+
+
     
     // Preserve all existing constructor code using elliptic_plan.
     const Plan& elliptic_plan = *elliptic_plan_;
@@ -3173,7 +3365,8 @@ public:
     {
       const int p_H = n + p2 - 1;
       const int q_H = (p_H + n + p2) / 2 + 1;
-    
+      high_conormal_degree_ = p_H;   
+ 
       high_face_plan = std::make_unique<HighFacePlan>(
         pre.kappa_face.data(),
         p_H,
@@ -3560,6 +3753,41 @@ public:
       next_alpha_blocks,
       next_beta_blocks,
       next_lu);
+
+    std::vector<Real> next_beta_high_blocks;
+    
+    if (high_conormal_enabled_)
+    {
+      // Reorder beta coefficients into root boundary-face order.
+      const int k_beta =
+        jsimplex::Basis<D-1,Real>::dim_Pi(p_beta);
+    
+      std::vector<Real> beta_root_for_high;
+    
+      reorder_root_face_data<Real>(
+        root_face_input_positions,
+        k_beta,
+        beta_coeffs_input,
+        beta_root_for_high);
+    
+      assemble_root_high_beta_blocks<D,Real>(
+        root,
+        *elliptic_plan_,
+        p_beta,
+        beta_root_for_high.data(),
+        high_conormal_degree_,
+        next_beta_high_blocks);
+    
+      const auto& high =
+        high_conormal_observations_[(std::size_t)root_id];
+    
+      add_root_high_robin_matrix<D,Real>(
+        root,
+        high,
+        next_beta_high_blocks,
+        next_lu);
+    }
+
   
     // Factor the new root matrix before replacing
     // the existing valid factorization.
@@ -3581,6 +3809,7 @@ public:
     // Commit only after successful factorization.
     robin_alpha_blocks = std::move(next_alpha_blocks);
     robin_beta_blocks = std::move(next_beta_blocks);
+    robin_beta_high_blocks = std::move(next_beta_high_blocks);
   
     root_lu = std::move(next_lu);
     root_ipiv = std::move(next_ipiv);
@@ -3675,6 +3904,22 @@ public:
           robin_beta_blocks,
           root_g_workspace,
           lambda_root);
+
+        if (high_conormal_enabled_)
+        {
+          const auto& high =
+            high_conormal_observations_[(std::size_t)root_id];
+
+          // lambda_root currently holds the Robin RHS.
+          // Subtract M_beta^{LH} z_root.
+          add_root_high_beta_projection<D,Real>(
+            root,
+            high,
+            robin_beta_high_blocks,
+            high.z.data(),
+            Real(-1),
+            lambda_root.data());
+        }
     }
     else
     {
@@ -3704,6 +3949,36 @@ public:
       std::vector<Real> mu((std::size_t)root_nb, Real(0));
       jsimplex::apply_node_dtn<D,Real>(
         root, lambda_root.data(), mu.data());
+
+      std::vector<Real> high_robin_term(
+        (std::size_t)root_nb, Real(0));
+      
+      if (variable_robin_enabled && high_conormal_enabled_)
+      {
+        const auto& high =
+          high_conormal_observations_[(std::size_t)root_id];
+      
+        const int nh = high.nrows();
+      
+        // Physical high-order co-normal flux:
+        // q_H = H_root * lambda_root + z_root.
+        std::vector<Real> q_high = high.z;
+      
+        for (int j = 0; j < root_nb; ++j)
+          for (int i = 0; i < nh; ++i)
+            q_high[(std::size_t)i] +=
+              high.H[(std::size_t)i + (std::size_t)nh * j]
+              * lambda_root[(std::size_t)j];
+      
+        add_root_high_beta_projection<D,Real>(
+          root,
+          high,
+          robin_beta_high_blocks,
+          q_high.data(),
+          Real(1),
+          high_robin_term.data());
+      }
+
       if (variable_robin_enabled)
       {
         const int kf = root.kf;
@@ -3737,7 +4012,7 @@ public:
                 Ma[ij] * lambda_root[(std::size_t)row0 + j]
                 + Mb[ij] * mu[(std::size_t)row0 + j];
             }
-
+            residual += high_robin_term[(std::size_t)(f * kf + i)];
             root_res_inf = std::max(
               root_res_inf, std::abs(residual));
           }
@@ -3828,6 +4103,8 @@ private:
   EllipticInputForm input_form_ = EllipticInputForm::Expanded;
   bool high_conormal_enabled_ = false;
   std::vector<jsimplex::HighConormalObservation<D,Real>> high_conormal_observations_;
+  int high_conormal_degree_ = -1;
+  std::vector<Real> robin_beta_high_blocks;
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
