@@ -221,7 +221,7 @@ on an affine simplicial mesh, with physical co-normal flux
 q = n^T A(x)\nabla u.
 ```
 
-Here $A$ is an elementwise polynomial $D\times D$ diffusion tensor, and $b$ and $c$ are optional elementwise polynomial convection and reaction coefficients. **The input coefficient fields use the base $\kappa$ Jacobi family**, in contrast to the expanded non-divergence interface. The divergence adapter computes $\mathrm{div}\,A$ element by element, converts the PDE into the existing expanded operator machinery, and promotes terms into the $\kappa+2$ residual family. Callers supply the physical source $f$ for the equation above; the adapter handles the internal source-sign convention.
+Here $A$ is an elementwise polynomial $D\times D$ diffusion tensor, and $b$ and $c$ are optional elementwise polynomial convection and reaction coefficients. **The input coefficient fields use the base $\kappa$ Jacobi family**, in contrast to the expanded non-divergence interface. The divergence adapter computes $\nabla \cdot A$ element by element, converts the PDE into the existing expanded operator machinery, and promotes terms into the $\kappa+2$ residual family. Callers supply the physical source $f$ for the equation above; the adapter handles the internal source-sign convention.
 
 The local diffusion tensor may be anisotropic and discontinuous between elements. The HPS merge enforces cancellation of the two outward **co-normal numerical fluxes** across an interface; it does not impose continuity of ordinary normal derivatives. The established tau-stabilized merge algebra is reused unchanged.
 
