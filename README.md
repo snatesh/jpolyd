@@ -221,7 +221,7 @@ on an affine simplicial mesh, with physical co-normal flux
 q = n^T A(x)\nabla u.
 ```
 
-Here $A$ is an elementwise polynomial $D\times D$ diffusion tensor, and $b$ and $c$ are optional elementwise polynomial convection and reaction coefficients. **The input coefficient fields use the base $\kappa$ Jacobi family**, in contrast to the expanded non-divergence interface. The divergence adapter computes $\operatorname{div}A$ element by element, converts the PDE into the existing expanded operator machinery, and promotes terms into the $\kappa+2$ residual family. Callers supply the physical source $f$ for the equation above; the adapter handles the internal source-sign convention.
+Here $A$ is an elementwise polynomial $D\times D$ diffusion tensor, and $b$ and $c$ are optional elementwise polynomial convection and reaction coefficients. **The input coefficient fields use the base $\kappa$ Jacobi family**, in contrast to the expanded non-divergence interface. The divergence adapter computes $\mathrm{div}\,A$ element by element, converts the PDE into the existing expanded operator machinery, and promotes terms into the $\kappa+2$ residual family. Callers supply the physical source $f$ for the equation above; the adapter handles the internal source-sign convention.
 
 The local diffusion tensor may be anisotropic and discontinuous between elements. The HPS merge enforces cancellation of the two outward **co-normal numerical fluxes** across an interface; it does not impose continuity of ordinary normal derivatives. The established tau-stabilized merge algebra is reused unchanged.
 
@@ -245,7 +245,7 @@ The persistent elliptic solvers support the exterior condition
 
 where $q$ is the normal derivative for the expanded-form solver and the physical co-normal flux for the divergence-form solver. Scalars $\alpha,\beta$ are provided at construction. Spatially variable, facewise polynomial coefficients are updated with `update_variable_robin()`, using the same canonical face basis for every face; this also accommodates **mixed Dirichlet, Neumann, and Robin conditions** by choosing the coefficients on each exterior face.
 
-For variable $\beta$ and polynomial diffusion of degree $p_A\ge2$ ($D\ge2$), $q$ may exceed the degree-$n$ face skeleton. The Dense divergence-form solver therefore retains high-order exterior co-normal observations through degree $n+p_A-1$. The assembled root Robin operator has the form
+For variable $\beta$ and polynomial diffusion of degree $p_A\ge2$ ($D\ge2$), $q$ may exceed the degree- $n$ face skeleton. The Dense divergence-form solver therefore retains high-order exterior co-normal observations through degree $n+p_A-1$. The assembled root Robin operator has the form
 
 ```math
 R_{\mathrm{root}}
@@ -254,7 +254,7 @@ R_{\mathrm{root}}
 + M_{\beta}^{LH}H_{\mathrm{root}},
 ```
 
-with a corresponding source-dependent right-hand-side correction $-M_{\beta}^{LH}z_{\mathrm{root}}$. The high-order term represents the coupling of physical flux modes above face degree $n$ back into the degree-$n$ boundary equations when multiplied by $\beta(x)$. The existing degree-$n$ HPS skeleton, numerical-flux stabilization, and merge algebra are unchanged.
+with a corresponding source-dependent right-hand-side correction $-M_{\beta}^{LH}z_{\mathrm{root}}$. The high-order term represents the coupling of physical flux modes above face degree $n$ back into the degree- $n$ boundary equations when multiplied by $\beta(x)$. The existing degree- $n$ HPS skeleton, numerical-flux stabilization, and merge algebra are unchanged.
 
 Both source data and variable Robin coefficients can be updated without rebuilding the tree. Root refactorizations for Robin updates are **transactional**: an invalid update does not overwrite the previously usable root factorization.
 
@@ -618,7 +618,7 @@ The current solver stack has been exercised with:
 - polynomial manufactured-solution recovery for cubic anisotropic diffusion, polynomial drift/reaction, and variable Robin coefficients on $D=1,2,3$ meshes;
 - mixed boundary conditions and persistent, source-independent Robin updates;
 - scalar pure-Neumann compatibility/gauge tests in $D=1,2,3$, $n=3,4,5,6$;
-- Robin $\leftrightarrow$ variable-$\beta$ Neumann transitions with rollback after invalid data/updates;
+- Robin $\leftrightarrow$ variable- $\beta$ Neumann transitions with rollback after invalid data/updates;
 - nonzero physical boundary-mean gauges, including nonzero drift and variable diffusion;
 - nontrivial high-order co-normal coupling $M_\beta^{LH}q_H$ for cubic diffusion in $D=2,3$ at $n=5,6$.
 
