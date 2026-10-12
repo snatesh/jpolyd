@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22137636.svg)](https://doi.org/10.5281/zenodo.22137636)
 
-`jpolyd` is a C++17 / Fortran / Python library for Jacobi polynomial approximation on simplices, with a focus on high-order operator construction and hierarchical Poincaré–Steklov (HPS) solvers for elliptic PDEs on simplicial meshes.
+`jpolyd` is a C++17 / Python library for Jacobi polynomial approximation on simplices, with a focus on high-order operator construction and hierarchical Poincaré–Steklov (HPS) solvers for elliptic PDEs on simplicial meshes.
 
 The core numerical library supports Jacobi bases on the $D$-simplex, quadrature, differentiation and Jacobi-family promotion operators, multiplication operators, affine simplex geometry, trace and flux maps, local Poisson/elliptic operators, and mesh-level HPS merges. A C API and thin Python `ctypes` wrappers expose the same functionality for validation and higher-level mesh experiments.
 
