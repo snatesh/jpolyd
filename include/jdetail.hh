@@ -344,6 +344,68 @@ struct LapackGesdd<double>
   }
 };
 
+template<class Real>
+struct LapackGetrf;
+
+template<>
+struct LapackGetrf<float>
+{
+  static inline lapack_int run(
+    lapack_int m, lapack_int n,
+    float* A, lapack_int lda,
+    lapack_int* ipiv)
+  {
+    return LAPACKE_sgetrf(
+      LAPACK_COL_MAJOR,
+      m, n, A, lda, ipiv);
+  }
+};
+
+template<>
+struct LapackGetrf<double>
+{
+  static inline lapack_int run(
+    lapack_int m, lapack_int n,
+    double* A, lapack_int lda,
+    lapack_int* ipiv)
+  {
+    return LAPACKE_dgetrf(
+      LAPACK_COL_MAJOR,
+      m, n, A, lda, ipiv);
+  }
+};
+
+
+template<class Real>
+struct LapackGetrs;
+
+template<>
+struct LapackGetrs<float>
+{
+  static inline lapack_int run(
+    char trans, lapack_int n, lapack_int nrhs,
+    const float* A, lapack_int lda,
+    const lapack_int* ipiv, float* B, lapack_int ldb)
+  {
+    return LAPACKE_sgetrs(
+      LAPACK_COL_MAJOR, trans, n, nrhs, A, lda, ipiv, B, ldb);
+  }
+};
+
+template<>
+struct LapackGetrs<double>
+{
+  static inline lapack_int run(
+    char trans, lapack_int n, lapack_int nrhs,
+    const double* A, lapack_int lda,
+    const lapack_int* ipiv, double* B, lapack_int ldb)
+  {
+    return LAPACKE_dgetrs(
+      LAPACK_COL_MAJOR, trans, n, nrhs, A, lda, ipiv, B, ldb);
+  }
+};
+
+
 // ------------------------------------------------------------
 // cond_2(V): 2-norm condition number via SVD.
 // Makes an internal copy of A because gesdd overwrites input.
