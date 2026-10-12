@@ -409,6 +409,14 @@ _set_elliptic_solver_solve_signature(
 _set_elliptic_solver_update_variable_robin_signature(
   libjpolyd.jhps_elliptic_solver_update_variable_robin
 )
+
+
+libjpolyd.jhps_elliptic_solver_set_neumann_gauge.argtypes = [
+  ct.c_void_p,
+  ct.c_double,
+]
+libjpolyd.jhps_elliptic_solver_set_neumann_gauge.restype = ct.c_int
+
 libjpolyd.jhps_elliptic_solver_destroy.argtypes = [ct.c_void_p]
 libjpolyd.jhps_elliptic_solver_destroy.restype = None
 
@@ -998,9 +1006,9 @@ class HpsEllipticSolver:
       raise ValueError("p2 must be nonnegative")
     if self.p1 < -1 or self.p0 < -1:
       raise ValueError("p1 and p0 must be at least -1")
-    if self.alpha == 0.0:
+    if self.alpha == 0.0 and self.beta == 0.0:
       raise ValueError(
-        "the current C wrapper requires alpha != 0; pure Neumann is not implemented"
+        "Robin alpha and beta cannot both vanish"
       )
     if not np.isfinite(tau_C) or float(tau_C) <= 0.0:
       raise ValueError("elliptic tau_C base must be finite and positive")
@@ -1228,6 +1236,35 @@ class HpsEllipticSolver:
       raise RuntimeError(
         f"jhps_elliptic_solver_update_variable_robin failed with rc={rc}"
       )
+
+
+  def set_neumann_gauge(self, eta: float) -> None:
+    """
+    Set the physical boundary mean for singular
+    pure-Neumann problems.
+  
+    The default is zero. The value is retained through
+    Robin/Neumann boundary updates and is ignored while
+    the root operator is nonsingular.
+    """
+    if not self._handle.value:
+      raise RuntimeError("HpsEllipticSolver is closed")
+  
+    eta = float(eta)
+  
+    if not math.isfinite(eta):
+      raise ValueError("Neumann gauge must be finite")
+  
+    rc = libjpolyd.jhps_elliptic_solver_set_neumann_gauge(
+      self._handle,
+      ct.c_double(eta),
+    )
+  
+    if rc != 0:
+      raise RuntimeError(
+        f"jhps_elliptic_solver_set_neumann_gauge failed with rc={rc}"
+      )
+
 
   def solve(
     self,

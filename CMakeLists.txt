@@ -473,6 +473,25 @@ target_link_libraries(test_jhighconormal_multilevel PRIVATE
   lapack
 )
 
+add_executable(test_jneumann_root
+  src/test_jneumann_root.cpp
+)
+
+target_include_directories(test_jneumann_root PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jneumann_root PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include

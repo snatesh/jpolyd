@@ -21,6 +21,7 @@
 #include <jnode.hh>
 #include <jmerge.hh>
 #include <jdivergence.hh>
+#include <jneumann_root.hh>
 
 #ifdef TIMING
 #include <timer.hh>
@@ -3114,6 +3115,7 @@ enum class EllipticInputForm
 struct EllipticSolverBase
 {
   virtual ~EllipticSolverBase() = default;
+  virtual void set_neumann_gauge(double eta) = 0;
   virtual void update_variable_robin(
     int p_alpha,
     const double* alpha_coeffs_input,
@@ -3205,8 +3207,8 @@ public:
       throw std::invalid_argument("HPS elliptic solver create: invalid boundary face keys");
     if (!(tau_C > 0.0))
       throw std::invalid_argument("HPS elliptic solver create: tau_C must be positive");
-    if (alpha == 0.0)
-      throw std::invalid_argument("HPS elliptic solver create: pure Neumann is not implemented");
+    if (alpha == Real(0) && beta == Real(0))
+      throw std::invalid_argument("HPS elliptic solver create: Robin alpha and beta cannot both vanish");
 
     const typename Leaf::Options leaf_options =
       leaf_options_from_c<Real>(
@@ -3313,6 +3315,17 @@ public:
     const std::size_t A_stride = (std::size_t)D * D * MpA;
     const std::size_t b_stride = (std::size_t)D * MpB;
     const std::size_t c_stride = (std::size_t)MpC;
+
+    reaction_is_zero_ = p0 < 0;
+    
+    if (p0 >= 0)
+    {
+      reaction_is_zero_ = std::all_of(
+        c_coeffs_elementmajor,
+        c_coeffs_elementmajor + (std::size_t)nelem * c_stride,
+        [](Real value) { return value == Real(0); });
+    }
+
 
     std::vector<Leaf> elliptic_leaves((std::size_t)nelem);
     std::vector<Node> leaves((std::size_t)nelem);
@@ -3639,6 +3652,14 @@ public:
     if (root_nb <= 0)
       throw std::invalid_argument("HPS elliptic solver create: empty root boundary");
 
+    jsimplex::build_root_neumann_boundary_mean<D,Real>(
+      mesh,
+      root,
+      pre,
+      neumann_constant_trace_,
+      neumann_boundary_mean_row_);
+
+
     // Validate and cache the boundary-face ordering once.  The solve path
     // later accepts only the boundary data values in this same input order.
     build_root_face_permutation(
@@ -3653,19 +3674,75 @@ public:
     for (Real& value : root_lu)
       value *= beta;
     add_scaled_identity_colmajor(root_lu, root_nb, alpha);
-    root_ipiv.resize((std::size_t)root_nb);
-    const lapack_int info = LAPACKE_dgetrf(
-      LAPACK_COL_MAJOR,
-      (lapack_int)root_nb,
-      (lapack_int)root_nb,
-      root_lu.data(),
-      (lapack_int)root_nb,
-      root_ipiv.data());
-    if (info != 0)
-      throw std::runtime_error("HPS elliptic solver create: root Robin LU failed");
+
+    if (alpha == Real(0))
+    {
+      // With no reaction, constants are analytically in ker(L).
+      bool c_is_zero = (p0 < 0);
+    
+      if (p0 >= 0)
+      {
+        const int Mc = jsimplex::Basis<D,Real>::dim_Pi(p0);
+    
+        c_is_zero = std::all_of(
+          c_coeffs_elementmajor,
+          c_coeffs_elementmajor + (std::size_t)nelem_in * Mc,
+          [](Real a) { return a == Real(0); });
+      }
+    
+      if (c_is_zero)
+      {
+        const auto R0 =
+          jsimplex::neumann_restore_constant_kernel<D,Real>(
+            root_lu,
+            neumann_constant_trace_,
+            neumann_boundary_mean_row_);
+    
+        neumann_root_plan_ =
+          jsimplex::factor_neumann_root<D,Real>(
+            R0,
+            neumann_constant_trace_,
+            neumann_boundary_mean_row_);
+    
+        neumann_singular_ = true;
+      }
+      else if (jsimplex::neumann_root_has_constant_kernel<D,Real>(
+                 root_lu, neumann_constant_trace_))
+      {
+        throw std::runtime_error(
+          "HPS Neumann: nonzero reaction with a numerical "
+          "constant nullspace; investigate near-resonance");
+      }
+    }
+
+    
+    if (!neumann_singular_)
+    {
+      root_ipiv.resize((std::size_t)root_nb);
+    
+      const lapack_int info = jsimplex::detail::LapackGetrf<Real>::run(
+        (lapack_int)root_nb,
+        (lapack_int)root_nb,
+        root_lu.data(),
+        (lapack_int)root_nb,
+        root_ipiv.data());
+    
+      if (info != 0)
+        throw std::runtime_error(
+          "HPS elliptic solver create: root Robin LU failed");
+    }
 
     node_lambdas.resize((std::size_t)total_nodes);
     root_g_workspace.resize((std::size_t)root_nb);
+  }
+
+  void set_neumann_gauge(double eta) override
+  {
+    if (!std::isfinite(eta))
+      throw std::invalid_argument(
+        "HPS elliptic solver: Neumann gauge must be finite");
+  
+    neumann_gauge_rhs_ = static_cast<Real>(eta);
   }
 
 
@@ -3788,33 +3865,61 @@ public:
         next_lu);
     }
 
-  
-    // Factor the new root matrix before replacing
-    // the existing valid factorization.
-    std::vector<lapack_int> next_ipiv(
-      (std::size_t)root_nb);
-  
-    const lapack_int info = LAPACKE_dgetrf(
-      LAPACK_COL_MAJOR,
-      (lapack_int)root_nb,
-      (lapack_int)root_nb,
-      next_lu.data(),
-      (lapack_int)root_nb,
-      next_ipiv.data());
-  
-    if (info != 0)
-      throw std::runtime_error(
-        "HPS elliptic solver: variable Robin LU failed");
-  
+    const bool alpha_is_zero = std::all_of(
+      alpha_root.begin(), alpha_root.end(),
+      [](Real value) { return value == Real(0); });
+    
+    const bool next_neumann_singular =
+      reaction_is_zero_ && alpha_is_zero;
+    
+    // Prepare replacement factorization without changing solver state.
+    jsimplex::NeumannRootPlan<D,Real> next_neumann_plan;
+    std::vector<lapack_int> next_ipiv;
+    
+    if (next_neumann_singular)
+    {
+      const auto R0 =
+        jsimplex::neumann_restore_constant_kernel<D,Real>(
+          next_lu,
+          neumann_constant_trace_,
+          neumann_boundary_mean_row_);
+    
+      next_neumann_plan =
+        jsimplex::factor_neumann_root<D,Real>(
+          R0,
+          neumann_constant_trace_,
+          neumann_boundary_mean_row_);
+    }
+    else
+    {
+      next_ipiv.resize((std::size_t)root_nb);
+    
+      const lapack_int info =
+        jsimplex::detail::LapackGetrf<Real>::run(
+          (lapack_int)root_nb,
+          (lapack_int)root_nb,
+          next_lu.data(),
+          (lapack_int)root_nb,
+          next_ipiv.data());
+    
+      if (info != 0)
+        throw std::runtime_error(
+          "HPS elliptic solver: variable Robin LU failed");
+    }
+    
     // Commit only after successful factorization.
     robin_alpha_blocks = std::move(next_alpha_blocks);
     robin_beta_blocks = std::move(next_beta_blocks);
     robin_beta_high_blocks = std::move(next_beta_high_blocks);
-  
+    
     root_lu = std::move(next_lu);
     root_ipiv = std::move(next_ipiv);
-  
+    
+    neumann_root_plan_ = std::move(next_neumann_plan);
+    neumann_singular_ = next_neumann_singular;
+    
     variable_robin_enabled = true;
+
   }
 
 
@@ -3927,18 +4032,32 @@ public:
       for (int i = 0; i < root_nb; ++i)
         lambda_root[(std::size_t)i] -= beta * root.b[(std::size_t)i];
     }
-    const lapack_int info = LAPACKE_dgetrs(
-      LAPACK_COL_MAJOR,
-      'N',
-      (lapack_int)root_nb,
-      1,
-      root_lu.data(),
-      (lapack_int)root_nb,
-      root_ipiv.data(),
-      lambda_root.data(),
-      (lapack_int)root_nb);
-    if (info != 0)
-      throw std::runtime_error("HPS elliptic solver solve: root Robin solve failed");
+
+    if (neumann_singular_)
+    {
+      jsimplex::solve_neumann_root<D,Real>(
+        neumann_root_plan_,
+        lambda_root,
+        neumann_gauge_rhs_,
+        lambda_root);
+    }
+    else
+    {
+      const lapack_int info =
+        jsimplex::detail::LapackGetrs<Real>::run(
+          'N',
+          (lapack_int)root_nb,
+          1,
+          root_lu.data(),
+          (lapack_int)root_nb,
+          root_ipiv.data(),
+          lambda_root.data(),
+          (lapack_int)root_nb);
+    
+      if (info != 0)
+        throw std::runtime_error(
+          "HPS elliptic solver solve: root Robin solve failed");
+    }
 
     Real root_res_inf = Real(0);
     Real iface_res_inf = Real(0);
@@ -4105,6 +4224,12 @@ private:
   std::vector<jsimplex::HighConormalObservation<D,Real>> high_conormal_observations_;
   int high_conormal_degree_ = -1;
   std::vector<Real> robin_beta_high_blocks;
+  std::vector<Real> neumann_constant_trace_;
+  std::vector<Real> neumann_boundary_mean_row_;
+  bool neumann_singular_ = false;
+  Real neumann_gauge_rhs_ = Real(0);
+  jsimplex::NeumannRootPlan<D,Real> neumann_root_plan_;
+  bool reaction_is_zero_ = false;
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
@@ -5127,6 +5252,36 @@ extern "C" int jhps_divergence_solver_create(
 }
 
 
+
+extern "C" int jhps_elliptic_solver_set_neumann_gauge(
+  void* handle,
+  double eta)
+{
+  if (!handle)
+    return -1;
+
+  try
+  {
+    static_cast<EllipticSolverBase*>(handle)
+      ->set_neumann_gauge(eta);
+
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_set_neumann_gauge failed: "
+      << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_set_neumann_gauge failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
 
 
 extern "C" int jhps_elliptic_solver_update_variable_robin(

@@ -707,6 +707,28 @@ int jhps_elliptic_solver_solve(
   double* parent_consistency_residual_inf_out
 );
 
+
+/*
+  Set the physical boundary-mean gauge for singular
+  pure-Neumann problems:
+
+    (1 / |boundary|) * integral_boundary(u) = eta.
+
+  Default: eta = 0.
+
+  The value is retained across Robin/Neumann updates.
+  It is ignored when the root operator is nonsingular.
+
+  No HPS rebuild or root refactorization is required.
+
+  Returns 0 on success, -1 on failure.
+*/
+int jhps_elliptic_solver_set_neumann_gauge(
+  void* handle,
+  double eta
+);
+
+
 void jhps_elliptic_solver_destroy(void* handle);
 
 #ifdef __cplusplus
