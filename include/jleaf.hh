@@ -1449,9 +1449,13 @@ private:
           mismatch;
       }
 
+      //aug_flux_out[row] =
+      //  raw_flux_out[row]
+      //  + tau_rows[(std::size_t)row]
+      //    * mismatch;
       aug_flux_out[row] =
         raw_flux_out[row]
-        + tau_rows[(std::size_t)row]
+        - tau_rows[(std::size_t)row]
           * mismatch;
     }
 

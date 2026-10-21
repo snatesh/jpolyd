@@ -359,9 +359,13 @@ inline Node<D,Real> materialize_homogeneous_leaf_node(
         (std::size_t)row
         + (std::size_t)nb * (std::size_t)column;
       const Real identity = row == column ? Real(1) : Real(0);
+      //node.S[panel_index] =
+      //  flux_response[panel_index]
+      //  + leaf.tau_rows[(std::size_t)row]
+      //    * (trace_response[panel_index] - identity);
       node.S[panel_index] =
         flux_response[panel_index]
-        + leaf.tau_rows[(std::size_t)row]
+        - leaf.tau_rows[(std::size_t)row]
           * (trace_response[panel_index] - identity);
     }
   }
@@ -375,11 +379,17 @@ inline Node<D,Real> materialize_homogeneous_leaf_node(
       const std::size_t panel_index =
         (std::size_t)row
         + (std::size_t)nb * (std::size_t)panel_column;
+      //node.Gf[
+      //  (std::size_t)row
+      //  + (std::size_t)nb * (std::size_t)column] =
+      //  flux_response[panel_index]
+      //  + leaf.tau_rows[(std::size_t)row]
+      //    * trace_response[panel_index];
       node.Gf[
         (std::size_t)row
         + (std::size_t)nb * (std::size_t)column] =
         flux_response[panel_index]
-        + leaf.tau_rows[(std::size_t)row]
+        - leaf.tau_rows[(std::size_t)row]
           * trace_response[panel_index];
     }
   }

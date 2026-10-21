@@ -288,7 +288,7 @@ Each leaf combines the interior PDE equations with trace penalty rows. With trac
 ```math
 \widehat\mu
 =
-Fc+\tau(Tc-\lambda).
+Fc-\tau(Tc-\lambda).
 ```
 
 For divergence form, $F$ denotes the co-normal flux map; for the original expanded-form operator it denotes the existing normal-derivative flux map. The dense leaf path factorizes the stacked system once with Householder QR and precomputes reusable response maps:

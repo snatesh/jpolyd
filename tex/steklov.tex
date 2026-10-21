@@ -2,496 +2,692 @@
 
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{mathtools}
+\usepackage{mathrsfs}
 \usepackage{bm}
 \usepackage{geometry}
 \usepackage{hyperref}
 \usepackage{color}
-
+\usepackage{graphicx}
 \geometry{margin=1in}
-
 \newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+\newtheorem{lemma}{Lemma}
 \newtheorem{remark}{Remark}
+\newtheorem{definition}{Definition}
 
-\title{Variationally Consistent Steklov Merging for Modal Poisson Solves on Tetrahedra\\
-	\large (with HDG/Nitsche-type stabilization in moment space + stenciling, mult-by ops and some other stuff)}
+\newcommand{\ip}[2]{\left(#1,#2\right)}
+\newcommand{\dual}[2]{\left\langle #1,#2\right\rangle}
+\newcommand{\R}{\mathcal R}
+\newcommand{\Pp}{\mathbb P}
+\newcommand{\dd}{\mathrm d}
+\newcommand{\bn}{b_n}
+\newcommand{\Tau}{\mathcal T}
+\newcommand{\dlt}{\delta}
+
+\title{Steklov Maps and Hierarchical Poincar\'e--Steklov Solves\\
+\large Promoted Jacobi Strong Residuals, Co-normal Stabilization,\\
+Divergence-Form Elliptic Operators, and Arbitrary-Dimensional Stencils}
 \author{Sachin Natesh}
-\date{}
+\date{21 October 2026 --- mathematical working draft}
 \setlength{\parindent}{0pt}
 
 \begin{document}
-	\maketitle
-	
-	\section{Overview and key principle}
-	
-	This note documents the discrete method implemented in two codes:
-	(i) a robust single-tetrahedron Poisson solver using a stacked overdetermined system solved by sparse QR,
-	and (ii) a two-tetrahedron merge constructed by eliminating volume coefficients and solving a face-only interface problem.
-	
-	The central insight is:
-	
-	\begin{quote}
-		\emph{The merge must be the Euler--Lagrange condition of the \underline{same discrete functional}
-			that defines the stable single-tetrahedron solve.}
-	\end{quote}
-	
-	A naive Steklov merge (imposing only ``flux continuity'' via an unstabilized DtN map) fails because it
-	does \emph{not} correspond to stationarity of the underlying stacked least-squares functional; it produces a rank-degenerate (or numerically rank-degenerate) interface operator with a large near-nullspace.
-	A variationally consistent stabilization fixes this by penalizing the mismatch between the \emph{induced} trace (produced by the local least-squares extension) and the \emph{skeleton} trace (the global interface unknown).
-	
-	\section{Geometry and bases}
-	
-	Let $\widehat{K}$, $K$ be the reference and physical tetrahedron, respectively. We have the standard affine map
-	\[
-	x = \Phi_K(\widehat{x}) = V_0 + J_K \widehat{x},
-	\qquad J_K \in \mathbb{R}^{3\times 3}.
-	\]
-	Faces are denoted $\widehat{F}$ and $F = \Phi_K(\widehat{F})$.
-	For a face $F$, let $n_F$ be the outward unit normal.
-	
-	\subsection{Volume basis}
-	Fix polynomial degree $n$.
-	Let
-	\[
-	V_n(K) = \mathbb{P}_n(K),\qquad M = \dim V_n(K),
-	\]
-	with modal basis $\{\phi_j\}_{j=1}^M$ (Jacobi-type on the tetrahedron).
-	We represent the discrete solution as
-	\[
-	u_h(x) = \sum_{j=1}^M c_j \phi_j(x),
-	\qquad c\in\mathbb{R}^M.
-	\]
-	
-	\subsection{Face test/trace basis (moment space)}
-	On a face $F$, define
-	\[
-	\Lambda_n(F) = \mathbb{P}_n(F),\qquad k_f = \dim\Lambda_n(F),
-	\]
-	with face test basis $\{\psi_i\}_{i=1}^{k_f}$ (Jacobi-type on the triangle).
-	
-	The \emph{face moment (trace) vector} associated with $u_h$ is
-	\[
-	\lambda_F(c)\in\mathbb{R}^{k_f},
-	\qquad
-	\bigl(\lambda_F(c)\bigr)_i = \int_F \psi_i\, u_h\, ds.
-	\]
-	This is linear in $c$, so there exists a matrix $T_F\in\mathbb{R}^{k_f\times M}$ such that
-	\[
-	\lambda_F(c) = T_F c,
-	\qquad
-	(T_F)_{ij} = \int_F \psi_i\,\phi_j\, ds.
-	\]
-	Stacking all four faces of a tetrahedron $K$,
-	\[
-	T_{\mathrm{full}} c = \lambda,
-	\qquad
-	T_{\mathrm{full}}\in\mathbb{R}^{(4k_f)\times M},
-	\quad
-	\lambda = (\lambda_{F_0},\ldots,\lambda_{F_3}).
-	\]
-	
-	\section{Promoted interior PDE constraints and their weights}
-	
-	Let $W_{n-2}(K)=\mathbb{P}_{n-2}(K)$ and choose an interior test basis $\{q_i\}_{i=1}^{m}$,
-	$m=\dim W_{n-2}(K)$.
-	The method uses \emph{promoted} constraints of the form
-	\begin{equation}
-		\label{eq:promoted_constraint_cont}
-		\int_K (\Delta u_h + f)\, q_i\, w_1(x)dx = 0,\qquad i=1,\ldots,m.
-	\end{equation}
-	
-	\paragraph{Discrete interior operator.}
-	Define $L_{\mathrm{int}}\in\mathbb{R}^{m\times M}$ and $f_{\mathrm{int}}\in\mathbb{R}^m$ by
-	\begin{equation}
-		\label{eq:Lint_def}
-		(L_{\mathrm{int}})_{ij} = \int_K (\Delta \phi_j)\, q_i\, w_1(x) dx,
-		\qquad
-		(f_{\mathrm{int}})_i = \int_K f\, q_i\, w_1(x)dx,
-	\end{equation}
-	where $w_1(x)$ is the weight function under which the promoted basis is orthonormal.
-	Then \eqref{eq:promoted_constraint_cont} becomes
-	\begin{equation}
-		\label{eq:Lint_system}
-		L_{\mathrm{int}} c = - f_{\mathrm{int}}.
-	\end{equation}
-	
-	\begin{remark}[Weights and quadrature]
-		In practice, the integrals in \eqref{eq:Lint_def} are computed by quadrature on $\widehat{K}$ and mapped to $K$.
-		The promoted operator is assembled in the \emph{same moment/test basis} as used to project the source $f$.
-		That is, $f_{\mathrm{int}}$ is \emph{not} arbitrary; it is the vector of moments of $f$ against $\{q_i\}$ with the physical volume measure $dx$.
-		This basis/weight consistency is crucial for polynomial exactness in the manufactured-solution tests.
-	\end{remark}
-	
-	\section{The single-tetrahedron solve as a variational problem}
-	
-	The stable single-tet method is defined by minimizing the stacked residual functional
-	\begin{equation}
-		\label{eq:J_single}
-		\mathcal{J}_K(c;\lambda,f) \;=\;
-		\frac{1}{2}\|T_{\mathrm{full}}c - \lambda\|_2^2
-		\;+\;
-		\frac{1}{2}\|L_{\mathrm{int}}c + f_{\mathrm{int}}\|_2^2.
-	\end{equation}
-	Equivalently,
-	\begin{equation}
-		\label{eq:stacked_A}
-		\mathcal{J}_K(c;\lambda,f) = \frac{1}{2}\|A c - b(\lambda,f)\|_2^2,
-		\qquad
-		A = \begin{bmatrix}T_{\mathrm{full}}\\ L_{\mathrm{int}}\end{bmatrix},
-		\quad
-		b = \begin{bmatrix}\lambda\\ -f_{\mathrm{int}}\end{bmatrix}.
-	\end{equation}
-	
-	The computed coefficients are
-	\begin{equation}
-		\label{eq:c_star}
-		c^*(\lambda,f) = \arg\min_{c\in\mathbb{R}^M}\mathcal{J}_K(c;\lambda,f).
-	\end{equation}
-	
-	\subsection{QR construction of the solution map}
-	The code computes $c^*$ using sparse QR (SuiteSparseQR) of the (sparse) stacked matrix $A$.
-	Let
-	\[
-	A E = Q R,
-	\]
-	where $E$ is a column permutation, $Q$ has orthonormal columns, and $R$ is upper triangular on the numerical rank.
-	Then the minimum-norm least-squares solution is obtained by
-	\begin{equation}
-		\label{eq:qr_solution}
-		c^* = E \begin{bmatrix} R_{11}^{-1}(Q^\top b)_{1:r} \\ 0 \end{bmatrix},
-	\end{equation}
-	with numerical rank $r$ (matching the code's SPQR bookkeeping).
-	
-	\paragraph{Linearity.}
-	Because $c^*$ is computed by a fixed linear pseudoinverse $A^+$,
-	\[
-	c^*(\lambda,f) = A^+ \begin{bmatrix}\lambda\\ -f_{\mathrm{int}}\end{bmatrix},
-	\]
-	hence $c^*$ is affine in the imposed boundary moments $\lambda$ and in the interior forcing moments $f_{\mathrm{int}}$.
-	
-	\section{Flux moments and trace moments on a chosen face}
-	
-	Fix a face $\Gamma \subset \partial K$.
-	Define
-	\[
-	T_\Gamma \in \mathbb{R}^{k_f\times M}
-	\quad \text{(trace moment map on $\Gamma$)},
-	\qquad
-	F_\Gamma \in \mathbb{R}^{k_f\times M}
-	\quad \text{(flux moment map on $\Gamma$)}.
-	\]
-	
-	The \emph{induced trace} (from volume coefficients) is
-	\[
-	\lambda_\Gamma^{\mathrm{ind}}(c) = T_\Gamma c,
-	\]
-	and the \emph{flux moments} are
-	\[
-	\mu_\Gamma(c) = F_\Gamma c,
-	\qquad
-	(F_\Gamma)_{ij} = \int_{\Gamma} \psi_i\,(\nabla \phi_j\cdot n_\Gamma)\,ds.
-	\]
-	(Importantly, $F_\Gamma$ must be built using the physical gradient transform $J_K^{-T}$ and the physical unit normal; this is why the final corrected implementation builds $F_\Gamma$ in each leaf, not by scaling a reference precompute.)
-	
-	\section{Local affine response operators (precise construction)}
-	
-	Consider one tetrahedron $K$ and one face $\Gamma$.
-	We split the boundary moments into:
-	\[
-	\lambda = (\lambda_{\Gamma}, \lambda_{\mathrm{ext}}),
-	\]
-	where $\lambda_{\mathrm{ext}}$ collects the remaining three face blocks.
-	
-	Fix $(\lambda_{\mathrm{ext}}, f_{\mathrm{int}})$ and view the solution as a function of $\lambda_\Gamma$ only.
-	
-	\subsection{Block injection and solve-many}
-	Let $B_\Gamma\in\mathbb{R}^{(4k_f+m)\times k_f}$ be the injection matrix that writes a $k_f$-vector into the $\Gamma$ rows of the stacked right-hand side (and zeros elsewhere). In code this is \verb|B_face(iface)|.
-	
-	Define the particular solve (interface set to zero):
-	\begin{equation}
-		\label{eq:c0_def}
-		c_0 = c^*(\lambda_\Gamma=0,\lambda_{\mathrm{ext}}, f_{\mathrm{int}}).
-	\end{equation}
-	
-	Define the homogeneous response matrix
-	\begin{equation}
-		\label{eq:C_def}
-		C_\Gamma = c^*(\lambda_\Gamma = I,\ \lambda_{\mathrm{ext}}=0,\ f_{\mathrm{int}}=0)
-		= A^+ B_\Gamma
-		\;\in\;\mathbb{R}^{M\times k_f},
-	\end{equation}
-	computed by applying the same QR solve to the multi-right-hand-side matrix $B_\Gamma$.
-	
-	Then the general solution is
-	\begin{equation}
-		\label{eq:c_affine}
-		c^*(\lambda_\Gamma,\lambda_{\mathrm{ext}},f_{\mathrm{int}})
-		=
-		C_\Gamma \lambda_\Gamma + c_0.
-	\end{equation}
-	
-	\subsection{Derived face operators}
-	From \eqref{eq:c_affine},
-	\begin{align}
-		\mu_\Gamma(\lambda_\Gamma) &= F_\Gamma c^* = (F_\Gamma C_\Gamma)\lambda_\Gamma + F_\Gamma c_0
-		=: S_F \lambda_\Gamma + g_F, \label{eq:mu_affine}\\
-		\lambda_\Gamma^{\mathrm{ind}}(\lambda_\Gamma) &= T_\Gamma c^* = (T_\Gamma C_\Gamma)\lambda_\Gamma + T_\Gamma c_0
-		=: S_T \lambda_\Gamma + g_T. \label{eq:tr_affine}
-	\end{align}
-	These are the \emph{local affine response operators}:
-	\[
-	S_F\in\mathbb{R}^{k_f\times k_f},\quad g_F\in\mathbb{R}^{k_f},\qquad
-	S_T\in\mathbb{R}^{k_f\times k_f},\quad g_T\in\mathbb{R}^{k_f}.
-	\]
-	
-	\begin{remark}[Interpretation of $S_T$]
-		In a classical Dirichlet solve one would have $\lambda_\Gamma^{\mathrm{ind}}(\lambda_\Gamma)=\lambda_\Gamma$,
-		i.e.\ $S_T=I$ and $g_T=0$.
-		In the present method, $c^*$ is a least-squares extension balancing interior and trace residuals, so in general
-		$S_T\neq I$.
-		This mismatch is precisely what must be accounted for in a variationally consistent merge.
-	\end{remark}
-	
-	\section{Two-tetrahedron setting and skeleton vs induced trace}
-	
-	Let $A$ and $B$ be two tetrahedra sharing an interface face $\Gamma$.
-	Let $\lambda\in\mathbb{R}^{k_f}$ denote the \emph{skeleton trace moments} on $\Gamma$, i.e.\ the global interface unknown.
-	
-	For each element, solving the local problem with skeleton input $\lambda$ produces a volume coefficient vector $c_A(\lambda)$ and $c_B(\lambda)$, hence an \emph{induced trace} on $\Gamma$:
-	\[
-	\lambda_A^{\mathrm{ind}}(\lambda) = T_\Gamma^A c_A(\lambda),
-	\qquad
-	\lambda_B^{\mathrm{ind}}(\lambda) = T_\Gamma^B c_B(\lambda).
-	\]
-	In a perfectly conforming method these would equal $\lambda$ identically; in the stacked LS method they do not unless $\lambda$ lies in a compatible subspace.
-	
-	\section{Why the naive Steklov merge is ill-conditioned / rank-degenerate}
-	
-	The naive merge enforces physical flux continuity using the (unstabilized) DtN maps:
-	\begin{equation}
-		\label{eq:naive_flux_cont}
-		\mu_A(\lambda) + \mu_B(\lambda) = 0
-		\quad \Longleftrightarrow \quad
-		(S_F^A + S_F^B)\lambda = -(g_F^A+g_F^B).
-	\end{equation}
-	
-	\subsection{Mechanism: near-nullspace from smoothing}
-	The local least-squares extension $c^*(\lambda)$ is a discrete harmonic extension operator in high-order face modes:
-	high-degree face moments can be extended into the volume with very small interior energy, producing very small normal flux.
-	Thus $S_F$ has many small singular values and may be numerically rank-deficient:
-	\[
-	S_F \approx 0 \quad \text{on a large subspace of face modes}.
-	\]
-	Consequently,
-	\[
-	K_{\mathrm{naive}} := S_F^A + S_F^B
-	\]
-	inherits a large near-nullspace and becomes severely ill-conditioned (or numerically rank-deficient).
-	This is exactly what the observed spectra show: a smooth decay followed by a cluster at machine precision.
-	
-	\subsection{Mismatch with the discrete variational structure}
-	More fundamentally, \eqref{eq:naive_flux_cont} is \emph{not} the stationarity condition of any reduced functional obtained by eliminating $c_A,c_B$ from the true discrete objective \eqref{eq:J_single}. As a result, it does not select the interface trace consistent with the local least-squares extension, leading to loss of accuracy (observed plateau).
-	
-	\section{Variationally consistent stabilization (HDG/Nitsche in moment space)}
-	
-	\subsection{Augmented numerical flux as a penalty on induced--skeleton mismatch}
-	We define the augmented (numerical) flux moments on $\Gamma$ for each element:
-	\begin{equation}
-		\label{eq:mu_hat_def}
-		\widehat{\mu}(\lambda)
-		=
-		\mu(\lambda)
-		+
-		\tau\, M_\Gamma\bigl(\lambda^{\mathrm{ind}}(\lambda) - \lambda\bigr),
-	\end{equation}
-	where $M_\Gamma$ is the face mass matrix in the same moment basis:
-	\[
-	(M_\Gamma)_{ij} = \int_\Gamma \psi_i\psi_j\,ds.
-	\]
-	Here $\tau>0$ penalizes the mismatch between the induced trace and the skeleton trace in the $L^2(\Gamma)$ moment metric.
-	
-	Using \eqref{eq:mu_affine}--\eqref{eq:tr_affine},
-	\begin{align}
-		\widehat{\mu}(\lambda)
-		&=
-		\bigl(S_F + \tau M_\Gamma(S_T-I)\bigr)\lambda
-		+
-		\bigl(g_F + \tau M_\Gamma g_T\bigr).
-		\label{eq:mu_hat_affine}
-	\end{align}
-	
-	\subsection{Stabilized merge equation}
-	Flux continuity is imposed on the augmented flux:
-	\begin{equation}
-		\label{eq:merge_hat_flux}
-		\widehat{\mu}_A(\lambda) + \widehat{\mu}_B(\lambda) = 0.
-	\end{equation}
-	This yields the stabilized interface system
-	\begin{equation}
-		\label{eq:K_stab}
-		K_{\mathrm{stab}}\lambda = -h_{\mathrm{stab}},
-	\end{equation}
-	with
-	\begin{align}
-		K_{\mathrm{stab}}
-		&=
-		\bigl(S_F^A + \tau M(S_T^A-I)\bigr)
-		+
-		\bigl(S_F^B + \tau M(S_T^B-I)\bigr), \\
-		h_{\mathrm{stab}}
-		&=
-		\bigl(g_F^A + \tau M g_T^A\bigr)
-		+
-		\bigl(g_F^B + \tau M g_T^B\bigr).
-	\end{align}
-	(When element face bases differ, moment vectors are mapped by an orthonormal face change-of-basis $P$; the above is written in a common coordinate convention.)
-	
-	\section{Discrete functional for two tetrahedra and Euler--Lagrange derivation}
-	
-	\subsection{Global discrete objective (skeleton-coupled)}
-	Define the global functional
-	\begin{align}
-		\label{eq:J_global}
-		\mathcal{J}(c_A,c_B,\lambda)
-		&=
-		\frac{1}{2}\|T_A c_A - \lambda_A^{\mathrm{data}}\|^2
-		+
-		\frac{1}{2}\|L_A c_A + f_A\|^2
-		+
-		\frac{1}{2}\|T_B c_B - \lambda_B^{\mathrm{data}}\|^2
-		+
-		\frac{1}{2}\|L_B c_B + f_B\|^2\\ \nonumber
-		&+
-		\frac{\tau}{2}\|\Pi_\Gamma T_\Gamma^A c_A - \lambda\|_{M}^2
-		+
-		\frac{\tau}{2}\|\Pi_\Gamma T_\Gamma^B c_B - \lambda\|_{M}^2.
-	\end{align}
-	
-	Here:
-	\begin{itemize}
-		\item $T_A,T_B$ are the full face-trace operators for each tet (all faces).
-		\item $\lambda_A^{\mathrm{data}},\lambda_B^{\mathrm{data}}$ encode the prescribed exterior Dirichlet moments (with zeros on the interface block).
-		\item $\Pi_\Gamma$ extracts the interface face block from the stacked face vector (equivalently, we can use $T_\Gamma$ directly).
-		\item $\|v\|_M^2 := v^\top M v$ is the face-mass norm on $\Gamma$.
-	\end{itemize}
-	
-	\paragraph{Meaning.}
-	The new terms enforce that the induced trace on the interface is close to the skeleton trace $\lambda$.
-	They are the \emph{only} modification required to make hybridization variationally consistent with the local least-squares solves.
-	
-	\subsection{Elimination of volume variables and reduced functional}
-	For a fixed $\lambda$, define
-	\[
-	(c_A(\lambda),c_B(\lambda)) = \arg\min_{c_A,c_B} \mathcal{J}(c_A,c_B,\lambda).
-	\]
-	The reduced functional is
-	\[
-	\mathcal{J}_{\mathrm{red}}(\lambda) = \mathcal{J}(c_A(\lambda),c_B(\lambda),\lambda).
-	\]
-	
-	\subsection{Euler--Lagrange equation for $\lambda$}
-	The Euler--Lagrange equation for $\lambda$ is the stationarity condition
-	\[
-	\nabla_\lambda \mathcal{J}_{\mathrm{red}}(\lambda)=0.
-	\]
-	Since $\lambda$ appears only in the two penalty terms in \eqref{eq:J_global}, and those terms are quadratic,
-	we can compute the derivative directly (envelope theorem: derivatives through $c_A(\lambda),c_B(\lambda)$ vanish at the minimizer for variations in $\lambda$).
-	
-	Let
-	\[
-	r_A(\lambda) = \Pi_\Gamma T_\Gamma^A c_A(\lambda) - \lambda,
-	\qquad
-	r_B(\lambda) = \Pi_\Gamma T_\Gamma^B c_B(\lambda) - \lambda.
-	\]
-	Then
-	\[
-	\mathcal{J}_{\mathrm{red}}(\lambda)
-	=
-	\text{(terms independent of $\lambda$)} + \frac{\tau}{2} r_A(\lambda)^\top M r_A(\lambda)
-	+ \frac{\tau}{2} r_B(\lambda)^\top M r_B(\lambda).
-	\]
-	Differentiating with respect to $\lambda$ gives
-	\[
-	\nabla_\lambda \mathcal{J}_{\mathrm{red}}(\lambda)
-	=
-	-\tau M r_A(\lambda) - \tau M r_B(\lambda).
-	\]
-	Setting this to zero yields
-	\begin{equation}
-		\label{eq:EL_trace_balance}
-		M\bigl(\Pi_\Gamma T_\Gamma^A c_A(\lambda) - \lambda\bigr)
-		+
-		M\bigl(\Pi_\Gamma T_\Gamma^B c_B(\lambda) - \lambda\bigr)
-		= 0.
-	\end{equation}
-	
-	\paragraph{From trace balance to augmented flux balance.}
-	The stabilized method implemented in code uses \emph{augmented flux continuity} \eqref{eq:merge_hat_flux}.
-	To see equivalence, note that each local minimizer $c_K(\lambda)$ satisfies the optimality condition for $c$:
-	\[
-	(T_{\mathrm{full}}^K)^\top(T_{\mathrm{full}}^K c_K - \lambda_K^{\mathrm{data}})
-	+
-	(L_{\mathrm{int}}^K)^\top(L_{\mathrm{int}}^K c_K + f_K)
-	+
-	\tau (T_\Gamma^K)^\top M (T_\Gamma^K c_K - \lambda)
-	= 0.
-	\]
-	This is the discrete analogue of a Nitsche/HDG formulation, and the term
-	\[
-	\tau (T_\Gamma^K)^\top M (T_\Gamma^K c_K - \lambda)
-	\]
-	is precisely the penalty contribution that, when interpreted on the face, produces the additional term
-	$\tau M(\lambda^{\mathrm{ind}}-\lambda)$ in the numerical flux \eqref{eq:mu_hat_def}. In other words, the interface condition
-	\eqref{eq:EL_trace_balance} is equivalent to continuity of the augmented flux, because the discrete weak form on each element
-	couples normal flux and trace mismatch in the same moment metric.
-	
-	Operationally, after elimination, the resulting reduced linear system for $\lambda$ is exactly \eqref{eq:K_stab} because
-	\[
-	\mu(\lambda)=S_F\lambda+g_F,\qquad \lambda^{\mathrm{ind}}(\lambda)=S_T\lambda+g_T,
-	\]
-	and substituting into \eqref{eq:mu_hat_def} yields \eqref{eq:mu_hat_affine}, hence \eqref{eq:K_stab}.
-	
-	\begin{theorem}[Variational-discrete consistency]
-		The stabilized interface equation \eqref{eq:K_stab} is the stationarity condition of the reduced functional
-		$\mathcal{J}_{\mathrm{red}}(\lambda)$ induced by the global discrete functional \eqref{eq:J_global}.
-		Equivalently, the merge respects the same discrete variational structure as the local least-squares solves.
-	\end{theorem}
-	
-	\section{Effect of stabilization: coercivity and conditioning}
-	
-	\subsection{Coercivity intuition}
-	The penalty term adds control of trace mismatch:
-	\[
-	\frac{\tau}{2}\| \lambda^{\mathrm{ind}}(\lambda) - \lambda\|_M^2.
-	\]
-	This removes directions in trace space for which the unstabilized DtN map has nearly zero flux response.
-	Those directions were responsible for the near-null singular spectrum of the naive $K$.
-	
-	\subsection{Spectral effect (why $K$ becomes well-conditioned)}
-	Write the stabilized operator (one element) as
-	\[
-	K_K(\tau) = S_F^K + \tau M(S_T^K-I).
-	\]
-	In the ideal conforming case, $S_T^K=I$ and the penalty vanishes, recovering the classical DtN merge.
-	In the stacked LS method, $S_T^K-I$ is nontrivial and supplies exactly the missing coercivity on the problematic trace modes.
-	
-	Empirically (and consistent with the observed SVD plots),
-	the naive operator has many small singular values because $S_F^K$ is compact/smoothing on high modes.
-	The penalty term contributes an $O(\tau)$ component in the $M$-metric on those modes, lifting the spectrum and eliminating numerical rank deficiency.
-	
-	\section{Choice of $\tau$}
-	A robust scaling is
-	\[
-	\tau = C \frac{(n+1)^2}{h_\Gamma},
-	\]
-	where $h_\Gamma$ is a characteristic face diameter (e.g.\ maximum edge length) and $C$ is a moderate constant.
-	
-	\section{Conclusion}
-	The method is a hybrid Steklov/HDG scheme in moment space:
-	local solves are defined by a stacked least-squares functional, and the interface unknown is obtained by enforcing continuity of an augmented numerical flux that penalizes induced--skeleton trace mismatch.
-	The decisive principle is variational-discrete consistency:
-	the merge must be the Euler--Lagrange equation of the same discrete functional that defines the stable single-tet solve.
-	
-	\subsection*{Block sparsity assumptions on Jacobi simplex operators}
+\maketitle
+
+\begin{abstract}
+We formulate the hierarchical Poincar\'e--Steklov (HPS) method from the
+continuous inhomogeneous Dirichlet problem through local Dirichlet-to-Neumann
+(DtN) decomposition, a promoted Jacobi strong-residual Petrov--Galerkin
+leaf construction, affine moment-space Steklov maps, two-subdomain merging,
+root boundary solves, and downward volume reconstruction.  The leaf retains
+the existing expanded strong-form differential operator and stacked QR
+least-squares extension.  Its augmented outward co-normal flux is the
+physical co-normal moment minus the positively weighted local
+trace--skeleton mismatch.  The augmentation is the exact skeleton
+gradient of the reduced local least-squares energy and defines a symmetric
+positive semidefinite operator.  We distinguish this algebraic fact from a
+still-conditional global coercivity statement in the presence of advection
+and reaction.  Source-dependent affine terms and an explicit reusable
+upward source pass are included.  The later treatment of arbitrary-
+dimensional Jacobi recurrences, natural stencils, differentiation,
+parameter promotion, and multiplication is retained from the prior note.
+\end{abstract}
+
+\section{Continuous divergence-form Dirichlet and co-normal problem}
+
+Let $\Omega\subset\mathbb R^D$ be a Lipschitz domain partitioned into
+nondegenerate affine $D$-simplices and, recursively, unions of simplices.
+On a subdomain $K\subset\Omega$, consider
+\begin{equation}\label{eq:full_cont_operator}
+ \mathcal L_Ku
+ =-\nabla\cdot(A_K\nabla u)+\bm b_K\cdot\nabla u+c_Ku=f_K
+ \quad\text{in }K,
+ \qquad u=h_K\quad\text{on }\partial K.
+\end{equation}
+The diffusion tensor $A=A^\top$ is uniformly positive definite within
+each coefficient region, and $A,\bm b,c$ have enough elementwise
+regularity for the traces below.  Our chosen physical outward co-normal
+derivative is
+\begin{equation}\label{eq:full_cont_q}
+ q_K(u)=\bm n_K^\top A_K\nabla u\quad\text{on }\partial K.
+\end{equation}
+Piecewise-discontinuous coefficients are permitted, with transmission
+conditions
+\begin{equation}\label{eq:full_transmission}
+ [u]=0\quad\text{and}\quad q_A(u_A)+q_B(u_B)=0
+\end{equation}
+for opposing outward normals in the absence of singular interface sources.  This is the divergence-form
+\emph{co-normal} problem.  If $\bm b\cdot\bm n$ is also continuous across
+an interface, the advective contributions cancel in the total flux
+$\bm b u-A\nabla u$ as well.  For a discontinuous normal advective field,
+the co-normal and total-transport transmission models should not be
+conflated.
+
+Assume the Dirichlet realization of $\mathcal L_K$ is uniquely solvable
+for the data under consideration.  For example, a standard sufficient
+condition for the corresponding energy argument is uniform ellipticity,
+suitable coefficient regularity, and
+$c_{\mathrm{eff}}:=c-\tfrac12\nabla\cdot\bm b\ge0$; other well-posed
+coefficient regimes are possible.  Denote the zero-boundary solution
+operator by $G_K$ and the homogeneous interior Dirichlet extension by
+$H_K$:
+\begin{align}\label{eq:full_cont_splitting}
+ \mathcal L_K(H_Kh)&=0, & H_Kh|_{\partial K}&=h,\\
+ \mathcal L_K(G_Kf)&=f, & G_Kf|_{\partial K}&=0.
+\end{align}
+Linearity and uniqueness give the exact decomposition
+\begin{equation}\label{eq:full_cont_u_split}
+ u=H_Kh+G_Kf.
+\end{equation}
+Applying the outward co-normal trace to each component defines the
+\emph{continuous Dirichlet-to-Neumann operator} $N_K$ and the
+source-induced co-normal flux $q_K^f$:
+\begin{equation}\label{eq:full_cont_dtn}
+ N_Kh:=q_K(H_Kh),\qquad
+ q_K^f:=q_K(G_Kf),\qquad
+ \boxed{q_K(u)=N_Kh+q_K^f.}
+\end{equation}
+In standard Sobolev terminology $N_K:H^{1/2}(\partial K)\to
+H^{-1/2}(\partial K)$, interpreted appropriately for the stated
+coefficient assumptions.  The source-induced term is affine data, not
+part of $N_K$.  If $\bm b\ne0$, $N_K$ is generally nonsymmetric.
+
+\paragraph{What HPS propagates.}
+For each subdomain $K$, hierarchical Poincar\'e--Steklov reduction
+propagates the pair $(N_K,q_K^f)$: a homogeneous boundary response and a
+particular source response.  Two child subdomains are joined by matching
+the Dirichlet trace and balancing their opposing outward co-normal fluxes.
+This is the continuum motivation for the discrete maps derived below.
+
+\subsection{Continuous two-subdomain transmission}
+Suppose $K=K_A\cup K_B$, with shared interface
+$I=\partial K_A\cap\partial K_B$ and external portions $E_A,E_B$.
+Prescribe $h_A$ on $E_A$ and $h_B$ on $E_B$, and introduce the unknown
+common interface Dirichlet value $\gamma$:
+\begin{equation}\label{eq:full_cont_children_dirichlet}
+ h_{K_A}=(h_A,\gamma),\qquad
+ h_{K_B}=(h_B,\gamma).
+\end{equation}
+For continuous co-normal traces, the interface equation is
+\begin{equation}\label{eq:full_cont_interface}
+ \left[N_A(h_A,\gamma)+q_A^f\right]_{I}
+ +\left[N_B(h_B,\gamma)+q_B^f\right]_{I}=0.
+\end{equation}
+Once solved for $\gamma$, the external components of the two child
+fluxes define $(N_K,q_K^f)$ on $E_A\cup E_B$.  Repeated application
+constructs the root DtN map before any external boundary law is solved.
+
+\section{Jacobi strong Petrov--Galerkin residual and face skeleton}
+
+Let $K=F_K(\widehat K)$, $x=x_{K,0}+B_K\widehat x$, with $\widehat K$
+the reference $D$-simplex.  Set
+\begin{equation}\label{eq:full_trial_spaces}
+ V_n(K)=\Pp_n^D(K),\qquad
+ W_R(K)=\Pp_R^D(K),\qquad
+ \Lambda_n(F)=\Pp_n^{D-1}(F),
+\end{equation}
+with $M=\binom{n+D}{D}$ volume modes, $m_R=\binom{R+D}{D}$
+strong-residual modes, and $k_F=\binom{n+D-1}{D-1}$ modes per face.
+The current full-degree elliptic implementation chooses $R=n$.
+We represent $u_h\in V_n(K)$ by the orthonormal Jacobi-simplex basis
+$\{\phi_j^{\kappa}\}$, and test the strong PDE residual against
+$\{\psi_i^{\kappa_{\mathrm{res}}}\}$, with
+\begin{equation}\label{eq:full_promoted}
+ \kappa_{\mathrm{res}}=\kappa+\bm 2,
+ \qquad w_\kappa(x)=
+ \lambda_0^{\kappa_D-\frac12}
+ \prod_{j=1}^{D}\lambda_j^{\kappa_{j-1}-\frac12},
+ \qquad \kappa_j>-\tfrac12.
+\end{equation}
+The base parameter $\kappa_j=1/2$ gives the unweighted physical
+polynomial family; general admissible $\kappa$ is allowed.
+The canonical $(D-1)$-simplex face basis is fixed consistently on
+all faces, including their orientations.
+
+For $u_h=\sum_j a_{K,j}\phi_j^\kappa$ define the strong Petrov--Galerkin
+moments
+\begin{equation}\label{eq:full_moments}
+ \R_{K,i}(u_h;f)=|\det B_K|\int_{\widehat K}
+  \left[(\mathcal L_Ku_h-f)\circ F_K\right]
+  \psi_i^{\kappa_{\mathrm{res}}}
+  w_{\kappa_{\mathrm{res}}}\,\dd\widehat x.
+\end{equation}
+Write these moments as
+\begin{equation}\label{eq:full_Lf}
+ \bm r_K=L_Ka_K-\bm f_K,
+\end{equation}
+where the strong matrix $L_K$ and the promoted source moments
+$\bm f_K$ use exactly the same residual family, geometry factors, and
+quadrature convention.  In code paths that store the residual as
+$L_Ka_K+f_{\mathrm{int},K}$, one has
+$f_{\mathrm{int},K}=-\bm f_K$ with this continuum sign convention.
+
+The divergence-form adapter is permitted to construct $L_K$ from the
+expanded strong coefficients
+\begin{equation}\label{eq:full_expanded}
+ -A_{ij}\partial_{ij}u
+ +\left(b_j-\sum_i\partial_iA_{ij}\right)\partial_ju+cu,
+\end{equation}
+using the existing Jacobi differentiation, promotion, and
+multiplication machinery.  No weak-form stiffness matrix is substituted.
+
+\vspace{0.5cm}
+
+Let $T_K\in\mathbb R^{n_{\partial K}\times M}$ be the stacked physical
+face trace map and $F_K\in\mathbb R^{n_{\partial K}\times M}$
+the outward \emph{physical co-normal moment} map.  The common-skeleton
+vector $\lambda_K\in\mathbb R^{n_{\partial K}}$ and
+$T_Ka_K$ use the same canonical face coordinate representation.
+The face space is orthonormal in the selected face weight (or must be
+paired with an explicit face Riesz matrix); we keep these normalizations
+visible when using physical unweighted boundary estimates.
+
+\subsection{Weighted residuals can be converted to physical norms}
+\label{sec:full_weighted_conversion}
+The promoted family does not prevent us from estimating the physical
+strong residual.  Two orthonormal Jacobi bases of the \emph{same}
+polynomial space $\Pp_R^D$ are related by an invertible finite
+connection/ladder matrix.  Let
+\begin{equation}\label{eq:full_connection}
+ C_{0\leftarrow\mathrm{res}}:
+ [p]_{\kappa_{\mathrm{res}}}\longmapsto
+ [p]_{\kappa_0},\qquad \kappa_0=(1/2,\ldots,1/2).
+\end{equation}
+JPolyD's parameter-connection machinery (including the arbitrary-valid-
+parameter mode of the \texttt{KMat} builder) supplies such a map in
+principle; it need not be sparse.  For a polynomial residual with
+promoted \emph{coefficient} vector $\rho$, physical $L^2$ integration
+has an explicitly computable Gram matrix
+\begin{equation}\label{eq:full_residual_gram}
+ \|p\|_{L^2(K)}^2
+ =\rho^\top G_{0\leftarrow\mathrm{res},K}\rho,
+ \quad G_{0\leftarrow\mathrm{res},K}
+ =C_{0\leftarrow\mathrm{res}}^\top M_{0,K}
+  C_{0\leftarrow\mathrm{res}}.
+\end{equation}
+Here $M_{0,K}$ includes the known reference normalization and physical
+Jacobian.  If $\bm r_K$ is stored as \emph{moments} rather than coefficients,
+one first applies the residual-family Riesz/Gram inverse (and the
+known geometry scale) to obtain $\rho$.  Consequently, the physical
+and promoted norms on $\Pp_R^D$ are equivalent, with constants given
+by the extreme eigenvalues of this computable positive matrix.  This
+is an algebraic route to explicit finite-$n$ bounds, not an assumed
+asymptotic norm equivalence.
+
+For nonpolynomial or insufficiently resolved variable coefficients,
+$L_Ka_K-\bm f_K$ describes a \emph{projected} strong residual.  The
+connection map converts that projected polynomial exactly; it does
+not control the unrepresented residual tail or quadrature aliasing.
+Such terms need separate consistency bounds in a full convergence
+argument.
+
+\section{Discrete leaf: strong residual and stabilized trace extension}
+
+For fixed skeleton data $\lambda_K$ and promoted source moments
+$\bm f_K$, define the present local stacked least-squares extension
+by
+\begin{equation}\label{eq:full_leaf_min}
+ \boxed{\displaystyle
+ a_K=\arg\min_a\mathcal J_K(a;\lambda_K,\bm f_K),\qquad
+ \mathcal J_K=
+ \tfrac12s_K^2\|L_Ka-\bm f_K\|_2^2
+ +\tfrac12\|T_Ka-\lambda_K\|_{W_K}^2.}
+\end{equation}
+The interior row scale $s_K>0$ and positive definite face penalty
+$W_K=W_K^\top\succ0$ are discretization parameters.  The active
+implementation takes $W_K$ diagonal in canonical orthonormal face
+coordinates and uses a dense QR factorization of the stacked matrix
+\begin{equation}\label{eq:full_leaf_stack}
+ \mathbb A_K=
+ \begin{bmatrix}s_KL_K\\W_K^{1/2}T_K\end{bmatrix},
+ \qquad
+ \mathbb d_K=
+ \begin{bmatrix}s_K\bm f_K\\W_K^{1/2}\lambda_K\end{bmatrix}.
+\end{equation}
+Define
+\begin{equation}\label{eq:full_H}
+ H_K=s_K^2L_K^\top L_K+T_K^\top W_KT_K.
+\end{equation}
+The elementary well-posedness criterion is exact.
+\begin{proposition}[Unique local polynomial extension]
+\label{prop:full_leaf_unique}
+For $s_K>0$ and $W_K\succ0$, the minimizer in
+\eqref{eq:full_leaf_min} is unique if and only if
+$\ker L_K\cap\ker T_K=\{0\}$.
+\end{proposition}
+\begin{proof}
+For any $a$, $a^\top H_Ka=s_K^2\|L_Ka\|_2^2+\|T_Ka\|_{W_K}^2$.
+It vanishes precisely on the stated kernel intersection.  Therefore
+$H_K\succ0$ exactly when the stacked system has full column rank.
+\end{proof}
+The normal equations yield an affine volume response
+\begin{equation}\label{eq:full_Ulambda_cf}
+ \boxed{\displaystyle
+ a_K=U_{\lambda,K}\lambda_K+c_{f,K},\qquad
+ U_{\lambda,K}=H_K^{-1}T_K^\top W_K,\qquad
+ c_{f,K}=U_{f,K}\bm f_K,\quad
+ U_{f,K}=H_K^{-1}s_K^2L_K^\top.}
+\end{equation}
+These inverses denote linear solves; the dense QR path computes the
+multiple right-hand sides without explicitly forming $H_K^{-1}$.
+In particular, $U_{\lambda,K}$ and $U_{f,K}$ can be cached and reused
+for multiple source functions.
+
+\subsection{Reduced least-squares energy and its boundary gradient}
+\label{sec:full_reduced_energy}
+Let $\mathcal J_{K,\mathrm{red}}(\lambda_K;\bm f_K)$ be
+\eqref{eq:full_leaf_min} evaluated at its unique minimizer.
+Define
+\begin{equation}\label{eq:full_P}
+ \boxed{\displaystyle
+ P_K=W_K-W_KT_KU_{\lambda,K}
+ =W_K-W_KT_KH_K^{-1}T_K^\top W_K.}
+\end{equation}
+\begin{proposition}[Positive reduced residual boundary operator]
+\label{prop:full_P}
+The matrix $P_K$ is symmetric positive semidefinite.  For zero source,
+\begin{equation}\label{eq:full_P_energy}
+ \lambda_K^\top P_K\lambda_K
+ =\min_a\left(s_K^2\|L_Ka\|_2^2
+ +\|T_Ka-\lambda_K\|_{W_K}^2\right)\ge0,
+\end{equation}
+and
+\begin{equation}\label{eq:full_P_kernel}
+ \ker P_K=T_K(\ker L_K).
+\end{equation}
+For arbitrary source, the exact reduced gradient is
+\begin{equation}\label{eq:full_P_gradient}
+ \boxed{\displaystyle
+ \nabla_{\lambda_K}\mathcal J_{K,\mathrm{red}}
+ =-W_K(T_Ka_K-\lambda_K)
+ =P_K\lambda_K-W_KT_Kc_{f,K}.}
+\end{equation}
+\end{proposition}
+\begin{proof}
+The normal equations give
+$H_Ka_K=T_K^\top W_K\lambda_K+s_K^2L_K^\top\bm f_K$.
+Inserting $a_K=U_{\lambda,K}\lambda_K$ into the homogeneous
+quadratic objective gives \eqref{eq:full_P_energy}.  The explicit
+matrix form is symmetric since $H_K$ and $W_K$ are symmetric.
+Positivity follows from the minimum of two squares.  Equality in the
+homogeneous minimum is equivalent to an $a$ with $L_Ka=0$ and
+$T_Ka=\lambda_K$, which establishes the kernel identity.  Finally,
+differentiating the objective with respect to fixed $\lambda_K$ at
+its stationary minimizer eliminates the $\partial a_K/\partial\lambda_K$
+term and gives \eqref{eq:full_P_gradient}.\end{proof}
+
+\begin{figure}[htbp]
+ \centering
+ \IfFileExists{pk_psd_example.pdf}{%
+ \includegraphics[width=.84\linewidth]{pk_psd_example.pdf}
+ }{\fbox{Run \texttt{verify\_pk.py} to generate the example spectrum.}}
+ \caption{Numerical algebraic check of $P_K\succeq0$.  The bundled
+ \texttt{verify\_pk.py} tests $P_K-P_K^\top$, the reduced-energy
+ identity, the affine gradient identity, and its eigenvalues.  The
+ displayed example is a \emph{synthetic full-rank leaf}, not a claimed
+ measurement from a JPolyD mesh.  An optional NPZ argument accepts
+ exported $L_K,T_K,W_K,s_K$ from a real leaf.}
+ \label{fig:full_P_psd}
+\end{figure}
+
+\subsection{Corrected augmented outward co-normal map}
+\label{sec:full_augmented}
+Write the mismatch as $\delta_K=T_Ka_K-\lambda_K$.
+The numerical outward co-normal \emph{moment} vector is defined by
+\begin{equation}\label{eq:full_mu}
+ \boxed{\displaystyle
+ \mu_K=F_Ka_K-W_K(T_Ka_K-\lambda_K)
+ =F_Ka_K+\nabla_{\lambda_K}\mathcal J_{K,\mathrm{red}}.}
+\end{equation}
+The physical co-normal map $F_K$ uses the original divergence tensor
+$A_K$ and the outward normal, not the expanded strong operator's
+first-order coefficient.  The augmentation is thus exactly the
+skeleton derivative of the minimized residual energy.  This fact
+justifies its sign but does \emph{not} assert that the entire flux
+$F_Ka_K$ is itself a gradient of a scalar functional.
+
+Inserting \eqref{eq:full_Ulambda_cf} yields the complete affine leaf map
+\begin{equation}\label{eq:full_leaf_Sb}
+ \boxed{\begin{aligned}
+ \mu_K&=S_K\lambda_K+b_K,\\[-1mm]
+ S_K&=(F_K-W_KT_K)U_{\lambda,K}+W_K
+      =F_KU_{\lambda,K}+P_K,\\
+ b_K&=(F_K-W_KT_K)c_{f,K}
+      =(F_K-W_KT_K)U_{f,K}\bm f_K.
+ \end{aligned}}
+\end{equation}
+Here $S_K$ is the moment-space \emph{discrete Steklov/DtN
+approximation} corresponding to the continuous $N_K$, and $b_K$ is
+the discrete source-induced co-normal response corresponding to
+$q_K^f$.  They are not identically equal to their continuum analogues
+at finite polynomial order.  The discrete map acts on the complete
+per-element polynomial skeleton, including skeleton traces that do not
+extend to exact homogeneous polynomial solutions.  $P_K$ controls
+precisely that incompatibility.
+
+For zero source, $S_K=F_KU_{\lambda,K}+P_K$.  In particular,
+with $\operatorname{sym}(\cdot)$ the symmetric part,
+\begin{equation}\label{eq:full_Ssym}
+ \operatorname{sym}(S_K)
+ =\operatorname{sym}(F_KU_{\lambda,K})+P_K.
+\end{equation}
+The PSD conclusion applies to $P_K$, not automatically to $S_K$.
+For nonsymmetric advection operators, $F_KU_{\lambda,K}$ can be
+nonsymmetric and its symmetric part need not be nonnegative.  Global
+stability and invertibility of merge interface matrices require
+additional arguments or hypotheses.
+
+\subsection{A conditional PDE energy route, including reaction and advection}
+The continuous Green identity for a local polynomial $u_h$ is
+\begin{equation}\label{eq:full_green_energy}
+ \dual{q_K(u_h)}{u_h}_{\partial K}
+ =\|A_K^{1/2}\nabla u_h\|_{L^2(K)}^2
+ +(c_{\mathrm{eff},K}u_h,u_h)_K
+ +\frac12\dual{\bm b_K\cdot\bm n_K}{u_h^2}_{\partial K}
+ -(\mathcal L_Ku_h,u_h)_K,
+\end{equation}
+where $c_{\mathrm{eff},K}=c_K-\frac12\nabla\cdot\bm b_K$.
+For $\bm f_K=0$, the exact least-squares normal equations give
+\begin{equation}\label{eq:full_normal_energy}
+ -\lambda_K^\top W_K\delta_K
+ =s_K^2\|L_Ka_K\|_2^2+\|\delta_K\|_{W_K}^2.
+\end{equation}
+Combining this with $\lambda_K=T_Ka_K-\delta_K$ and the physical
+Green identity gives, subject to proper face Riesz conversion,
+\begin{align}\label{eq:full_energy_route}
+ \dual{\mu_K}{\lambda_K}_{\partial K}
+ ={}&\|A^{1/2}\nabla u_h\|_{L^2(K)}^2
+ +(c_{\mathrm{eff}}u_h,u_h)_K
+ +\tfrac12\dual{\bm b\cdot\bm n}{u_h^2}_{\partial K}
+ \nonumber\\
+ &+s_K^2\|L_Ka_K\|_2^2+\|\delta_K\|_{W_K}^2
+ -\dual{q_K(u_h)}{\delta_K}_{\partial K}
+ -(\mathcal Lu_h,u_h)_K.
+\end{align}
+The last two terms are not sign-definite; the first is estimated using
+face trace/inverse inequalities and a diffusion-scaled $W_K$, and the
+second using the physical-$L^2$ conversion in
+Section~\ref{sec:full_weighted_conversion}, plus estimates for any
+unresolved residual tail.  For sufficiently positive effective
+reaction the bulk term is helpful; no additional \emph{physical}
+reaction flux occurs on faces.  Advection enters the boundary energy
+and may motivate a directional face weighting if the baseline penalty
+is insufficient, but is not postulated as mandatory here.
+Equation \eqref{eq:full_energy_route} is a \emph{proof strategy}, not a
+claimed unconditional coercivity theorem.  It also makes no hidden
+assumption that the entire HPS flux comes from a global least-squares
+Euler--Lagrange principle.
+
+\section{Exact algebraic HPS merge of two discrete subdomains}
+\label{sec:full_merge}
+
+Consider two already-built (possibly composite) child HPS nodes
+$A$ and $B$, with boundary data and augmented outward co-normal maps
+\begin{equation}\label{eq:full_two_children}
+ \mu_A=S_A\lambda_A+b_A,\qquad
+ \mu_B=S_B\lambda_B+b_B.
+\end{equation}
+The skeleton is single-valued across the shared interface.  Denote
+by $E_A$ and $E_B$ the child faces exterior to their parent, and by
+$I$ their common set of interface faces.  In the canonical orientation
+and ordering, write
+\begin{equation}\label{eq:full_child_traces}
+ \lambda_A=\begin{bmatrix}\lambda_{A,E}\\\gamma\end{bmatrix},
+ \qquad
+ \lambda_B=\begin{bmatrix}\lambda_{B,E}\\\gamma\end{bmatrix}.
+\end{equation}
+Physical normals on the interface are opposite, but the interface
+basis coefficients $\gamma$ have been mapped to the \emph{same}
+canonical face basis before merging.  This is precisely what allows
+fluxes to add with their outward signs.
+
+Partition the child maps into exterior and interface blocks:
+\begin{align}\label{eq:full_child_blockA}
+ \begin{bmatrix}\mu_{A,E}\\\mu_{A,I}\end{bmatrix}
+ &=\begin{bmatrix}S_{A,EE}&S_{A,EI}\\S_{A,IE}&S_{A,II}\end{bmatrix}
+ \begin{bmatrix}\lambda_{A,E}\\\gamma\end{bmatrix}
+ +\begin{bmatrix}b_{A,E}\\b_{A,I}\end{bmatrix},\\
+ \begin{bmatrix}\mu_{B,E}\\\mu_{B,I}\end{bmatrix}
+ &=\begin{bmatrix}S_{B,EE}&S_{B,EI}\\S_{B,IE}&S_{B,II}\end{bmatrix}
+ \begin{bmatrix}\lambda_{B,E}\\\gamma\end{bmatrix}
+ +\begin{bmatrix}b_{B,E}\\b_{B,I}\end{bmatrix}.
+ \label{eq:full_child_blockB}
+\end{align}
+Only the interface flux moments are eliminated.  The parent exterior
+trace and outward co-normal numerical flux are
+\begin{equation}\label{eq:full_parent_trace}
+ \lambda_P=\begin{bmatrix}\lambda_{A,E}\\\lambda_{B,E}\end{bmatrix},
+ \qquad
+ \mu_P=\begin{bmatrix}\mu_{A,E}\\\mu_{B,E}\end{bmatrix}.
+\end{equation}
+
+\subsection{Interface continuity and the reconstruction map}
+The HPS interface balance is
+\begin{equation}\label{eq:full_flux_balance}
+ \mu_{A,I}+\mu_{B,I}=0.
+\end{equation}
+Inserting the interface rows of \eqref{eq:full_child_blockA}--
+\eqref{eq:full_child_blockB} gives
+\begin{equation}\label{eq:full_interface_H}
+ \underbrace{(S_{A,II}+S_{B,II})}_{H_I}\gamma
+ =-S_{A,IE}\lambda_{A,E}-S_{B,IE}\lambda_{B,E}
+  -b_{A,I}-b_{B,I}.
+\end{equation}
+Assume $H_I$ is invertible.  Define
+\begin{equation}\label{eq:full_RAr}
+ \boxed{\begin{aligned}
+ R_A&=-H_I^{-1}S_{A,IE},\\
+ R_B&=-H_I^{-1}S_{B,IE},\\
+ r&=-H_I^{-1}(b_{A,I}+b_{B,I}).
+ \end{aligned}}
+\end{equation}
+Then the downward reconstruction equation for the interior interface
+skeleton is
+\begin{equation}\label{eq:full_gamma}
+ \boxed{\gamma=R_A\lambda_{A,E}+R_B\lambda_{B,E}+r.}
+\end{equation}
+This is an algebraic Schur elimination and does not require the
+operator to be self-adjoint.  For advective elliptic problems the
+matrix $H_I$ may be nonsymmetric; invertibility and conditioning
+are properties to check, not consequences of $P_K\succeq0$ alone.
+
+\subsection{Parent homogeneous and source-induced maps}
+Substitute \eqref{eq:full_gamma} into the \emph{external} rows of
+\eqref{eq:full_child_blockA}--\eqref{eq:full_child_blockB}:
+\begin{equation}\label{eq:full_parent_flux_compact}
+ \begin{bmatrix}\mu_{A,E}\\\mu_{B,E}\end{bmatrix}
+ =\begin{bmatrix}S_{A,EE}&0\\0&S_{B,EE}\end{bmatrix}
+ \begin{bmatrix}\lambda_{A,E}\\\lambda_{B,E}\end{bmatrix}
+ +\begin{bmatrix}S_{A,EI}\\S_{B,EI}\end{bmatrix}
+ (R_A\lambda_{A,E}+R_B\lambda_{B,E}+r)
+ +\begin{bmatrix}b_{A,E}\\b_{B,E}\end{bmatrix}.
+\end{equation}
+Therefore the parent again has exactly the same affine Steklov form:
+\begin{equation}\label{eq:full_parent_Sb}
+ \boxed{\mu_P=S_P\lambda_P+b_P,}
+\end{equation}
+where
+\begin{equation}\label{eq:full_parent_S_block}
+ \boxed{\displaystyle
+ S_P=\begin{bmatrix}
+ S_{A,EE}+S_{A,EI}R_A&S_{A,EI}R_B\\
+ S_{B,EI}R_A&S_{B,EE}+S_{B,EI}R_B
+ \end{bmatrix},}
+\end{equation}
+and
+\begin{equation}\label{eq:full_parent_b_block}
+ \boxed{\displaystyle
+ b_P=\begin{bmatrix}
+ b_{A,E}+S_{A,EI}r\\
+ b_{B,E}+S_{B,EI}r
+ \end{bmatrix}.}
+\end{equation}
+This is the full HPS merge, including the affine source contribution.
+The parent has the same data type as either child: a face-only
+operator $S_P$, a source-dependent shift $b_P$, and the data needed
+to reconstruct $\gamma$.  Recursively, two triangles, tetrahedra, or
+arbitrary simplex subdomains build the root map using precisely the
+same formula.
+
+\subsection{Reusable source-only upward pass}
+The expensive matrices $S_A,S_B,H_I,R_A,R_B$ depend on the
+operator and geometry, not on a particular source vector.  Define
+\begin{equation}\label{eq:full_source_inverse}
+ R_f:=-H_I^{-1},\qquad
+ P_A:=S_{A,EI}R_f,\qquad P_B:=S_{B,EI}R_f.
+\end{equation}
+For a new source, once child shifts are known, update
+\begin{align}\label{eq:full_source_pass}
+ r&=R_f(b_{A,I}+b_{B,I}),\\
+ b_P&=\begin{bmatrix}
+ b_{A,E}+P_A(b_{A,I}+b_{B,I})\\
+ b_{B,E}+P_B(b_{A,I}+b_{B,I})
+ \end{bmatrix}.
+\end{align}
+This upward pass reuses the stored operators without repeating the
+matrix factorization or rebuilding the homogeneous DtN maps.  The
+implementation stores $R_f,P_A,P_B$ for this reason.  At each leaf,
+a new volume source only updates
+$c_{f,K}=U_{f,K}\bm f_K$ and
+$b_K=(F_K-W_KT_K)c_{f,K}$.
+
+\section{Root Robin solve and downward recovery}
+\label{sec:full_root}
+At the root, the hierarchy has produced
+\begin{equation}\label{eq:full_root_map}
+ \mu_{\mathrm{root}}
+ =S_{\mathrm{root}}\lambda_{\mathrm{root}}
+ +b_{\mathrm{root}}.
+\end{equation}
+Consider a continuous boundary law
+\begin{equation}\label{eq:full_root_Robin}
+ \alpha(x)u+\beta(x)q(u)=g(x)
+ \qquad\text{on }\partial\Omega.
+\end{equation}
+In the canonical root face moment representation, let
+$M_\alpha,M_\beta$ denote the appropriate face multiplication and
+projection operators.  Imposing the Robin law on the numerical
+co-normal flux gives
+\begin{equation}\label{eq:full_root_Robin_system}
+ \boxed{\displaystyle
+ (M_\alpha+M_\beta S_{\mathrm{root}})
+ \lambda_{\mathrm{root}}
+ =\bm g-M_\beta b_{\mathrm{root}}.}
+\end{equation}
+For constant facewise coefficients these are scalar blocks.  For
+variable coefficients, consistent integration of $\beta q$ may require
+a higher-degree co-normal product correction when multiplication and
+face projection do not commute (see
+\texttt{high\_order\_conormal\_robin\_hps.tex} for dense materialization
+of the multiplication operator and high order correction details).
+The abstract root formula
+\eqref{eq:full_root_Robin_system} is understood to include that
+consistent moment operation.  Because $\mu$ is augmented, a numerical
+Robin law generally differs from pointwise enforcement of the raw
+physical co-normal flux at finite $n$; the discrepancy is a validation
+diagnostic, not an algebraic contradiction.
+
+Dirichlet conditions correspond to $\beta=0$ and determine the trace;
+mixed/Robin conditions use the corresponding rows.  In the pure
+Neumann Laplace limit, constants lie in the kernel; compatibility and
+a gauge constraint are necessary.  For general advection/reaction
+operators, compatibility must be derived from that operator and must
+not be replaced mechanically by the Laplace formula (see
+\texttt{pure\_neumann\_jpolyd\_hps.tex} for details).
+
+\paragraph{Downward skeleton reconstruction.}
+After solving the root boundary system, traverse the merge tree from
+root to leaves.  For every parent split, partition its recovered
+exterior trace as $(\lambda_{A,E},\lambda_{B,E})$, evaluate
+\begin{equation}\label{eq:full_downward_gamma}
+ \gamma=R_A\lambda_{A,E}+R_B\lambda_{B,E}+r,
+\end{equation}
+and assemble each child's complete trace
+$\lambda_A=(\lambda_{A,E},\gamma)$,
+$\lambda_B=(\lambda_{B,E},\gamma)$.
+Continue recursively until all leaf skeleton traces are available.
+
+\paragraph{Downward volume reconstruction.}
+At each leaf, recover the Jacobi modal coefficients from the cached
+affine response:
+\begin{equation}\label{eq:full_reconstruction}
+ \boxed{a_K=U_{\lambda,K}\lambda_K+c_{f,K}.}
+\end{equation}
+The physical solution is then evaluated using the library's Jacobi
+basis evaluators, and physical gradients with their affine Jacobian
+maps.  If desired, $\mu_K=S_K\lambda_K+b_K$ and the separately
+reconstructed raw co-normal moments $F_Ka_K$ can be compared to
+monitor the trace-mismatch flux correction.
+
+\paragraph{Complete computational ordering.}
+For a fixed operator: (i) construct leaf $U_{\lambda},U_f,S$ and
+source-response maps; (ii) merge upward, storing interface inverses
+and reconstruction maps; (iii) for each new source, compute leaf
+$c_f,b$ and propagate $b$ and $r$ upward; (iv) solve root Robin data;
+(v) reconstruct all internal traces downward; and (vi) reconstruct
+volume modal coefficients.  The outward augmented co-normal penalty
+appears only in the leaf maps; all later HPS levels manipulate their
+affine face operators.
+
+\section{Algebraic verification and limits of the stability statement}
+The bundled \texttt{verify\_pk.py} creates a full-rank illustrative
+leaf (or accepts exported $L,T,W,s$ in an NPZ file), constructs
+\begin{equation}\label{eq:full_verify_def}
+ H=s^2L^\top L+T^\top WT,\quad
+ U_\lambda=H^{-1}T^\top W,\quad
+ P=W-WTU_\lambda,
+\end{equation}
+and checks: (a) $P=P^\top$ to roundoff; (b) the eigenvalues of
+$\operatorname{sym}(P)$ are nonnegative up to roundoff;
+(c) $\lambda^\top P\lambda$ equals the minimized homogeneous
+residual energy; and (d) the source-dependent gradient identity
+\eqref{eq:full_P_gradient}.  These are exact algebraic identities
+under the rank assumption and do not depend on spatial dimension,
+Jacobi weights, or PDE coefficients.  The companion script
+\texttt{verify\_merge.py} independently checks the two-child
+interface balance and reconstructed parent affine map using
+synthetic nonsymmetric child blocks, including nonzero source shifts.
+
+For the \emph{complete} discrete Steklov map, positivity of $P$ does
+not by itself prove coercivity of $S=FU_\lambda+P$, uniqueness of
+all merge interface solves, preservation of a maximum principle, or
+uniform high-P\'eclet convergence.  A full theorem additionally
+requires estimates for the physical co-normal response and its
+trace mismatch, the conversion of the promoted projected residual
+to a physical norm (Section~\ref{sec:full_weighted_conversion}),
+and any unrepresented coefficient/quadrature residual.  Positive
+$c-\frac12\nabla\cdot\bm b$ contributes helpful bulk control;
+reaction is not an independent physical face flux.  An inflow-weighted
+penalty may be explored later if the baseline method fails outside
+the tested parameter range.  None of these open analytical questions
+requires replacing the strong-form Jacobi operator or the HPS merge
+algebra.
+
+\clearpage
+\section{Arbitrary-dimensional Jacobi operator recurrences and stenciling
+(retained from the original note)}
+
+\subsection*{Block sparsity assumptions on Jacobi simplex operators}
 	
 	Let
 	\[

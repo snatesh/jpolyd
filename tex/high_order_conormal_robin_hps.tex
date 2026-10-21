@@ -97,14 +97,14 @@ where \(\Tau_K\) is the existing (facewise degree-\(n\)) tau penalty and \(\sime
 \end{equation}
 The skeleton uses the \emph{augmented} degree-\(n\) co-normal flux
 \begin{equation}\label{eq:augflux}
- \muh_K=F_{A,K}\cc_K+\Tau_K(T_K\cc_K-\lam_K)
+ \muh_K=F_{A,K}\cc_K-\Tau_K(T_K\cc_K-\lam_K)
        =S_K\lam_K+\bb_K,
 \end{equation}
 with
 \begin{equation}\label{eq:Sleaf}
  \boxed{\quad
- S_K=(F_{A,K}+\Tau_KT_K)U_{\lambda,K}-\Tau_K,\qquad
- G_{f,K}=(F_{A,K}+\Tau_KT_K)U_{f,K},\qquad
+ S_K=(F_{A,K}-\Tau_KT_K)U_{\lambda,K}+\Tau_K,\qquad
+ G_{f,K}=(F_{A,K}-\Tau_KT_K)U_{f,K},\qquad
  \bb_K=G_{f,K}\fint_K.\quad}
 \end{equation}
 Here \(\bb_K\) is a \emph{source-dependent numerical-flux offset}, not the PDE advection coefficient \(b(x)\). The HPS tree stores \(S_K\) once, updates \(\bb_K\) for each source, and reconstructs \(\cc_K\) after the downward trace pass. Changing \(F_{A,K}\) does not change \(U_{\lambda,K}\) or \(U_{f,K}\).
@@ -145,7 +145,7 @@ The degree-\(n\) root Robin equations must represent the \emph{projected product
 \begin{equation}\label{eq:formB}
  \PP_L\bigl(\alpha\,\lam+\beta\,\widehat q_{\mathrm{full}}\bigr)=\gvec,
  \qquad \widehat q_{\mathrm{full}}=
- q_{\mathrm{physical}}+\underbrace{\Tau(T\cc-\lam)}_{\text{degree }\le n}.
+ q_{\mathrm{physical}}-\underbrace{\Tau(T\cc-\lam)}_{\text{degree }\le n}.
 \end{equation}
 The penalty is already in the low numerical-flux representation \eqref{eq:augflux}. It contributes \emph{no high modes}, because the current tau weight is constant on each affine face and the trace discrepancy lies in \(\Pi_n^{D-1}\). Thus the full numerical flux is represented exactly, up to its available polynomial degree, by the pair
 \begin{equation}\label{eq:fullpair}
