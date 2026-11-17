@@ -189,6 +189,22 @@ public:
   std::vector<Real> W_res;      // nq_vol
   std::vector<Real> V_res;      // col-major nq_vol x M
 
+
+  // Unweighted (Lebesgue) reference-simplex integration functionals.
+  //
+  // Both have length M = dim(Pi_n^D).
+  //
+  // For u represented in the source-kappa basis:
+  //   integral_{T_ref} u dx = volume_lebesgue_base^T u
+  //
+  // For r represented in the full degree-n residual kappa+2 basis:
+  //   integral_{T_ref} r dx = volume_lebesgue_res^T r
+  //
+  // These functionals use ordinary Lebesgue measure, independently
+  // of the Jacobi parameters defining the coefficient spaces.
+  std::vector<Real> volume_lebesgue_base;
+  std::vector<Real> volume_lebesgue_res;
+
   // Canonical face quadrature/basis. For D=1, Y_face is empty, W_face=[1], V_face=[1].
   std::vector<Real> Y_face;    // row-major nq_face x (D-1) (for basis evaluator)
   std::vector<Real> W_face;    // nq_face, intrinsic canonical face weights
@@ -629,6 +645,7 @@ public:
 
     build_volume_data();
     build_residual_data();
+    build_lebesgue_volume_functionals(); 
     build_face_data();
     build_operator_stencil_data();
     build_partial_dag();
@@ -704,6 +721,92 @@ private:
       alpha_res.data(), tail_res.data(), invh_res.data(),
       V_res.data(), nq_vol, nullptr);
   }
+
+
+  void build_lebesgue_volume_functionals()
+  {
+    // Kappa = 1/2 corresponds to normalized Lebesgue measure.
+    std::array<Real, D + 1> kappa_leb{};
+    kappa_leb.fill(Real(0.5));
+
+    // Integrate all polynomials through degree n exactly.
+    const int q = std::max(q_vol, n / 2 + 1);
+
+    const int nq = static_cast<int>(
+      QuadMapped<D, Real>::npoints(
+        static_cast<unsigned int>(q)));
+
+    std::vector<Real> X(
+      static_cast<std::size_t>(nq) * D);
+
+    std::vector<Real> W(
+      static_cast<std::size_t>(nq));
+
+    const int built = QuadMapped<D, Real>::build_kappa(
+      static_cast<unsigned int>(q),
+      kappa_leb.data(),
+      X.data(),
+      W.data());
+
+    if (built != nq)
+    {
+      throw std::runtime_error(
+        "RefSimplexPrecomp: Lebesgue quadrature build failed");
+    }
+
+    // The quadrature weights sum to one.
+    // The reference simplex volume is 1 / D!.
+    const Real reference_volume =
+      Real(1) / static_cast<Real>(factorial_int(D));
+
+    // Shared evaluation storage for the two degree-n bases.
+    std::vector<Real> V(
+      static_cast<std::size_t>(nq) * M);
+
+    auto integrate_basis =
+      [&](const std::array<Real, D + 1>& family,
+          std::vector<Real>& moments)
+    {
+      std::vector<int> alpha;
+      std::vector<int> tail;
+      std::vector<Real> invh;
+
+      Basis<D, Real>::build_structures(
+        n, family.data(), alpha, tail, invh);
+
+      Basis<D, Real>::eval_all(
+        X.data(), D, 1, nq,
+        family.data(), n,
+        alpha.data(), tail.data(), invh.data(),
+        V.data(), nq, nullptr);
+
+      moments.assign(
+        static_cast<std::size_t>(M), Real(0));
+
+      for (int j = 0; j < M; ++j)
+      {
+        Real integral = Real(0);
+
+        for (int iq = 0; iq < nq; ++iq)
+        {
+          integral +=
+            W[static_cast<std::size_t>(iq)] *
+            V[static_cast<std::size_t>(iq) +
+              static_cast<std::size_t>(nq) * j];
+        }
+
+        moments[static_cast<std::size_t>(j)] =
+          reference_volume * integral;
+      }
+    };
+
+    // Full degree-n source-kappa integration.
+    integrate_basis(kappa, volume_lebesgue_base);
+
+    // Full degree-n residual kappa+2 integration.
+    integrate_basis(kappa_res, volume_lebesgue_res);
+  }
+
 
   void build_face_data()
   {
