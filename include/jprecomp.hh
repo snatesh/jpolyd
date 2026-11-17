@@ -210,6 +210,24 @@ public:
   std::vector<Real> W_face;    // nq_face, intrinsic canonical face weights
   std::vector<Real> V_face;    // col-major nq_face x kf
 
+
+  // Physical (unweighted) integration of canonical face moments.
+  //
+  // Length kf = dim(Pi_n^(D-1)).
+  //
+  // For a face polynomial represented by JPolyD's weighted
+  // face moment vector mu, including its surface Jacobian:
+  //
+  //   integral_F v dS = face_moment_to_lebesgue^T mu
+  //
+  // The canonical face basis uses kappa_face = kappa[0:D].
+  // The integration measure is ordinary Lebesgue measure,
+  // independent of kappa_face.
+  //
+  // One common reference functional serves every face.
+  std::vector<Real> face_moment_to_lebesgue;
+
+
   // Embedded reference-face measure scale from canonical (D-1)-simplex to the
   // corresponding face of the reference D-simplex.
   std::vector<Real> face_ref_scale; // nface
@@ -647,6 +665,7 @@ public:
     build_residual_data();
     build_lebesgue_volume_functionals(); 
     build_face_data();
+    build_lebesgue_face_functional();
     build_operator_stencil_data();
     build_partial_dag();
     build_derivative_factor_data();
@@ -843,6 +862,94 @@ private:
         dsimplex_reference_face_scale_from_vertex_ids<D,Real>(fv);
     }
   }
+
+
+  void build_lebesgue_face_functional()
+  {
+    face_moment_to_lebesgue.assign(
+      static_cast<std::size_t>(kf), Real(0));
+
+    // For D=1, faces are points (zero-dimensional simplices).
+    // Integration is point evaluation with counting measure.
+    if constexpr (D == 1)
+    {
+      face_moment_to_lebesgue[0] = Real(1);
+    }
+    else
+    {
+      // Unweighted measure on the canonical (D-1)-simplex.
+      // The parameter vector has length D.
+      std::array<Real, D> kappa_leb{};
+      kappa_leb.fill(Real(0.5));
+
+      // Resolve all canonical face polynomials through degree n.
+      const int q = std::max(q_face, n / 2 + 1);
+
+      const int nq = static_cast<int>(
+        QuadMapped<D - 1, Real>::npoints(
+          static_cast<unsigned int>(q)));
+
+      std::vector<Real> Y(
+        static_cast<std::size_t>(nq) * (D - 1));
+
+      std::vector<Real> W(
+        static_cast<std::size_t>(nq));
+
+      const int built = QuadMapped<D - 1, Real>::build_kappa(
+        static_cast<unsigned int>(q),
+        kappa_leb.data(),
+        Y.data(),
+        W.data());
+
+      if (built != nq)
+      {
+        throw std::runtime_error(
+          "RefSimplexPrecomp: Lebesgue face quadrature build failed");
+      }
+
+      // Evaluate the existing canonical face basis at the
+      // unweighted quadrature points.
+      std::vector<int> alpha;
+      std::vector<int> tail;
+      std::vector<Real> invh;
+
+      Basis<D - 1, Real>::build_structures(
+        n, kappa_face.data(), alpha, tail, invh);
+
+      std::vector<Real> V(
+        static_cast<std::size_t>(nq) * kf);
+
+      Basis<D - 1, Real>::eval_all(
+        Y.data(), D - 1, 1, nq,
+        kappa_face.data(), n,
+        alpha.data(), tail.data(), invh.data(),
+        V.data(), nq, nullptr);
+
+      // Normalized quadrature weights sum to one.
+      // The canonical reference face has volume 1/(D-1)!.
+      const Real reference_face_volume =
+        Real(1) / static_cast<Real>(factorial_int(D - 1));
+
+      // m_j = integral_{T_ref^(D-1)} psi_j(y) dy.
+      for (int j = 0; j < kf; ++j)
+      {
+        Real integral = Real(0);
+
+        for (int iq = 0; iq < nq; ++iq)
+        {
+          integral +=
+            W[static_cast<std::size_t>(iq)] *
+            V[static_cast<std::size_t>(iq) +
+              static_cast<std::size_t>(nq) * j];
+        }
+
+        face_moment_to_lebesgue[
+          static_cast<std::size_t>(j)] =
+          reference_face_volume * integral;
+      }
+    }
+  }
+
 
   static void copy_csc_raw_structure(
     int rows,
