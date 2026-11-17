@@ -212,7 +212,7 @@ public:
   std::vector<Real> unit_normal;
   std::vector<Real> normal_scaled;
 
-  // Dense diagnostics/fallback. L is also populated in DenseSparse mode;
+  // Dense active-path. L is also populated in DenseSparse mode;
   // T, F, and A_tau are populated only in Dense and Verify mode.
   //
   //   L:     m_int x M
@@ -222,6 +222,23 @@ public:
   std::vector<Real> T;
   std::vector<Real> F;
   std::vector<Real> A_tau;
+  
+  // Optional dense divergence-form conservation constraint.
+  //
+  // For internal source s = -f_physical:
+  //
+  //   balance_a^T z + balance_g^T lambda
+  //     + balance_h^T s = 0.
+  //
+  // The row is assembled separately from the stacked
+  // least-squares system. 
+  std::vector<Real> balance_a; // M
+  std::vector<Real> balance_g; // nb
+  std::vector<Real> balance_h; // M
+
+  bool balance_row_ready = false;
+  bool dense_conormal_flux_installed = false;
+
 
   std::vector<Real> tau_face;
   std::vector<Real> tau_rows;
@@ -557,9 +574,398 @@ public:
       face_quad,
       workspace,
       conormal_F.data());
-  
+    
     F.swap(conormal_F);
+
+    dense_conormal_flux_installed = true;
+
+    // A change to F invalidates any previously assembled
+    // conservation row.
+    balance_row_ready = false;
+    balance_a.clear();
+    balance_g.clear();
+    balance_h.clear();
+
   }
+
+
+  void assemble_dense_divergence_balance_row(
+    int p_b,
+    const Real* b_base,
+    int p_c,
+    const Real* c_base)
+  {
+    // Conservation is currently supported only by the
+    // dense-QR divergence-form leaf.
+    if (operator_mode != LeafOperatorMode::Dense ||
+        least_squares_solver != LeafLeastSquaresSolver::DenseQR)
+      throw std::invalid_argument(
+        "Leaf::assemble_dense_divergence_balance_row "
+        "requires Dense/DenseQR");
+
+    if (!dense_conormal_flux_installed)
+      throw std::runtime_error(
+        "Leaf: install conormal flux before balance row");
+
+    // The general elliptic problem uses full R = n.
+    if (!pre || m_int != M ||
+        F.size() != (std::size_t)nb * M ||
+        T.size() != (std::size_t)nb * M ||
+        pre->volume_lebesgue_res.size() !=
+          (std::size_t)M ||
+        pre->face_moment_to_lebesgue.size() !=
+          (std::size_t)kf)
+      throw std::runtime_error(
+        "Leaf: incompatible conservation precompute");
+
+    if (p_b < -1 || p_b > n ||
+        p_c < -1 || p_c > n ||
+        (p_b >= 0 && !b_base) ||
+        (p_c >= 0 && !c_base))
+      throw std::invalid_argument(
+        "Leaf: invalid divergence coefficients");
+
+    balance_row_ready = false;
+    balance_a.assign((std::size_t)M, Real(0));
+    balance_g.assign((std::size_t)nb, Real(0));
+    balance_h.assign((std::size_t)M, Real(0));
+
+    // -------------------------------------------------
+    // 1. Source integration:
+    //
+    // h_j = |det B| int_T P_j^(kappa+2) dxi.
+    // -------------------------------------------------
+
+    const Real volume_scale = geom.detBabs;
+
+    for (int j = 0; j < M; ++j)
+      balance_h[(std::size_t)j] =
+        volume_scale *
+        pre->volume_lebesgue_res[(std::size_t)j];
+
+    // -------------------------------------------------
+    // 2. Volume reaction/b-divergence row:
+    //
+    // a_j += int_K (c - div_x b) P_j^(kappa) dx.
+    // -------------------------------------------------
+
+    if (p_c >= 0 || p_b >= 1)
+    {
+      // Product degree:
+      //   deg[(c - div b) P_j]
+      //     <= n + max(p_c, p_b - 1).
+      const int degree =
+        n + std::max(p_c, p_b - 1);
+
+      const int q_order =
+        std::max(1, (degree + 2) / 2);
+
+      const int nq = static_cast<int>(
+        QuadMapped<D,Real>::npoints(
+          (unsigned int)q_order));
+
+      std::array<Real,D+1> kappa_leb{};
+      kappa_leb.fill(Real(0.5));
+
+      std::vector<Real> X((std::size_t)nq * D);
+      std::vector<Real> W((std::size_t)nq);
+
+      if (QuadMapped<D,Real>::build_kappa(
+            (unsigned int)q_order,
+            kappa_leb.data(),
+            X.data(),
+            W.data()) != nq)
+        throw std::runtime_error(
+          "Leaf: volume Lebesgue quadrature failed");
+
+      // Evaluate base-kappa polynomials and their
+      // reference gradients.
+      std::vector<int> alpha, tail;
+      std::vector<Real> invh;
+
+      Basis<D,Real>::build_structures(
+        n, pre->kappa.data(),
+        alpha, tail, invh);
+
+      std::vector<Real> V(
+        (std::size_t)nq * M);
+
+      std::vector<Real> dV(
+        p_b >= 1 ?
+        (std::size_t)nq * M * D : 0);
+
+      Basis<D,Real>::eval_all(
+        X.data(), D, 1, nq,
+        pre->kappa.data(), n,
+        alpha.data(), tail.data(), invh.data(),
+        V.data(), nq,
+        dV.empty() ? nullptr : dV.data());
+
+      const int MpB = p_b >= 0
+        ? Basis<D,Real>::dim_Pi(p_b) : 0;
+
+      const int MpC = p_c >= 0
+        ? Basis<D,Real>::dim_Pi(p_c) : 0;
+
+      const Real measure_scale =
+        volume_scale /
+        static_cast<Real>(factorial_int(D));
+
+      for (int iq = 0; iq < nq; ++iq)
+      {
+        // Evaluate sigma = c - div_x b.
+        Real sigma = Real(0);
+
+        for (int j = 0; j < MpC; ++j)
+          sigma +=
+            c_base[(std::size_t)j] *
+            V[(std::size_t)iq +
+              (std::size_t)nq * j];
+
+        if (p_b >= 1)
+        {
+          // d/dx_r =
+          //   sum_a BinvT(r,a) d/dxi_a.
+          for (int r = 0; r < D; ++r)
+          {
+            for (int a = 0; a < D; ++a)
+            {
+              const Real transform =
+                geom.BinvT[
+                  (std::size_t)r +
+                  (std::size_t)D * a];
+
+              for (int j = 0; j < MpB; ++j)
+                sigma -= transform *
+                  b_base[(std::size_t)r * MpB + j] *
+                  dV[
+                    ((std::size_t)iq +
+                    (std::size_t)nq * j) * D + a];
+            }
+          }
+        }
+
+        const Real factor =
+          measure_scale * W[(std::size_t)iq] *
+          sigma;
+
+        for (int j = 0; j < M; ++j)
+          balance_a[(std::size_t)j] +=
+            factor * V[
+              (std::size_t)iq +
+              (std::size_t)nq * j];
+      }
+    }
+
+    // -------------------------------------------------
+    // 3. Prepare unweighted canonical face quadrature.
+    //
+    // We need int_refFace (b.n) psi_j dy.
+    // -------------------------------------------------
+
+    const int MpB = p_b >= 0
+      ? Basis<D,Real>::dim_Pi(p_b) : 0;
+
+    std::vector<Real> Vface;
+    std::vector<Real> Wface;
+    int nq_face_leb = 0;
+
+    if constexpr (D > 1)
+    {
+      if (p_b >= 0)
+      {
+        // Degree of (b.n) psi_j <= p_b + n.
+        const int q_order =
+          std::max(1, (n + p_b + 2) / 2);
+
+        nq_face_leb = static_cast<int>(
+          QuadMapped<D-1,Real>::npoints(
+            (unsigned int)q_order));
+
+        std::array<Real,D> kappa_leb{};
+        kappa_leb.fill(Real(0.5));
+
+        std::vector<Real> Y(
+          (std::size_t)nq_face_leb * (D-1));
+
+        Wface.assign(
+          (std::size_t)nq_face_leb, Real(0));
+
+        if (QuadMapped<D-1,Real>::build_kappa(
+              (unsigned int)q_order,
+              kappa_leb.data(),
+              Y.data(),
+              Wface.data()) != nq_face_leb)
+          throw std::runtime_error(
+            "Leaf: face Lebesgue quadrature failed");
+
+        std::vector<int> alpha, tail;
+        std::vector<Real> invh;
+
+        Basis<D-1,Real>::build_structures(
+          n, pre->kappa_face.data(),
+          alpha, tail, invh);
+
+        Vface.resize(
+          (std::size_t)nq_face_leb * kf);
+
+        Basis<D-1,Real>::eval_all(
+          Y.data(), D-1, 1, nq_face_leb,
+          pre->kappa_face.data(), n,
+          alpha.data(), tail.data(), invh.data(),
+          Vface.data(), nq_face_leb, nullptr);
+      }
+    }
+
+    // -------------------------------------------------
+    // 4. Complete face contributions to a and g.
+    // -------------------------------------------------
+
+    const Real* mface =
+      pre->face_moment_to_lebesgue.data();
+
+    for (int f = 0; f < nface; ++f)
+    {
+      const Real tau = tau_face[(std::size_t)f];
+      const int offset = f * kf;
+
+      // Numerical conormal:
+      //   qhat = Fz - tau(Tz - lambda).
+      //
+      // Since total flux is (b.n)lambda - qhat:
+      //
+      // a += mface^T (tau*T - F)
+      // g -= tau*mface.
+      for (int i = 0; i < kf; ++i)
+      {
+        balance_g[(std::size_t)(offset+i)] -=
+          tau * mface[i];
+
+        for (int j = 0; j < M; ++j)
+        {
+          const std::size_t pos =
+            (std::size_t)(offset+i) +
+            (std::size_t)nb * j;
+
+          balance_a[(std::size_t)j] +=
+            mface[i] *
+            (tau * T[pos] - F[pos]);
+        }
+      }
+
+      // No advection: only the conormal contribution.
+      if (p_b < 0)
+        continue;
+
+      // Extract b.n in the existing canonical face basis.
+      //
+      // T_ref contains the embedded REFERENCE
+      // face measure scale. Divide by it to recover
+      // canonical face expansion coefficients.
+      const int orientation =
+        face_sigma_index[(std::size_t)f] +
+        pre->nsigma * f;
+
+      const Real* Tref =
+        pre->T_ref.data() +
+        (std::size_t)kf * M * orientation;
+
+      const Real inv_ref_scale =
+        Real(1) /
+        pre->face_ref_scale[(std::size_t)f];
+
+      std::vector<Real> bn_coeff(
+        (std::size_t)kf, Real(0));
+
+      for (int r = 0; r < D; ++r)
+      {
+        const Real nr =
+          unit_normal[(std::size_t)f * D + r];
+
+        for (int j = 0; j < MpB; ++j)
+        {
+          const Real weight =
+            nr * inv_ref_scale *
+            b_base[(std::size_t)r * MpB + j];
+
+          for (int i = 0; i < kf; ++i)
+            bn_coeff[(std::size_t)i] +=
+              weight *
+              Tref[(std::size_t)i +
+                   (std::size_t)kf * j];
+        }
+      }
+
+      // In D=1, faces are points and kf=1.
+      if constexpr (D == 1)
+      {
+        balance_g[(std::size_t)offset] +=
+          bn_coeff[0];
+      }
+      else
+      {
+        // Direct physical (Lebesgue) integration.
+        //
+        // Do not first project (b.n)*lambda into
+        // degree n using the weighted face measure.
+        const Real inv_face_factorial =
+          Real(1) /
+          static_cast<Real>(factorial_int(D-1));
+
+        for (int iq = 0; iq < nq_face_leb; ++iq)
+        {
+          Real bn = Real(0);
+
+          for (int i = 0; i < kf; ++i)
+            bn +=
+              bn_coeff[(std::size_t)i] *
+              Vface[(std::size_t)iq +
+                    (std::size_t)nq_face_leb * i];
+
+          const Real factor =
+            inv_face_factorial *
+            Wface[(std::size_t)iq] * bn;
+
+          for (int j = 0; j < kf; ++j)
+            balance_g[
+              (std::size_t)(offset+j)] +=
+              factor *
+              Vface[(std::size_t)iq +
+                    (std::size_t)nq_face_leb * j];
+        }
+      }
+    }
+
+    balance_row_ready = true;
+  }
+
+
+  Real dense_divergence_balance_residual(
+    const Real* z,
+    const Real* lambda,
+    const Real* source_internal) const
+  {
+    if (!balance_row_ready ||
+        !z || !lambda || !source_internal)
+      throw std::invalid_argument(
+        "Leaf: missing balance row or arguments");
+
+    Real residual = Real(0);
+
+    for (int j = 0; j < M; ++j)
+      residual +=
+        balance_a[(std::size_t)j] * z[j] +
+        balance_h[(std::size_t)j] *
+          source_internal[j];
+
+    for (int i = 0; i < nb; ++i)
+      residual +=
+        balance_g[(std::size_t)i] * lambda[i];
+
+    return residual;
+  }
+
+
 
 
   bool uses_clenshaw_backend() const
@@ -1805,9 +2211,17 @@ private:
     owned_coeffs_ = {};
     elliptic_action_work_.reset();
 
+    balance_row_ready = false;
+    dense_conormal_flux_installed = false;
+
+    balance_a.clear();
+    balance_g.clear();
+    balance_h.clear();
+
     clear_dense_storage();
 
     build_geometry();
+
     build_boundary_action_metadata();
 
     action_coeff_input_.assign(

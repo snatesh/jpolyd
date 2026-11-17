@@ -530,6 +530,24 @@ target_link_libraries(test_jprecomp_lebesgue_face PRIVATE
   lapack
 )
 
+add_executable(test_jleaf_divergence_balance
+  src/test_jleaf_divergence_balance.cpp
+)
+
+target_include_directories(test_jleaf_divergence_balance PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jleaf_divergence_balance PRIVATE
+  jpolyd
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
 
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
