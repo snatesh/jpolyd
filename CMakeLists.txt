@@ -549,6 +549,26 @@ target_link_libraries(test_jleaf_divergence_balance PRIVATE
   lapack
 )
 
+add_executable(test_jleaf_divergence_balance_rank_one
+  src/test_jleaf_divergence_balance_rank_one.cpp
+)
+
+target_include_directories(test_jleaf_divergence_balance_rank_one PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jleaf_divergence_balance_rank_one PRIVATE
+  jpolyd
+  jpolyd_c
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse

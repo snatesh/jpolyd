@@ -1732,7 +1732,183 @@ private:
           + (std::size_t)ldresponse
             * (std::size_t)column);
     }
+
+
+    // Apply the exact physical-balance constraint only
+    // when a divergence-form balance row was assembled.
+    //
+    // Otherwise preserve the original dense-QR maps.
+    if (balance_row_ready)
+    {
+      apply_dense_divergence_balance_rank_one(
+        response_out,
+        ldresponse,
+        workspace);
+    }
+
   }
+
+
+  // Enforce the physical divergence-form balance constraint
+  // on the complete dense-QR response panel.
+  //
+  // The input panel is [U_lambda U_s], column-major,
+  // with dimensions M x (nb + m_int).
+  //
+  // Constraint:
+  //   balance_a^T z + balance_g^T lambda
+  //     + balance_h^T s = 0,
+  //
+  // where s is the internal source convention (s = -f).
+  //
+  // Uses the existing QR factorization of A_tau:
+  //
+  //   R^T w = balance_a
+  //   R   v = w
+  //
+  // and applies the rank-one correction
+  //
+  //   U_j <- U_j - v * defect_j / (w^T w).
+  void apply_dense_divergence_balance_rank_one(
+    Real* response_out,
+    int ldresponse,
+    SolveWorkspace& workspace) const
+  {
+    if (!balance_row_ready ||
+        !dense_conormal_flux_installed ||
+        operator_mode != LeafOperatorMode::Dense ||
+        least_squares_solver !=
+          LeafLeastSquaresSolver::DenseQR ||
+        m_int != M ||
+        balance_a.size() != (std::size_t)M ||
+        balance_g.size() != (std::size_t)nb ||
+        balance_h.size() != (std::size_t)M)
+    {
+      throw std::runtime_error(
+        "Leaf::apply_dense_divergence_balance_rank_one: "
+        "invalid conservation state");
+    }
+
+    if (!response_out || ldresponse < M)
+    {
+      throw std::invalid_argument(
+        "Leaf::apply_dense_divergence_balance_rank_one: "
+        "invalid response panel");
+    }
+
+    // Reuse the factorization H = Q R.
+    factor_dense_qr(workspace);
+
+    // -------------------------------------------------
+    // 1. Solve R^T w = a.
+    //
+    // qr_factor contains R in its upper triangular
+    // part, with leading dimension ntau_rows.
+    // -------------------------------------------------
+
+    std::vector<Real> w = balance_a;
+
+    detail::BlasTrsm<Real>::run(
+      CblasColMajor,
+      CblasLeft,
+      CblasUpper,
+      CblasTrans,
+      CblasNonUnit,
+      M, 1,
+      Real(1),
+      workspace.qr_factor.data(),
+      ntau_rows,
+      w.data(),
+      M);
+
+    // -------------------------------------------------
+    // 2. Solve R v = w.
+    //
+    // v = (H^T H)^(-1) a.
+    // -------------------------------------------------
+
+    std::vector<Real> v = w;
+
+    detail::BlasTrsm<Real>::run(
+      CblasColMajor,
+      CblasLeft,
+      CblasUpper,
+      CblasNoTrans,
+      CblasNonUnit,
+      M, 1,
+      Real(1),
+      workspace.qr_factor.data(),
+      ntau_rows,
+      v.data(),
+      M);
+
+    // -------------------------------------------------
+    // 3. Compute a^T G^(-1) a = w^T w.
+    // -------------------------------------------------
+
+    Real denominator = Real(0);
+
+    for (int i = 0; i < M; ++i)
+    {
+      denominator +=
+        w[(std::size_t)i] *
+        w[(std::size_t)i];
+    }
+
+    if (!std::isfinite(denominator) ||
+        denominator <=
+          std::numeric_limits<Real>::min())
+    {
+      throw std::runtime_error(
+        "Leaf::apply_dense_divergence_balance_rank_one: "
+        "degenerate conservation constraint");
+    }
+
+    // -------------------------------------------------
+    // 4. Correct every response column.
+    //
+    // For boundary columns:
+    //   defect_j = a^T U_lambda(:,j) + g_j.
+    //
+    // For internal-source columns:
+    //   defect_j = a^T U_s(:,j) + h_j.
+    //
+    // Each correction is a scalar multiple of v.
+    // -------------------------------------------------
+
+    const int nrhs = nb + m_int;
+
+    for (int column = 0; column < nrhs; ++column)
+    {
+      Real* u =
+        response_out +
+        (std::size_t)ldresponse *
+        (std::size_t)column;
+
+      Real defect =
+        column < nb
+        ? balance_g[(std::size_t)column]
+        : balance_h[
+            (std::size_t)(column - nb)];
+
+      for (int i = 0; i < M; ++i)
+      {
+        defect +=
+          balance_a[(std::size_t)i] * u[i];
+      }
+
+      const Real scale =
+        defect / denominator;
+
+      for (int i = 0; i < M; ++i)
+      {
+        u[i] -=
+          scale * v[(std::size_t)i];
+      }
+    }
+  }
+
+
 
   void solve_dense_qr_rhs(
     const Real* rhs,
