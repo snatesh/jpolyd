@@ -552,7 +552,7 @@ void run_case(int degree, bool half, bool reversed,
       });
     std::vector<Real> internal_source = source_coeff;
     for (Real& v : internal_source)
-      v = -v;
+      v *= -geom.detBabs;
 
     leaf.assemble_dense_divergence_balance_row(
       with_b ? p_b : -1, with_b ? b.data() : nullptr,

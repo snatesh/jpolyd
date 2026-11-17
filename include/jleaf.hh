@@ -638,10 +638,20 @@ public:
 
     const Real volume_scale = geom.detBabs;
 
+    // The internal elliptic source is already scaled by |det B|.
+    //
+    // s = -|det B| * f_coefficients
+    //
+    // Therefore:
+    //   integral_K f dx = -m_res^T s
+    //
+    // Do not apply the element Jacobian a second time.
     for (int j = 0; j < M; ++j)
+    {
       balance_h[(std::size_t)j] =
-        volume_scale *
         pre->volume_lebesgue_res[(std::size_t)j];
+    }
+
 
     // -------------------------------------------------
     // 2. Volume reaction/b-divergence row:
@@ -1063,6 +1073,13 @@ public:
           square_root;
       }
     }
+
+    // Numerical conservation depends explicitly on tau.
+    // Any tau modification invalidates the balance row.
+    balance_row_ready = false;
+    balance_a.clear();
+    balance_g.clear();
+    balance_h.clear();
 
     build_A_tau();
     if (operator_mode == LeafOperatorMode::Verify)
