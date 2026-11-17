@@ -245,7 +245,7 @@ std::vector<Real> matvec(const std::vector<Real>& A,
   return y;
 }
 
-// Check S=(F+tau*T)Ulam-tau*I and Gf=(F+tau*T)Uf
+// Check S=(F-tau*T)Ulam+tau*I and Gf=(F-tau*T)Uf
 // without using Leaf::apply_flux_columns or the Node materializer.
 template<int D>
 std::pair<Real,Real> response_errors(
@@ -265,13 +265,13 @@ std::pair<Real,Real> response_errors(
       const Real response = node.Ulam[(std::size_t)k + (std::size_t)M * j];
       for (int i = 0; i < nb; ++i)
         expected_S[(std::size_t)i + (std::size_t)nb * j] +=
-          (leaf.F[(std::size_t)i + (std::size_t)nb * k] +
+          (leaf.F[(std::size_t)i + (std::size_t)nb * k] -
            leaf.tau_rows[(std::size_t)i] *
            leaf.T[(std::size_t)i + (std::size_t)nb * k]) * response;
     }
 
   for (int i = 0; i < nb; ++i)
-    expected_S[(std::size_t)i + (std::size_t)nb * i] -= leaf.tau_rows[(std::size_t)i];
+    expected_S[(std::size_t)i + (std::size_t)nb * i] += leaf.tau_rows[(std::size_t)i];
 
   for (int j = 0; j < mR; ++j)
     for (int k = 0; k < M; ++k)
@@ -279,7 +279,7 @@ std::pair<Real,Real> response_errors(
       const Real response = node.Uf[(std::size_t)k + (std::size_t)M * j];
       for (int i = 0; i < nb; ++i)
         expected_Gf[(std::size_t)i + (std::size_t)nb * j] +=
-          (leaf.F[(std::size_t)i + (std::size_t)nb * k] +
+          (leaf.F[(std::size_t)i + (std::size_t)nb * k] -
            leaf.tau_rows[(std::size_t)i] *
            leaf.T[(std::size_t)i + (std::size_t)nb * k]) * response;
     }
@@ -374,6 +374,7 @@ void test_case(const std::string& stencil_dir, bool reversed)
   auto conormal_node =
     jsimplex::make_divergence_form_homogeneous_leaf_node<D,Real>(
       mesh, 0, pre, plan, expanded.view(), diffusion_degree, A.data(),
+      -1, nullptr, -1, nullptr,
       face_quad, face_work, work_A, conormal_leaf, options, tau_C);
 
   // Control factory, identical elliptic volume L and tau stabilization,
@@ -464,6 +465,7 @@ void test_case(const std::string& stencil_dir, bool reversed)
     {
       (void)jsimplex::make_divergence_form_homogeneous_leaf_node<D,Real>(
         mesh, 0, pre, plan, expanded.view(), diffusion_degree, A.data(),
+        -1, nullptr, -1, nullptr,
         face_quad, face_work, rejected_work, rejected_leaf,
         rejected_options, tau_C);
     }
