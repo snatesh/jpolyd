@@ -669,7 +669,7 @@ The current solver stack has been exercised with:
 - Robin $\leftrightarrow$ variable- $\beta$ Neumann transitions with rollback after invalid data/updates;
 - nonzero physical boundary-mean gauges, including nonzero drift and variable diffusion;
 - nontrivial high-order co-normal coupling $M_\beta^{LH}q_H$ for cubic diffusion in $D=2,3$ at $n=5,6$;
-- physical elementwise balance enforcement for divergence form in $D=1,2,3$, with conservative residuals typically around $10^{-13}$--$10^{-12}$ across $n=2,\ldots,11$ in tested manufactured problems;
+- physical elementwise balance enforcement for divergence form in $D=1,2,3$, with conservative residuals typically around $10^{-13}$ - $10^{-12}$ across $n=2,\ldots,11$ in tested manufactured problems;
 - polynomial manufactured solutions with degree-five exact $u$ and degree-seven source: unconstrained recovery at $n=5$ under projected equations, and conservative recovery as source/flux representations become resolved at $n=7$;
 - smooth nonpolynomial manufactured solutions in $D=1,2,3$, demonstrating decreasing solution errors and conservative balance near roundoff across the tested $p$-refinement ranges, including $D=3$, $n=2,\ldots,11$.
 
