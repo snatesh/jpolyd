@@ -343,7 +343,7 @@ c = U_\lambda \lambda + U_f f,
 \widehat\mu = S\lambda + G_f f.
 ```
 
-These maps are then merged hierarchically. Source-transfer maps are retained through the tree so the expensive leaf factorization/materialization can be reused for new source terms and boundary data. The high-order exterior co-normal response is propagated separately when needed for variable-$\beta$ boundary equations.
+These maps are then merged hierarchically. Source-transfer maps are retained through the tree so the expensive leaf factorization/materialization can be reused for new source terms and boundary data. The high-order exterior co-normal response is propagated separately when needed for variable- $\beta$ boundary equations.
 
 The elliptic tau parameter is interpreted as a base constant and rescaled for the enlarged residual space,
 
