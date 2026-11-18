@@ -3130,6 +3130,13 @@ struct EllipticSolverBase
     double* interface_flux_residual_inf_out,
     double* parent_consistency_residual_inf_out) = 0;
 
+  // Per-element physical balance residuals from the last solve.
+  // Available only for ConservationMode::ElementBalance.
+  // Throws before the first successful solve.
+  virtual const std::vector<double>&
+  balance_residuals() const = 0;
+
+
   int nelem = 0;
   int M = 0;
   int m_int = 0;
@@ -3180,12 +3187,14 @@ public:
     int leaf_least_squares_solver,
     double leaf_verify_tolerance,
     int leaf_verify_each_solve,
-    EllipticInputForm input_form = EllipticInputForm::Expanded)
+    EllipticInputForm input_form = EllipticInputForm::Expanded,
+    jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None)
     : alpha(alpha_in),
       beta(beta_in),
       nmerge(nmerge_in),
       nboundary_faces(nboundary_faces_in),
-      input_form_(input_form)
+      input_form_(input_form),
+      conservation_mode_(conservation_mode)
   {
     if (n < 2)
       throw std::invalid_argument("HPS elliptic solver create: require n>=2");
@@ -3224,6 +3233,41 @@ public:
       throw std::invalid_argument(
         "HPS divergence-form solver requires Dense leaf mode");
     }
+
+
+    if (conservation_mode_ !=
+          jsimplex::ConservationMode::None &&
+        conservation_mode_ !=
+          jsimplex::ConservationMode::ElementBalance)
+    {
+      throw std::invalid_argument(
+        "HPS solver: invalid conservation mode");
+    }
+
+    if (conservation_mode_ ==
+        jsimplex::ConservationMode::ElementBalance)
+    {
+      if (input_form_ != EllipticInputForm::Divergence)
+      {
+        throw std::invalid_argument(
+          "ElementBalance requires divergence-form input");
+      }
+
+      const auto resolved_solver =
+        resolved_leaf_solver(
+          leaf_options.operator_mode,
+          leaf_options.least_squares_solver);
+
+      if (leaf_options.operator_mode !=
+            jsimplex::LeafOperatorMode::Dense ||
+          resolved_solver !=
+            jsimplex::LeafLeastSquaresSolver::DenseQR)
+      {
+        throw std::invalid_argument(
+          "ElementBalance requires Dense/DenseQR");
+      }
+    }
+
 
 
     const jsimplex::RefSimplexPrecomp<D,Real> pre(
@@ -3289,6 +3333,17 @@ public:
     M = pre.M;
     m_int = elliptic_plan.mR;
     kf = pre.kf;
+
+    // Retain divergence-form balance rows for both solver modes.
+    if (input_form_ == EllipticInputForm::Divergence)
+    {
+      if (m_int != M)
+        throw std::runtime_error(
+          "Divergence balance diagnostics require full residual degree R=n");
+
+      balance_rows_.resize((std::size_t)nelem);
+    }
+
 
     if (nmerge > 0)
     {
@@ -3446,7 +3501,11 @@ public:
                 elliptic_plan,
                 expanded.view(),
                 p2,
-                A_input,
+                A_input, 
+                p1,
+                b_input,
+                p0,
+                c_input,
                 elliptic_plan.face_quadrature_plan(),
                 face_mult_workspaces[(std::size_t)tid],
                 work,
@@ -3456,7 +3515,8 @@ public:
                 Real(1e-14),
                 Real(1e-14),
                 5000,
-                response_workspaces[(std::size_t)tid].get());
+                response_workspaces[(std::size_t)tid].get(),
+                conservation_mode_);
           }
           else
           {
@@ -3551,10 +3611,36 @@ public:
                 Wf_leaf);
           }
 
+          validate_leaf_backend_storage(
+            elliptic_leaves[(std::size_t)e]);
 
-          validate_leaf_backend_storage(elliptic_leaves[(std::size_t)e]);
+          // Retain the diagnostic row in either divergence-form mode.
+          if (input_form_ == EllipticInputForm::Divergence)
+          {
+            Leaf& leaf = elliptic_leaves[(std::size_t)e];
+
+            if (!leaf.balance_row_ready ||
+                leaf.balance_a.size() != (std::size_t)M ||
+                leaf.balance_g.size() !=
+                  (std::size_t)leaf_node.nb() ||
+                leaf.balance_h.size() != (std::size_t)m_int)
+            {
+              throw std::runtime_error(
+                "HPS divergence leaf: invalid balance row");
+            }
+
+            BalanceRow& row = balance_rows_[(std::size_t)e];
+
+            row.a = std::move(leaf.balance_a);
+            row.g = std::move(leaf.balance_g);
+            row.h = std::move(leaf.balance_h);
+          }
+
+          // Node maps contain the selected constrained or unconstrained
+          // response. The full dense leaf is no longer needed.
           elliptic_leaves[(std::size_t)e] = Leaf{};
           leaves[(std::size_t)e] = std::move(leaf_node);
+
         }
         catch (...)
         {
@@ -3735,6 +3821,25 @@ public:
     node_lambdas.resize((std::size_t)total_nodes);
     root_g_workspace.resize((std::size_t)root_nb);
   }
+
+  const std::vector<double>& balance_residuals() const override
+  {
+    if (input_form_ != EllipticInputForm::Divergence)
+    {
+      throw std::logic_error(
+        "Balance residuals require divergence-form input");
+    }
+
+    if (!balance_residuals_valid_)
+    {
+      throw std::logic_error(
+        "Balance residuals are unavailable before "
+        "a successful solve");
+    }
+
+    return last_balance_residuals_;
+  }
+
 
   void set_neumann_gauge(double eta) override
   {
@@ -3919,7 +4024,7 @@ public:
     neumann_singular_ = next_neumann_singular;
     
     variable_robin_enabled = true;
-
+    balance_residuals_valid_ = false;
   }
 
 
@@ -3935,6 +4040,9 @@ public:
     if (!f_int_elementmajor || !boundary_g_rowmajor || !leaf_coeffs_elementmajor)
       throw std::invalid_argument("HPS elliptic solver solve: null runtime input/output");
 
+    // Invalidate previous diagnostics until this solve
+    // completes successfully.
+    balance_residuals_valid_ = false;
 
     // divergence form interface is for div_form_elliptic(u) = f
     // while the expanded form internal solver works on L_expanded u = -f
@@ -4180,6 +4288,12 @@ public:
       }
     }
 
+    if (input_form_ == EllipticInputForm::Divergence)
+    {
+      last_balance_residuals_.assign(
+        (std::size_t)nelem, Real(0));
+    }
+
     for (int e = 0; e < nelem; ++e)
     {
       const Node& leaf = nodes[(std::size_t)e];
@@ -4190,6 +4304,50 @@ public:
       Real* c_e = leaf_coeffs_elementmajor + (std::size_t)e * M;
       jsimplex::reconstruct_leaf_volume<D,Real>(
         leaf, lambda.data(), c_e);
+
+      if (input_form_ == EllipticInputForm::Divergence)
+      {
+        const BalanceRow& row =
+          balance_rows_[(std::size_t)e];
+
+        // f_input is already the physical-source moment
+        // vector, including the element Jacobian.
+        //
+        // The internal divergence-form source is
+        // s = -f_input.
+        const Real* f_e =
+          f_int_elementmajor + (std::size_t)e * m_int;
+
+        Real residual = Real(0);
+
+        // Volume solution and source contributions:
+        //   a^T z + h^T s = a^T z - h^T f_input.
+        for (int j = 0; j < M; ++j)
+        {
+          residual +=
+            row.a[(std::size_t)j] * c_e[j];
+
+          residual -=
+            row.h[(std::size_t)j] * f_e[j];
+        }
+
+        // Numerical face-flux contribution.
+        for (int j = 0; j < leaf.nb(); ++j)
+        {
+          residual +=
+            row.g[(std::size_t)j] *
+            lambda[(std::size_t)j];
+        }
+
+        last_balance_residuals_[(std::size_t)e] =
+          residual;
+      }
+
+    }
+
+    if (input_form_ == EllipticInputForm::Divergence)
+    {
+      balance_residuals_valid_ = true;
     }
 
     if (root_robin_residual_inf_out)
@@ -4230,6 +4388,27 @@ private:
   Real neumann_gauge_rhs_ = Real(0);
   jsimplex::NeumannRootPlan<D,Real> neumann_root_plan_;
   bool reaction_is_zero_ = false;
+  jsimplex::ConservationMode conservation_mode_ = jsimplex::ConservationMode::None;
+
+  // Retained physical conservation rows for each HPS leaf.
+  //
+  // For internal source s = -f_input:
+  //   a^T z + g^T lambda + h^T s = 0.
+  //
+  // Storage is allocated only for divergence-form input.
+  struct BalanceRow
+  {
+    std::vector<Real> a; // M
+    std::vector<Real> g; // (D+1)*kf
+    std::vector<Real> h; // M, full residual degree R=n
+  };
+
+  std::vector<BalanceRow> balance_rows_;
+
+  // Diagnostics from the most recent successful solve.
+  std::vector<Real> last_balance_residuals_;
+  bool balance_residuals_valid_ = false;
+
 };
 
 std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
@@ -4262,7 +4441,8 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
   int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
-  EllipticInputForm input_form = EllipticInputForm::Expanded)
+  EllipticInputForm input_form = EllipticInputForm::Expanded,
+  jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None)
 {
 #define JHPS_PERSISTENT_CASE(DIM) \
   case DIM: \
@@ -4274,7 +4454,7 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
       nmerge, merge_pairs_rowmajor, nboundary_faces, \
       boundary_face_keys_rowmajor, tau_C, alpha, beta, \
       leaf_operator_mode, leaf_least_squares_solver, \
-      leaf_verify_tolerance, leaf_verify_each_solve, input_form)
+      leaf_verify_tolerance, leaf_verify_each_solve, input_form, conservation_mode)
 
   switch (D)
   {
@@ -5133,6 +5313,137 @@ extern "C" int jhps_elliptic_solver_create(
   }
 }
 
+extern "C" int jhps_divergence_solver_create_with_conservation(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p_A,
+  int p_b,
+  int p_c,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  int conservation_mode,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out)
+{
+  if (!handle_out)
+    return -1;
+
+  *handle_out = nullptr;
+
+  if (leaf_operator_mode != JHPS_LEAF_OPERATOR_DENSE)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create: "
+      << "only Dense leaf mode is supported\n";
+    return -2;
+  }
+
+  if (conservation_mode != JHPS_CONSERVATION_NONE &&
+      conservation_mode !=
+        JHPS_CONSERVATION_ELEMENT_BALANCE)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create: "
+      << "invalid conservation mode\n";
+    return -2;
+  }
+
+  try
+  {
+    std::unique_ptr<EllipticSolverBase> solver =
+      make_elliptic_solver(
+        D,
+        n,
+        q_pad,
+        q_vol,
+        q_face,
+        kappa,
+        p_A,
+        p_b,
+        p_c,
+        assume_symmetric,
+        A_coeffs_elementmajor,
+        b_coeffs_elementmajor,
+        c_coeffs_elementmajor,
+        nverts,
+        vertex_ids,
+        coords_rowmajor,
+        nelem,
+        simplices_rowmajor,
+        nmerge,
+        merge_pairs_rowmajor,
+        nboundary_faces,
+        boundary_face_keys_rowmajor,
+        tau_C,
+        alpha,
+        beta,
+        leaf_operator_mode,
+        leaf_least_squares_solver,
+        leaf_verify_tolerance,
+        leaf_verify_each_solve,
+        EllipticInputForm::Divergence,
+        static_cast<jsimplex::ConservationMode>(conservation_mode));
+
+    if (M_out)
+      *M_out = solver->M;
+    if (m_int_out)
+      *m_int_out = solver->m_int;
+    if (kf_out)
+      *kf_out = solver->kf;
+    if (root_nb_out)
+      *root_nb_out = solver->root_nb;
+    if (interface_nb_out)
+      *interface_nb_out = solver->interface_nb;
+    if (leaf_threads_used_out)
+      *leaf_threads_used_out = solver->leaf_threads_used;
+
+    *handle_out = solver.release();
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create failed: "
+      << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_divergence_solver_create failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
+
 extern "C" int jhps_divergence_solver_create(
   int D,
   int n,
@@ -5171,84 +5482,44 @@ extern "C" int jhps_divergence_solver_create(
   int* interface_nb_out,
   int* leaf_threads_used_out)
 {
-  if (!handle_out)
-    return -1;
-
-  *handle_out = nullptr;
-
-  if (leaf_operator_mode != JHPS_LEAF_OPERATOR_DENSE)
-  {
-    std::cerr
-      << "jhps_divergence_solver_create: "
-      << "only Dense leaf mode is supported\n";
-    return -2;
-  }
-
-  try
-  {
-    std::unique_ptr<EllipticSolverBase> solver =
-      make_elliptic_solver(
-        D,
-        n,
-        q_pad,
-        q_vol,
-        q_face,
-        kappa,
-        p_A,
-        p_b,
-        p_c,
-        assume_symmetric,
-        A_coeffs_elementmajor,
-        b_coeffs_elementmajor,
-        c_coeffs_elementmajor,
-        nverts,
-        vertex_ids,
-        coords_rowmajor,
-        nelem,
-        simplices_rowmajor,
-        nmerge,
-        merge_pairs_rowmajor,
-        nboundary_faces,
-        boundary_face_keys_rowmajor,
-        tau_C,
-        alpha,
-        beta,
-        leaf_operator_mode,
-        leaf_least_squares_solver,
-        leaf_verify_tolerance,
-        leaf_verify_each_solve,
-        EllipticInputForm::Divergence);
-
-    if (M_out)
-      *M_out = solver->M;
-    if (m_int_out)
-      *m_int_out = solver->m_int;
-    if (kf_out)
-      *kf_out = solver->kf;
-    if (root_nb_out)
-      *root_nb_out = solver->root_nb;
-    if (interface_nb_out)
-      *interface_nb_out = solver->interface_nb;
-    if (leaf_threads_used_out)
-      *leaf_threads_used_out = solver->leaf_threads_used;
-
-    *handle_out = solver.release();
-    return 0;
-  }
-  catch (const std::exception& e)
-  {
-    std::cerr
-      << "jhps_divergence_solver_create failed: "
-      << e.what() << "\n";
-    return -1;
-  }
-  catch (...)
-  {
-    std::cerr
-      << "jhps_divergence_solver_create failed: "
-      << "unknown exception\n";
-    return -1;
-  }
+  return jhps_divergence_solver_create_with_conservation(
+    D,
+    n,
+    q_pad,
+    q_vol,
+    q_face,
+    kappa,
+    p_A,
+    p_b,
+    p_c,
+    assume_symmetric,
+    A_coeffs_elementmajor,
+    b_coeffs_elementmajor,
+    c_coeffs_elementmajor,
+    nverts,
+    vertex_ids,
+    coords_rowmajor,
+    nelem,
+    simplices_rowmajor,
+    nmerge,
+    merge_pairs_rowmajor,
+    nboundary_faces,
+    boundary_face_keys_rowmajor,
+    tau_C,
+    alpha,
+    beta,
+    leaf_operator_mode,
+    leaf_least_squares_solver,
+    leaf_verify_tolerance,
+    leaf_verify_each_solve,
+    JHPS_CONSERVATION_NONE,
+    handle_out,
+    M_out,
+    m_int_out,
+    kf_out,
+    root_nb_out,
+    interface_nb_out,
+    leaf_threads_used_out);
 }
 
 
@@ -5359,6 +5630,54 @@ extern "C" int jhps_elliptic_solver_solve(
     return -1;
   }
 }
+
+
+extern "C" int jhps_elliptic_solver_get_balance_residuals(
+  void* handle,
+  double* residuals_out,
+  int nelem)
+{
+  if (!handle || !residuals_out)
+    return -1;
+
+  try
+  {
+    const auto* solver =
+      static_cast<const EllipticSolverBase*>(handle);
+
+    if (nelem != solver->nelem)
+      throw std::invalid_argument(
+        "balance residual getter: element count mismatch");
+
+    const auto& residuals = solver->balance_residuals();
+
+    if (residuals.size() != (std::size_t)nelem)
+      throw std::runtime_error(
+        "balance residual getter: invalid residual size");
+
+    std::copy(
+      residuals.begin(),
+      residuals.end(),
+      residuals_out);
+
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_get_balance_residuals failed: "
+      << e.what() << "\n";
+    return -1;
+  }
+  catch (...)
+  {
+    std::cerr
+      << "jhps_elliptic_solver_get_balance_residuals failed: "
+      << "unknown exception\n";
+    return -1;
+  }
+}
+
 
 extern "C" void jhps_elliptic_solver_destroy(void* handle)
 {

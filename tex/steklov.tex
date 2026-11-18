@@ -5,9 +5,11 @@
 \usepackage{mathrsfs}
 \usepackage{bm}
 \usepackage{geometry}
-\usepackage{hyperref}
+\usepackage[hidelinks]{hyperref}
 \usepackage{color}
 \usepackage{graphicx}
+\usepackage{float}
+\usepackage{needspace}
 \geometry{margin=1in}
 \newtheorem{theorem}{Theorem}
 \newtheorem{proposition}{Proposition}
@@ -28,7 +30,7 @@
 \large Promoted Jacobi Strong Residuals, Co-normal Stabilization,\\
 Divergence-Form Elliptic Operators, and Arbitrary-Dimensional Stencils}
 \author{Sachin Natesh}
-\date{21 October 2026 --- mathematical working draft}
+\date{18 November 2026 --- mathematical working draft}
 \setlength{\parindent}{0pt}
 
 \begin{document}
@@ -45,12 +47,16 @@ least-squares extension.  Its augmented outward co-normal flux is the
 physical co-normal moment minus the positively weighted local
 trace--skeleton mismatch.  The augmentation is the exact skeleton
 gradient of the reduced local least-squares energy and defines a symmetric
-positive semidefinite operator.  We distinguish this algebraic fact from a
-still-conditional global coercivity statement in the presence of advection
-and reaction.  Source-dependent affine terms and an explicit reusable
-upward source pass are included.  The later treatment of arbitrary-
-dimensional Jacobi recurrences, natural stencils, differentiation,
-parameter promotion, and multiplication is retained from the prior note.
+positive semidefinite operator for the unconstrained leaf.  We distinguish
+this algebraic result and a conditional energy-based coercivity strategy
+from an independently imposed elementwise physical integral balance.
+The latter is a linear equality constraint on the same least-squares extension,
+whose KKT equations give a rank-one dense-QR correction; it is evaluated as a diagnostic
+in both conservative and unconstrained modes.  Source-dependent affine
+terms and an explicit reusable upward source pass are included.  The
+later sections document simplex Jacobi basis evaluation, singular-face
+limits, sparse coordinate recurrence, differentiation and parameter promotion,
+and multiplication recurrences.
 \end{abstract}
 
 \section{Continuous divergence-form Dirichlet and co-normal problem}
@@ -139,7 +145,7 @@ constructs the root DtN map before any external boundary law is solved.
 
 \section{Jacobi strong Petrov--Galerkin residual and face skeleton}
 
-Let $K=F_K(\widehat K)$, $x=x_{K,0}+B_K\widehat x$, with $\widehat K$
+Let $K=\Phi_K(\widehat K)$, $x=\Phi_K(\widehat x)=x_{K,0}+B_K\widehat x$, with $\widehat K$
 the reference $D$-simplex.  Set
 \begin{equation}\label{eq:full_trial_spaces}
  V_n(K)=\Pp_n^D(K),\qquad
@@ -161,14 +167,26 @@ $\{\psi_i^{\kappa_{\mathrm{res}}}\}$, with
 \end{equation}
 The base parameter $\kappa_j=1/2$ gives the unweighted physical
 polynomial family; general admissible $\kappa$ is allowed.
-The canonical $(D-1)$-simplex face basis is fixed consistently on
-all faces, including their orientations.
+Our barycentric convention is
+$\lambda_0=1-\sum_{r=1}^D\lambda_r$ and $\lambda_r=\widehat x_r$
+for $r=1,\ldots,D$; hence $\kappa_D$ belongs to $\lambda_0$ and
+$\kappa_{r-1}$ to $\lambda_r$.  The single canonical face family is
+\begin{equation}\label{eq:full_face_family}
+ \kappa_F=(\kappa_0,\ldots,\kappa_{D-1}),
+ \qquad
+ w_{\kappa_F}(y)\propto
+ (1-\textstyle\sum_{r=1}^{D-1}y_r)^{\kappa_{D-1}-1/2}
+ \prod_{r=1}^{D-1}y_r^{\kappa_{r-1}-1/2}.
+\end{equation}
+It is \emph{not} obtained by dropping the parameter of the vertex opposite
+an individual face.  All geometric faces use this one face basis with a
+canonical vertex ordering and the corresponding orientation permutation.
 
 For $u_h=\sum_j a_{K,j}\phi_j^\kappa$ define the strong Petrov--Galerkin
 moments
 \begin{equation}\label{eq:full_moments}
  \R_{K,i}(u_h;f)=|\det B_K|\int_{\widehat K}
-  \left[(\mathcal L_Ku_h-f)\circ F_K\right]
+  \left[(\mathcal L_Ku_h-f)\circ\Phi_K\right]
   \psi_i^{\kappa_{\mathrm{res}}}
   w_{\kappa_{\mathrm{res}}}\,\dd\widehat x.
 \end{equation}
@@ -191,16 +209,50 @@ expanded strong coefficients
 using the existing Jacobi differentiation, promotion, and
 multiplication machinery.  No weak-form stiffness matrix is substituted.
 
-\vspace{0.5cm}
+\subsection{Physical-face trace and co-normal moment maps}
+\label{sec:full_trace_flux_def}
+Let $\mathcal F(K)$ denote the $(D-1)$-dimensional faces of $K$, with
+$n_{\partial K}=|\mathcal F(K)|k_F$.  For each face $E\in\mathcal F(K)$,
+let $\widehat E$ be the canonical reference $(D-1)$-simplex and
+$\Phi_{K,E}:\widehat E\to E$ its orientation-aware affine embedding.
+Let $\{\chi_i^{\kappa_F}\}_{i=0}^{k_F-1}$ be the orthonormal canonical
+face Jacobi polynomials from \eqref{eq:full_face_family}.  Write
+$\mathrm dS=J_{K,E}\,\mathrm dy$ for the constant physical face Jacobian
+(in $D=1$, face integration means evaluation at an endpoint).
+The stacked matrices are \emph{physical-face-scaled Jacobi moments}:
+\begin{align}
+ (T_K)_{(E,i),j}
+ &=J_{K,E}\int_{\widehat E}
+     \bigl(\phi_j^\kappa\circ\Phi_K^{-1}\circ\Phi_{K,E}\bigr)(y)
+     \chi_i^{\kappa_F}(y)w_{\kappa_F}(y)\,\dd y,
+ \label{eq:full_T_integral}\\
+ (F_K)_{(E,i),j}
+ &=J_{K,E}\int_{\widehat E}
+     \bigl[\bm n_{K,E}^{\top}A_K\nabla_x
+       (\phi_j^\kappa\circ\Phi_K^{-1})\bigr]
+       (\Phi_{K,E}(y))\,
+     \chi_i^{\kappa_F}(y)w_{\kappa_F}(y)\,\dd y.
+ \label{eq:full_F_integral}
+\end{align}
+Here the normal is the \emph{outward physical unit normal} and
+$\nabla_x=B_K^{-\top}\nabla_{\widehat x}$.  The same definitions
+apply to scalar normal derivatives after setting $A_K=I$; the
+persistent divergence-form solver uses the actual (possibly anisotropic)
+$A_K$ in \eqref{eq:full_F_integral}.  Face scaling may equivalently be
+incorporated into the precomputed reference map and the affine
+geometry factor.  All face blocks are permuted into the \emph{same}
+canonical face ordering before the HPS merge.
 
-Let $T_K\in\mathbb R^{n_{\partial K}\times M}$ be the stacked physical
-face trace map and $F_K\in\mathbb R^{n_{\partial K}\times M}$
-the outward \emph{physical co-normal moment} map.  The common-skeleton
-vector $\lambda_K\in\mathbb R^{n_{\partial K}}$ and
-$T_Ka_K$ use the same canonical face coordinate representation.
-The face space is orthonormal in the selected face weight (or must be
-paired with an explicit face Riesz matrix); we keep these normalizations
-visible when using physical unweighted boundary estimates.
+Consequently $T_Ka_K$ and the skeleton vector
+$\lambda_K\in\mathbb R^{n_{\partial K}}$ have the same \emph{scaled-moment}
+normalization.  A physical face polynomial reconstructed from a block
+of moments $v_{E,i}$ has coefficients $v_{E,i}/J_{K,E}$ in the
+orthonormal face basis.  In particular, the face weights are chosen
+from $\kappa_F$ while the physical area scaling is retained; these
+weighted projection moments must not be confused with unweighted
+physical face integrals.  The latter are used explicitly in
+Section~\ref{sec:full_balance}.
+
 
 \subsection{Weighted residuals can be converted to physical norms}
 \label{sec:full_weighted_conversion}
@@ -261,7 +313,7 @@ coordinates and uses a dense QR factorization of the stacked matrix
  \mathbb A_K=
  \begin{bmatrix}s_KL_K\\W_K^{1/2}T_K\end{bmatrix},
  \qquad
- \mathbb d_K=
+ \bm d_K=
  \begin{bmatrix}s_K\bm f_K\\W_K^{1/2}\lambda_K\end{bmatrix}.
 \end{equation}
 Define
@@ -361,10 +413,14 @@ The numerical outward co-normal \emph{moment} vector is defined by
 \end{equation}
 The physical co-normal map $F_K$ uses the original divergence tensor
 $A_K$ and the outward normal, not the expanded strong operator's
-first-order coefficient.  The augmentation is thus exactly the
+first-order coefficient.  For the \emph{unconstrained} leaf, the augmentation is exactly the
 skeleton derivative of the minimized residual energy.  This fact
 justifies its sign but does \emph{not} assert that the entire flux
-$F_Ka_K$ is itself a gradient of a scalar functional.
+$F_Ka_K$ is itself a gradient of a scalar functional.  In the
+conservative leaf of Section~\ref{sec:full_balance}, the numerical-flux
+definition is unchanged, while the constrained reduced-energy derivative
+also contains the balance multiplier; the unconstrained gradient identity
+must not be applied unchanged to that constrained map.
 
 Inserting \eqref{eq:full_Ulambda_cf} yields the complete affine leaf map
 \begin{equation}\label{eq:full_leaf_Sb}
@@ -385,7 +441,8 @@ per-element polynomial skeleton, including skeleton traces that do not
 extend to exact homogeneous polynomial solutions.  $P_K$ controls
 precisely that incompatibility.
 
-For zero source, $S_K=F_KU_{\lambda,K}+P_K$.  In particular,
+For the unconstrained extension at zero source,
+$S_K=F_KU_{\lambda,K}+P_K$.  In particular,
 with $\operatorname{sym}(\cdot)$ the symmetric part,
 \begin{equation}\label{eq:full_Ssym}
  \operatorname{sym}(S_K)
@@ -397,8 +454,18 @@ nonsymmetric and its symmetric part need not be nonnegative.  Global
 stability and invertibility of merge interface matrices require
 additional arguments or hypotheses.
 
-\subsection{A conditional PDE energy route, including reaction and advection}
-The continuous Green identity for a local polynomial $u_h$ is
+\subsection{Conditional route toward coercivity of the unconstrained Steklov map}
+The preceding proposition establishes $P_K\succeq0$ algebraically;
+it does \emph{not} establish positivity of the full Steklov matrix
+$S_K$ or invertibility of all HPS interface systems.  The purpose of
+this subsection is to identify the \emph{additional estimates} that
+could yield a lower bound for the symmetric part of $S_K$, in
+particular under ellipticity and favorable reaction/advection
+hypotheses.  It is not needed for the element-balance construction in
+Section~\ref{sec:full_balance}.
+
+For the \emph{unconstrained} homogeneous leaf, the continuous Green
+identity for a local polynomial $u_h$ is
 \begin{equation}\label{eq:full_green_energy}
  \dual{q_K(u_h)}{u_h}_{\partial K}
  =\|A_K^{1/2}\nabla u_h\|_{L^2(K)}^2
@@ -433,10 +500,231 @@ reaction the bulk term is helpful; no additional \emph{physical}
 reaction flux occurs on faces.  Advection enters the boundary energy
 and may motivate a directional face weighting if the baseline penalty
 is insufficient, but is not postulated as mandatory here.
-Equation \eqref{eq:full_energy_route} is a \emph{proof strategy}, not a
-claimed unconditional coercivity theorem.  It also makes no hidden
-assumption that the entire HPS flux comes from a global least-squares
-Euler--Lagrange principle.
+A coercivity result would require showing that the controlled positive
+terms dominate these potentially negative terms, yielding a
+mesh/order-controlled G\aa rding-type lower bound, or, under stronger
+hypotheses, $\operatorname{sym}(S_K)\succeq cI$ with $c>0$
+on a suitably normalized trace subspace (possibly modulo constants).
+Such a bound could then inform stability of interface elimination.
+Equation \eqref{eq:full_energy_route} is only the starting identity for
+that analysis, \emph{not} a proven estimate or an unconditional
+coercivity theorem.  The balance constraint below is instead a linear
+conservation equality, independent of any such energy bound.  The
+constrained leaf would require its own multiplier-aware energy analysis;
+we make no coercivity claim for it here.
+
+\subsection{Physical elementwise conservation: diagnostic and constrained leaf}
+\label{sec:full_balance}
+The strong residual in \eqref{eq:full_moments} is orthogonal to a
+\emph{weighted}, finite-dimensional Jacobi test space.  It need not
+satisfy the unweighted integral balance of the divergence-form PDE.
+For $u$ smooth on an element $K$, integrating
+\eqref{eq:full_cont_operator} and using
+$\bm b\cdot\nabla u=\nabla\cdot(\bm b u)-(\nabla\cdot\bm b)u$
+gives the exact physical identity
+\begin{equation}\label{eq:full_physical_balance}
+ -\int_{\partial K}q_K(u)\,\dd S
+ +\int_{\partial K}(\bm b_K\cdot\bm n_K)u\,\dd S
+ +\int_K(c_K-\nabla\cdot\bm b_K)u\,\dd x
+ -\int_K f_K\,\dd x=0.
+\end{equation}
+There is no additional physical reaction flux on a face.  For a
+nonconforming HPS leaf, use the \emph{numerical} outward co-normal
+flux $\mu_K=F_Ka_K-W_K(T_Ka_K-\lambda_K)$ and the common skeleton
+trace $\lambda_K$ in the face integrals.  The resulting discrete
+physical balance functional is
+\begin{align}\label{eq:full_discrete_balance}
+ \mathcal B_K(a_K,\lambda_K,\bm f_K)
+ ={}&-\sum_{E\subset\partial K}\mathcal I_{K,E}^{(n)}
+          (\mu_{K,E})
+   +\sum_{E\subset\partial K}
+          \int_E(\bm b_K\cdot\bm n_{K,E})\lambda_{h,E}\,\dd S
+ \nonumber\\
+ &+\int_K(c_K-\nabla\cdot\bm b_K)u_h\,\dd x
+   -\int_K f_{h,R}\,\dd x.
+\end{align}
+Here $\lambda_{h,E}$ is the physical trace polynomial recovered from
+$\lambda_{K,E}/J_{K,E}$, and
+$\mathcal I_{K,E}^{(n)}$ converts the \emph{degree-$n$ canonical
+face moment vector} of $\mu_{K,E}$ into its unweighted physical face
+integral.  In particular, for
+\begin{equation}\label{eq:full_mface}
+ m^F_i:=\int_{\widehat E}\chi_i^{\kappa_F}(y)\,\dd y,
+ \qquad
+ \mathcal I_{K,E}^{(n)}(\mu_{K,E})
+ =\sum_{i=0}^{k_F-1}m^F_i\,\mu_{K,E,i},
+\end{equation}
+physical face scaling is already included in the supplied moments.
+The represented source is
+$f_{h,R}\circ\Phi_K=\sum_{j=0}^{m_R-1}\widetilde f_{K,j}
+\psi_j^{\kappa_{\mathrm{res}}}$ with
+$\bm f_K=|\det B_K|\widetilde{\bm f}_K$.  Thus, with
+\begin{equation}\label{eq:full_balance_h}
+ h_{K,j}:=\int_{\widehat K}
+      \psi_j^{\kappa_{\mathrm{res}}}(\widehat x)\,\dd\widehat x,
+ \qquad \int_Kf_{h,R}\,\dd x=\bm h_K^\top\bm f_K,
+\end{equation}
+no second element-Jacobian factor is applied to the source.
+The reaction/drift and advective-face contributions use unweighted
+quadrature for the physical volume and surface measures.
+
+All quantities in \eqref{eq:full_discrete_balance} are linear in
+$(a_K,\lambda_K,\bm f_K)$.  Once the element operator and face
+orientations are fixed, the balance row has the precomputable form
+\begin{equation}\label{eq:full_balance_row}
+ \boxed{\mathcal B_K
+ =\bm\ell_K^\top a_K+\bm g_K^\top\lambda_K
+  -\bm h_K^\top\bm f_K,\qquad \mathcal B_K=0.}
+\end{equation}
+In particular, $\bm\ell_K$ contains the
+$\int_K(c-\nabla\cdot\bm b)\phi_j^\kappa\,\dd x$
+contribution and the $(W_KT_K-F_K)$ face contribution after
+conversion by $\bm m^F$; $\bm g_K$ contains the
+$-W_K\lambda_K$ flux-penalty contribution together with the
+physical advective-face integrals.  This is the same functional used
+for post-solve diagnosis in \texttt{conservation\_mode=none} and as the
+exact local constraint in \texttt{element\_balance} mode.
+
+\paragraph{Equality-constrained least squares and KKT elimination.}
+For fixed $(\lambda_K,\bm f_K)$, abbreviate
+$\mathbb A=\mathbb A_K$, $\bm d=\bm d_K$,
+$H=H_K=\mathbb A^\top\mathbb A$, $\ell=\bm\ell_K$, and
+$\rho=\bm g_K^\top\lambda_K-\bm h_K^\top\bm f_K$.
+The constrained extension is
+\begin{equation}\label{eq:full_balance_constrained_problem}
+ \min_a\;\frac12\|\mathbb Aa-\bm d\|_2^2,
+ \qquad \ell^\top a+\rho=0.
+\end{equation}
+Assume the stacked matrix has full column rank, so $H\succ0$,
+and $\ell\ne0$.  With a single scalar Lagrange multiplier $\nu$,
+form the Lagrangian
+\begin{equation}\label{eq:full_balance_lagrangian}
+ \mathscr L(a,\nu)=\tfrac12\|\mathbb Aa-\bm d\|_2^2
+     +\nu(\ell^\top a+\rho).
+\end{equation}
+Its stationarity and feasibility conditions are precisely the
+symmetric indefinite KKT system
+\begin{equation}\label{eq:full_balance_KKT}
+ \begin{bmatrix}H&\ell\\\ell^\top&0\end{bmatrix}
+ \begin{bmatrix}a\\\nu\end{bmatrix}
+ =\begin{bmatrix}\mathbb A^\top\bm d\\-\rho\end{bmatrix}.
+\end{equation}
+Let $a^0=H^{-1}\mathbb A^\top\bm d$ denote the original
+unconstrained extension.  Subtract its normal equation from the first
+KKT row:
+\begin{equation}\label{eq:full_balance_KKT_elim}
+ H(a-a^0)+\nu\ell=0,
+ \qquad a=a^0-\nu v,\quad v:=H^{-1}\ell.
+\end{equation}
+Substitution into the constraint gives the scalar Schur complement
+\begin{equation}\label{eq:full_balance_multiplier}
+ d:=\ell^\top v=\ell^\top H^{-1}\ell>0,
+ \qquad\nu=\frac{\ell^\top a^0+\rho}{d}
+ =\frac{\mathcal B_K(a^0,\lambda_K,\bm f_K)}{d}.
+\end{equation}
+We therefore obtain the \emph{rank-one} equality-constrained update
+\begin{equation}\label{eq:full_balance_rank_one}
+ \boxed{a_K^{\mathrm{bal}}=a_K^0
+ -\frac{H_K^{-1}\bm\ell_K}
+ {\bm\ell_K^\top H_K^{-1}\bm\ell_K}
+ \mathcal B_K(a_K^0,\lambda_K,\bm f_K).}
+\end{equation}
+The update is the minimum change measured in the positive-definite
+$H_K$ metric that eliminates the scalar balance defect; it is not an
+extra least-squares penalty row or an adjustment to the physical flux.
+
+\paragraph{Reuse of dense QR and correction of the response maps.}
+For the thin QR factorization $\mathbb A_K=Q_KR_K$,
+$H_K=R_K^\top R_K$.  Thus the requisite vector and denominator are
+computed without forming or inverting the normal matrix:
+\begin{equation}\label{eq:full_balance_QR_triangular}
+ R_K^\top w_K=\bm\ell_K,\qquad
+ R_Kv_K=w_K,\qquad
+ d_K=w_K^\top w_K.
+\end{equation}
+Write the unconstrained affine response as
+$a_K^0=U_{\lambda,K}\lambda_K+U_{f,K}\bm f_K$.
+The unconstrained defect is also affine,
+\begin{align}\label{eq:full_balance_map_defects}
+ \mathcal B_K(a_K^0,\lambda_K,\bm f_K)
+ ={}& (\bm\ell_K^\top U_{\lambda,K}+\bm g_K^\top)\lambda_K
+ \nonumber\\
+ &+(\bm\ell_K^\top U_{f,K}-\bm h_K^\top)\bm f_K.
+\end{align}
+Consequently every column can be corrected once during precomputation:
+\begin{align}\label{eq:full_balance_map_update}
+ U_{\lambda,K}^{\mathrm{bal}}
+ &=U_{\lambda,K}-\frac{v_K}{d_K}
+   (\bm\ell_K^\top U_{\lambda,K}+\bm g_K^\top),\\
+ U_{f,K}^{\mathrm{bal}}
+ &=U_{f,K}-\frac{v_K}{d_K}
+   (\bm\ell_K^\top U_{f,K}-\bm h_K^\top).
+\end{align}
+The code uses an internal source convention $s_K=-\bm f_K$;
+its stored source-panel defect is equivalently
+$\bm\ell_K^\top U_{s,K}+\bm h_K^\top$.  These signs are consistent
+with \eqref{eq:full_balance_row}.  After correction, the same formulas
+\eqref{eq:full_mu}--\eqref{eq:full_leaf_Sb} construct the local flux
+and Steklov responses, and the HPS merge and source passes are
+unchanged.  In unconstrained mode the identical row is precomputed
+\emph{only to evaluate} the post-solve defect; no response column is
+modified.
+
+\paragraph{Exactness and interpretation.}
+The constraint enforces the physical integral conservation law
+for the \emph{represented} source and the numerical flux, to the local
+linear-solve tolerance, for every polynomial degree.  It does not
+assert that a truncated Jacobi source has the same unweighted integral
+as the original unprojected data, nor that the numerical flux equals
+the raw conormal derivative of $u_h$.  For example, if
+$u_\star\in\Pp_n^D$ but $\mathcal Lu_\star$ has degree greater
+than $R=n$, the unconstrained solver can recover $u_\star$ exactly
+in the projected strong equations while having a nonzero
+$\mathcal B_K$.  The constrained solver may then perturb the
+coefficient vector to satisfy \eqref{eq:full_balance_row}; when the
+source and flux representations are sufficiently resolved, both
+approaches can recover the same polynomial solution.  For a smooth
+nonpolynomial problem, neither solution nor source is exactly
+represented at finite order, but local balance remains enforced
+independently of approximation error.  If $\bm b\cdot\bm n$ is continuous
+across an interior face, the advective skeleton contributions cancel
+in the global sum alongside the opposing HPS co-normal fluxes.
+If its normal component jumps, local balance alone does not impose
+the additional advective transmission law required for conservation
+of the full transport flux.  No PDE energy inequality is required
+to establish \eqref{eq:full_balance_row} or its enforcement.
+\vspace{0.5cm}
+
+In Figure~\ref{fig:nonpoly_conservation}, we compare the convergence and
+elementwise balance residuals of the unconstrained and conservative
+divergence-form HPS solvers for a smooth nonpolynomial manufactured
+solution. Both formulations exhibit approximately geometric decay in
+the approximation error with increasing polynomial degree, consistent
+with the spectral convergence expected for smooth solutions under
+$p$-refinement. The conservative formulation additionally maintains
+physical elementwise balance to near machine precision at every order,
+without compromising convergence. The experiment is reproducible using
+\texttt{testing/test\_hps\_divergence\_conservation\_nonpoly.py}.
+
+\begin{figure}[H]
+	\centering
+	\includegraphics[width=0.98\textwidth]{elementwise_conservation}
+	\caption{Three-dimensional nonpolynomial manufactured-solution
+	convergence on a 12-tetrahedron mesh with asymmetric Jacobi
+	parameters $\kappa=(0.71,0.88,1.05,1.22)$.
+	The exact solution is
+	$u_\star(x)=1.30+
+	0.38\,e^{a\cdot x}\cos(k\cdot x+0.35)+
+	0.21\,e^{-6\|x-x_0\|^2}$,
+	where $a=(0.22,0.15,0.08)$,
+	$k=(2.65,2.88,3.11)$, and
+	$x_0=(0.37,0.49,0.37)$.
+	Panel (a) compares relative weighted $L^2$ errors.
+	Panel (b) compares the maximum absolute physical elementwise
+	balance residual. The conservative formulation enforces
+	the represented-data balance to near-roundoff at each degree.}
+	\label{fig:nonpoly_conservation}
+\end{figure}
 
 \section{Exact algebraic HPS merge of two discrete subdomains}
 \label{sec:full_merge}
@@ -684,395 +972,284 @@ requires replacing the strong-form Jacobi operator or the HPS merge
 algebra.
 
 \clearpage
-\section{Arbitrary-dimensional Jacobi operator recurrences and stenciling
-(retained from the original note)}
+\section{Simplex Jacobi basis, differential operators, and natural stencils}
+\label{sec:full_jacobi_ops}
 
-\subsection*{Block sparsity assumptions on Jacobi simplex operators}
-	
-	Let
-	\[
-	\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D
-	\]
-	denote the decomposition of total-degree polynomials into homogeneous subspaces
-	\(\mathcal{H}_j^D\) of degree exactly \(j\).
-	We fix, for each \(j\), a Jacobi simplex basis
-	\(\{\phi^{(\kappa)}_{\alpha} : |\alpha|=j\}\) of \(\mathcal{H}_j^D\),
-	ordered by a graded rule.
-	We assume the existence of a canonical bijection between multi-indices
-	\(\alpha\) with \(|\alpha|=j\) and local indices in \(\mathcal{H}_j^D\).
-	
-	All operators below are represented in this basis.
-	
-	\paragraph{(i) Degree-lowering operators (DMat).}
-	
-	Let
-	\[
-	\mathcal{D} : \Pi_n^D \to \Pi_{n-1}^D
-	\]
-	be a linear operator such that
-	\[
-	\mathcal{D}\,\mathcal{H}_j^D \subset \mathcal{H}_{j-1}^D,
-	\qquad j \ge 1 .
-	\]
-	
-	Then the matrix of \(\mathcal{D}\) has block structure
-	\[
-	\mathcal{D}
-	=
-	\begin{pmatrix}
-		0      & 0      & 0      & \cdots & 0 \\
-		D_1    & 0      & 0      & \cdots & 0 \\
-		0      & D_2    & 0      & \cdots & 0 \\
-		\vdots & \ddots & \ddots & \ddots & \vdots \\
-		0      & \cdots & 0      & D_n    & 0
-	\end{pmatrix},
-	\]
-	where \(D_j : \mathcal{H}_j^D \to \mathcal{H}_{j-1}^D\).
-	
-	\emph{Sparsity assumption.}
-	There exists a finite set
-	\[
-	\Delta_{\mathcal{D}} \subset \mathbb{Z}^D,
-	\qquad \sum_{d=1}^D \Delta_d = -1,
-	\]
-	independent of \(j\), such that
-	\[
-	\mathcal{D}\phi^{(\kappa)}_{\alpha}
-	\in
-	\operatorname{span}
-	\bigl\{
-	\phi^{(\kappa')}_{\alpha+\Delta} : \Delta \in \Delta_{\mathcal{D}}
-	\bigr\}.
-	\]
-	
-\paragraph{(ii) Degree-filtering operators (KMat).}
+We record the simplex Jacobi formulas and coefficient-space operators
+used in the basis and operator headers (\texttt{jbasis.hh},
+\texttt{jdmat.hh}, \texttt{jkmat.hh}, and \texttt{jmat.hh}).  The weighted
+polynomial construction follows simplex orthogonal-polynomial theory
+(see Dunkl--Xu), while
+the sparse shift viewpoint is related to triangle and tetrahedron Jacobi
+operator calculus.  We refer to these throughout as \emph{simplex Jacobi polynomials}.  A separate note treats the
+construction of simplex quadrature rules; here quadrature appears only
+as a way of evaluating the defining operator moments.
 
+\subsection{Product representation and analytical interior derivatives}
+\label{sec:full_basis_grad}
+On $\widehat K=\{x_r\ge0,\ \sum_{r=1}^D x_r\le1\}$, index the
+Cartesian coordinates by $j=1,\ldots,D$ and retain the parameter
+ordering in \eqref{eq:full_promoted}.  For a multi-index
+$\alpha\in\mathbb N_0^D$, define
+\begin{equation}\label{eq:full_stick_basis}
+ \omega_j=1-\sum_{r<j}x_r,\qquad
+ t_j=\frac{2x_j}{\omega_j}-1,\qquad
+ b_j=\kappa_{j-1}-\tfrac12,\qquad
+ a_j=2\sum_{r>j}\alpha_r+
+   \sum_{r=j}^{D}\kappa_r+\frac{D-j-1}{2}.
+\end{equation}
+For $\omega_j>0$, the degree-$|\alpha|$ orthonormal simplex Jacobi
+polynomial has the product form
+\begin{equation}\label{eq:full_jacobi_product}
+ \phi_\alpha^\kappa(x)=C_\alpha^\kappa
+ \prod_{j=1}^D\Phi_j(x),\qquad
+ \Phi_j(x)=\omega_j^{\alpha_j}
+ P_{\alpha_j}^{(a_j,b_j)}(t_j),
+\end{equation}
+where $C_\alpha^\kappa$ is the orthonormal normalization
+(\texttt{Basis::inv\_h\_alpha}) and $P_m^{(a,b)}$ denotes the
+ordinary univariate Jacobi polynomial.  In particular, $\phi_\alpha^
+\kappa$ is a genuine polynomial in $x$, even though this convenient
+factorization uses collapsed-coordinate quotients.
+
+Jacobi's univariate differentiation identity is
+\begin{equation}\label{eq:full_univ_jacobi_deriv}
+ \frac{\mathrm d}{\mathrm dt}P_m^{(a,b)}(t)
+ =\frac{m+a+b+1}{2}P_{m-1}^{(a+1,b+1)}(t),\quad m\ge1,
+\end{equation}
+with derivative zero at $m=0$.  Set
+$J_j=P_{\alpha_j}^{(a_j,b_j)}(t_j)$ and $J_j'=\mathrm dJ_j/\mathrm dt_j$.
+Since $\partial_{x_\ell}\omega_j=-1$ if $\ell<j$ and zero otherwise,
+\begin{equation}\label{eq:full_eval_grad_factor}
+ \partial_{x_\ell}\Phi_j=
+ \begin{cases}
+ 0,& j<\ell,\\
+ 2\omega_j^{\alpha_j-1}J'_j,&j=\ell,\\
+ -\alpha_j\omega_j^{\alpha_j-1}J_j
+  +2x_j\omega_j^{\alpha_j-2}J'_j,&j>\ell,
+ \end{cases}
+ \quad
+ \partial_{x_\ell}\phi_\alpha^\kappa
+ =C_\alpha^\kappa\sum_{j=\ell}^{D}
+ (\partial_{x_\ell}\Phi_j)\prod_{r\ne j}\Phi_r.
+\end{equation}
+Terms involving negative powers are interpreted through their
+polynomial cancellations (and terms with $\alpha_j=0$ have zero
+factor derivative).  Unlike a logarithmic-product derivative, this
+formula remains valid when an individual Jacobi factor vanishes.
+It is the analytical interior gradient formula implemented by
+\texttt{Basis::eval\_all}.
+
+\subsection{Collapsed-face values and derivative limits}
+\label{sec:full_basis_limit}
+When $\omega_j=0$, the ratio defining $t_j$ is undefined and should
+not be evaluated.  Write the ordinary Jacobi polynomial in powers of
+its argument, $P_m^{(a,b)}(t)=\sum_{r=0}^m c_rt^r$.  Its scaled
+factor has the \emph{polynomial identity}
+\begin{equation}\label{eq:full_jacobi_face_limit}
+ \Phi_j=\sum_{r=0}^{m}c_r\,
+   \omega_j^{m-r}(2x_j-\omega_j)^r,\qquad m=\alpha_j,
+\end{equation}
+so its extension to $\omega_j=0$ is
+\begin{equation}\label{eq:full_jacobi_leading}
+ \Phi_j\big|_{\omega_j=0}=c_m(2x_j)^m,\qquad
+ c_m=2^{-m}\binom{2m+a_j+b_j}{m}.
+\end{equation}
+On the \emph{closed simplex}, $\omega_j=0$ also forces $x_j=0$:
+therefore $\Phi_j=0$ for $m>0$ and $\Phi_j=1$ for $m=0$.
+This is the leading-coefficient limit used by the singular-face
+\emph{value} branch of \texttt{jbasis.hh}.
+
+The same polynomial identity supplies the analytical gradient limit,
+which must not be inferred by separately taking limits of singular
+terms in \eqref{eq:full_eval_grad_factor}.  At the collapsed face,
+\begin{equation}\label{eq:full_jacobi_limit_derivative}
+ \partial_{x_\ell}\Phi_j\big|_{\omega_j=x_j=0}
+ =\begin{cases}
+ 0,&m=0\text{ or }m\ge2,\\
+ b_j+1,&m=1,\ \ell<j,\\
+ a_j+b_j+2,&m=1,\ \ell=j,\\
+ 0,&m=1,\ \ell>j.
+ \end{cases}
+\end{equation}
+Indeed, for $m=1$ the scaled factor simplifies to
+$\Phi_j=(a_j+b_j+2)x_j-(b_j+1)\omega_j$; for $m\ge2$ its
+first partial derivatives vanish at the origin $(\omega_j,x_j)=(0,0)$.
+The full basis value and gradient then follow from the product rule,
+with each factor evaluated through its polynomial extension.
+At collapsed faces, the homogeneous Jacobi recurrence provides exact
+analytical values and Cartesian derivatives without division by the
+vanishing coordinate. This yields a well-defined evaluation throughout
+the closed simplex, including its edges and vertices, and recovers
+the limiting derivatives in
+\eqref{eq:full_jacobi_limit_derivative}.
+
+\subsection{DMat: differentiation and the natural Jacobi-family shift}
+\label{sec:full_natural_shift}
 Let
-\[
-\mathcal{K} : \Pi_n^D \to \Pi_n^D
-\]
-be a linear operator arising from a \emph{natural promotion} of Jacobi parameters,
-\[
-\kappa_{\mathrm{tgt}} = \kappa_{\mathrm{src}} + e_r,
-\qquad r \in \{0,\dots,D\},
-\]
-corresponding to multiplication of the orthogonality weight by a single barycentric factor.
-Although $\mathcal{K}$ preserves the total polynomial degree globally, it is \emph{not}
-degree-preserving at the level of homogeneous subspaces.
+$\mathcal H_j^\kappa:=\Pi_j^D\ominus_{w_\kappa}\Pi_{j-1}^D$
+be the orthogonal exact-degree space.  The term \emph{exact-degree}
+is important: these orthogonal polynomials generally contain monomials
+of lower degree, so $\mathcal H_j^\kappa$ is not the space of
+homogeneous monomials.
 
-More precisely, $\mathcal{K}$ satisfies the block filtering property
-\[
-\mathcal{K}\,\mathcal{H}_j^D
-\subset
-\mathcal{H}_j^D \;\oplus\; \mathcal{H}_{j-1}^D,
-\qquad j \ge 0,
-\]
-with the convention $\mathcal{H}_{-1}^D = \{0\}$.
-Equivalently, the matrix of $\mathcal{K}$ in the graded basis
-\[
-\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D
-\]
-has a two-band block structure:
-\[
-\mathcal{K}
-=
-\begin{pmatrix}
-	A_0 & B_0 & 0   & 0   & \cdots \\
-	0   & A_1 & B_1 & 0   & \cdots \\
-	0   & 0   & A_2 & B_2 & \cdots \\
-	\vdots & & \ddots & \ddots & \ddots
-\end{pmatrix},
-\]
-where
-\[
-A_j : \mathcal{H}_j^D \to \mathcal{H}_j^D,
-\qquad
-B_j : \mathcal{H}_{j+1}^D \to \mathcal{H}_j^D .
-\]
-That is, writing $u$ as a graded decomposition $$u = \sum_{j=0}^n u_j,\quad u_j \in \mathcal{H}_j^{\kappa_{\text{src}}},$$ we define the operator $$\mathcal{K} : \Pi_n^{\kappa_{\text{src}}} \to \Pi_n^{\kappa_{\text{tgt}}},$$ so that $$\mathcal{K}u = \sum_{i=0}^n (\mathcal{K} u)_i,\quad (\mathcal{K}u)_i \in \mathcal{H}_i^{\text{tgt}}.$$ So, target block $i$ recieves contributions from source blocks $i$ and $i+1$. Now, if $u$ only has one homogeneous component, $u\equiv u_j \in \mathcal{H}_j^{\text{src}}$, then the only terms remaining in the sum over $i$ from the formula
-\begin{align*}
-(\mathcal{K} u)_i = A_iu_i + B_iu_{i+1}
-\end{align*}
-are $i=j$ via $A_j u_j$ and $i=j-1$ via $B_{j-1}u_j$. Then, we see that $$\mathcal{K} u_j = (\mathcal{K}u)_j + (\mathcal{K}u)_{j-1} \Rightarrow \mathcal{K} \mathcal{H}_j \subset \mathcal{H}_j \oplus \mathcal{H}_{j-1}.$$
+For any admissible source and target families, the coefficient-space
+derivative is defined by its weighted Galerkin moments:
+\begin{equation}\label{eq:full_D_def}
+ (D_{i;\kappa\to\kappa'})_{\beta\alpha}
+ =\int_{\widehat K}\phi_\beta^{\kappa'}
+    \partial_{x_i}\phi_\alpha^\kappa\,
+       w_{\kappa'}\,\mathrm dx,
+ \quad |\alpha|\le n,\quad |\beta|\le n-1.
+\end{equation}
+The natural choice for a derivative in direction $x_i$ is
+\begin{equation}\label{eq:full_natural_deriv_shift}
+ \boxed{\kappa^{(i)}=\kappa+e_{i-1}+e_D,
+ \qquad i=1,\ldots,D.}
+\end{equation}
+In the code's zero-based coordinate convention this reads
+\texttt{kappa\_out[axis]++} and \texttt{kappa\_out[D]++}, exactly as in
+\texttt{Basis::derivative\_kappa\_shift}.  Geometrically,
+$w_{\kappa^{(i)}}=x_i\lambda_0\,w_\kappa$ up to constant normalization.
+The weight identity proves the \emph{one-block} degree-lowering rule
+\begin{equation}\label{eq:full_D_hom_block}
+ \partial_{x_i}\mathcal H_j^\kappa
+ \subset \mathcal H_{j-1}^{\kappa^{(i)}},\qquad j\ge1.
+\end{equation}
+Indeed, if $v\in\Pi_{j-2}^D$, integration by parts gives
+\begin{align}\label{eq:full_D_ibp}
+ \int_{\widehat K}(\partial_{x_i}\phi_\alpha^\kappa)
+  v\,w_{\kappa^{(i)}}\,\mathrm dx
+ &=-\int_{\widehat K}\phi_\alpha^\kappa
+   \partial_{x_i}(v x_i\lambda_0 w_\kappa)\,\mathrm dx\\
+ &=-\int_{\widehat K}\phi_\alpha^\kappa
+ \Big[x_i\lambda_0\partial_{x_i}v
+   +\big((\kappa_{i-1}+\tfrac12)\lambda_0
+        -(\kappa_D+\tfrac12)x_i\big)v\Big]
+  w_\kappa\,\mathrm dx=0.\nonumber
+\end{align}
+The boundary term vanishes under the stated admissibility of the
+Jacobi parameters.  The bracket is a polynomial of degree at most
+$j-1$, orthogonal to $\mathcal H_j^\kappa$.  The derivative already
+has total degree at most $j-1$, establishing
+\eqref{eq:full_D_hom_block}.  Thus a natural $D_i$ has only blocks
+$\mathcal H_j^\kappa\to\mathcal H_{j-1}^{\kappa^{(i)}}$,
+with a finer finite multi-index stencil inside each block.  This is
+the sparse differentiation structure generalized from the triangle
+and tetrahedron ladder formulas.  Derivatives can be composed with
+the corresponding successive parameter shifts, then promoted to the
+common PDE residual family $\kappa+\bm2$.
 
-\medskip
-\emph{Sparsity assumption.}
-There exist finite sets of multi-index offsets
-\[
-\Delta^{(0)}_{\mathcal{K}},\;
-\Delta^{(-1)}_{\mathcal{K}}
-\subset \mathbb{Z}^D,
-\]
-independent of $j$, such that for every basis function
-$\phi^{(\kappa_{\mathrm{src}})}_{\alpha}$ with $|\alpha| = j$,
-\[
-\mathcal{K}\phi^{(\kappa_{\mathrm{src}})}_{\alpha}
-\in
-\operatorname{span}
-\Bigl(
-\{\phi^{(\kappa_{\mathrm{tgt}})}_{\alpha+\Delta} : \Delta \in \Delta^{(0)}_{\mathcal{K}}\}
-\;\cup\;
-\{\phi^{(\kappa_{\mathrm{tgt}})}_{\alpha+\Delta} : \Delta \in \Delta^{(-1)}_{\mathcal{K}},\ |\alpha+\Delta|=j-1\}
-\Bigr).
-\]
-The sets $\Delta^{(0)}_{\mathcal{K}}$ and $\Delta^{(-1)}_{\mathcal{K}}$ encode,
-respectively, the intra-degree couplings ($A_j$ blocks) and the one-degree-down couplings
-($B_j$ blocks).
+\subsection{KMat: single-increment promotion and general connections}
+\label{sec:full_kmat}
+Changing Jacobi parameters without differentiating the represented
+polynomial is a separate linear map.  For admissible parameters define
+\begin{equation}\label{eq:full_K_def}
+ (K_{\kappa\to\kappa'})_{\beta\alpha}
+ =\int_{\widehat K}\phi_\beta^{\kappa'}
+            \phi_\alpha^\kappa w_{\kappa'}\,\mathrm dx,
+ \quad |\alpha|,|\beta|\le n.
+\end{equation}
+Because the target basis is orthonormal, this is the exact change
+of expansion coefficients for any $\kappa,\kappa'$ in the admissible
+range, although arbitrary shifts need not be sparse.  The primitive
+natural promotion increments exactly one parameter,
+$\kappa'=\kappa+e_r$ for $r=0,\ldots,D$.  Its weight acquires the
+corresponding barycentric factor $\vartheta_r$, defined by
+$\vartheta_r=x_{r+1}$ for $0\le r<D$ and $\vartheta_D=\lambda_0$.
+If $\phi\in\mathcal H_j^\kappa$ and $v\in\Pi_{j-2}^D$, then
+\begin{equation}\label{eq:full_K_degree_proof}
+ \langle\phi,v\rangle_{w_{\kappa+e_r}}
+ \propto\langle\phi,\vartheta_r v\rangle_{w_\kappa}=0,
+ \qquad\deg(\vartheta_r v)\le j-1.
+\end{equation}
+Hence a single-increment map has only diagonal and one-degree-down
+blocks:
+\begin{equation}\label{eq:full_K_bands}
+ K_{\kappa\to\kappa+e_r}\mathcal H_j^\kappa
+ \subset\mathcal H_j^{\kappa+e_r}
+ \oplus\mathcal H_{j-1}^{\kappa+e_r}.
+\end{equation}
+In a graded coefficient vector the matrix is block upper-bidiagonal:
+source degree $j$ contributes only to target degrees $j$ and $j-1$.
+Multi-parameter nonnegative integer promotions can be composed as a
+sequence of these sparse steps; the direct weighted $L^2$ definition
+\eqref{eq:full_K_def} remains valid for all other shifts.
 
-\medskip
-\emph{Stencil discovery.}
-To determine these coupling patterns, we assemble a dense reference operator
-$\mathcal{K}^{(n_{\mathrm{test}})}$ at a small test degree $n_{\mathrm{test}}$
-and restrict it to the representative row block
-\[
-\mathcal{K}^{(n_{\mathrm{test}})}_{\mathrm{rep}}
-=
-\mathcal{K}^{(n_{\mathrm{test}})}
-\big|_{\mathcal{H}^D_{j_{\mathrm{rep}}}
-	\times
-	\left(\mathcal{H}^D_{j_{\mathrm{rep}}} \oplus \mathcal{H}^D_{j_{\mathrm{rep}}+1}\right)},
-\qquad j_{\mathrm{rep}} = n_{\mathrm{test}} - 1 .
-\]
-For each nonzero entry in this restricted block, we record the multi-index difference
-\[
-\Delta = \alpha_{\mathrm{row}} - \alpha_{\mathrm{col}},
-\]
-partitioning the resulting offsets according to whether they correspond to
-$\mathcal{H}_j \leftarrow \mathcal{H}_j$ or
-$\mathcal{H}_j \leftarrow \mathcal{H}_{j+1}$ couplings.
-Once these offset sets stabilize as $n_{\mathrm{test}}$ increases, they are reused
-to assemble $\mathcal{K}$ at arbitrary polynomial degree $n$ without further dense computation.
+\subsection{JMat: coordinate multiplication and three-degree recurrences}
+\label{sec:full_jmat}
+For each reference coordinate $x_i$, define the truncated coordinate
+Jacobi matrix in the \emph{same} $\kappa$ family by
+\begin{equation}\label{eq:full_J_def}
+ (J_i^{(n,\kappa)})_{\beta\alpha}
+ =\langle\phi_\beta^\kappa,x_i\phi_\alpha^\kappa\rangle_{w_\kappa},
+ \qquad |\alpha|,|\beta|\le n.
+\end{equation}
+This is $\Pi_n^\kappa(x_i\cdot)\vert_{\Pi_n^D}$; finite sections
+are real symmetric.  Orthogonality immediately yields the
+multivariate three-term degree restriction
+\begin{equation}\label{eq:full_J_degree}
+ x_i\,\mathcal H_j^\kappa
+ \subset \mathcal H_{j-1}^\kappa\oplus
+ \mathcal H_j^\kappa\oplus\mathcal H_{j+1}^\kappa.
+\end{equation}
+To see this, for $v\in\Pi_{j-2}^D$,
+$\langle x_i\phi_j,v\rangle_\kappa
+ =\langle\phi_j,x_iv\rangle_\kappa=0$, while
+$x_i\phi_j\in\Pi_{j+1}^D$.  Thus $J_i$ is symmetric block
+tridiagonal by orthogonal exact degree, with additional sparsity
+within each block supplied by the multi-index stencil.
+Unlike the natural $D_i$ and one-step $K$, it couples three degree
+bands ($-1,0,+1$).  These matrices drive both the coordinate
+recurrences and the lifted operator-valued Clenshaw construction below.
 
-	
-	\paragraph{(iii) Three-term recurrence operators (JMat).}
-	
-	Let
-	\[
-	\mathcal{J} : \Pi_n^D \to \Pi_{n+1}^D
-	\]
-	be a linear operator satisfying
-	\[
-	\mathcal{J}\,\mathcal{H}_j^D
-	\subset
-	\mathcal{H}_{j-1}^D \oplus \mathcal{H}_j^D \oplus \mathcal{H}_{j+1}^D .
-	\]
-	
-	Then the matrix of \(\mathcal{J}\) has block tridiagonal structure:
-	\[
-	\mathcal{J}
-	=
-	\begin{pmatrix}
-		B_0 & C_0 & 0   & \cdots & 0 \\
-		A_1 & B_1 & C_1 & \ddots & \vdots \\
-		0   & A_2 & B_2 & \ddots & 0 \\
-		\vdots & \ddots & \ddots & \ddots & C_{n-1} \\
-		0 & \cdots & 0 & A_n & B_n
-	\end{pmatrix},
-	\]
-	with
-	\[
-	A_j : \mathcal{H}_j^D \to \mathcal{H}_{j-1}^D,\quad
-	B_j : \mathcal{H}_j^D \to \mathcal{H}_j^D,\quad
-	C_j : \mathcal{H}_j^D \to \mathcal{H}_{j+1}^D .
-	\]
-	
-	\emph{Sparsity assumption.}
-	There exists a finite set
-	\[
-	\Delta_{\mathcal{J}} \subset \mathbb{Z}^D,
-	\qquad \sum_{d=1}^D \Delta_d \in \{-1,0,+1\},
-	\]
-	independent of \(j\), such that
-	\[
-	\mathcal{J}\phi^{(\kappa)}_{\alpha}
-	\in
-	\operatorname{span}
-	\bigl\{
-	\phi^{(\kappa')}_{\alpha+\Delta} : \Delta \in \Delta_{\mathcal{J}}
-	\bigr\}.
-	\]
-	\subsection*{Delta-based representation of operator couplings}
-	
-	Let $\mathcal{O}$ be a linear operator acting on the graded polynomial space
-	\[
-	\Pi_n^D = \bigoplus_{j=0}^n \mathcal{H}_j^D,
-	\]
-	where $\mathcal{H}_j^D$ denotes the subspace of homogeneous polynomials of total
-	degree $j$ in $D$ variables.
-	Fix a Jacobi simplex basis
-	$\{\phi^{(\kappa)}_{\alpha} : |\alpha| = j\}$ for each $\mathcal{H}_j^D$,
-	indexed by multi-indices $\alpha \in \mathbb{N}^D$ with $|\alpha|=j$.
-	
-	\paragraph{Coupling types.}
-	We assume that the action of $\mathcal{O}$ on a basis function
-	$\phi^{(\kappa)}_{\alpha}$ can be written in the form
-	\[
-	\mathcal{O}\phi^{(\kappa)}_{\alpha}
-	=
-	\sum_{\Delta \in \Delta_{\mathcal{O}}}
-	c_{\Delta}(\alpha)\,
-	\phi^{(\kappa')}_{\alpha+\Delta},
-	\]
-	where:
-	\begin{itemize}
-		\item $\Delta_{\mathcal{O}} \subset \mathbb{Z}^D$ is a finite set of
-		\emph{multi-index shifts} (``deltas''),
-		\item the coefficients $c_{\Delta}(\alpha)$ may depend on $\alpha$ and the
-		Jacobi parameters, but
-		\item the set $\Delta_{\mathcal{O}}$ itself is independent of the polynomial
-		degree $j$.
-	\end{itemize}
-	
-	Each $\Delta \in \Delta_{\mathcal{O}}$ represents a distinct \emph{coupling type}
-	between a source basis function indexed by $\alpha$ and a target basis function
-	indexed by $\alpha+\Delta$.
-	
-	\paragraph{Admissibility.}
-	For a fixed source multi-index $\alpha$, a shift $\Delta$ is said to be
-	\emph{admissible} if the target multi-index
-	\[
-	\beta = \alpha + \Delta
-	\]
-	satisfies:
-	\begin{enumerate}
-		\item componentwise nonnegativity, $\beta_i \ge 0$ for all $i$, and
-		\item the appropriate degree constraint
-		\[
-		|\beta| = |\alpha| + s,
-		\]
-		where $s$ is the degree shift associated with $\mathcal{O}$.
-	\end{enumerate}
-	Only admissible shifts contribute to the action of the operator at a given
-	$\alpha$.
-	
-	\paragraph{Stability of the delta set.}
-	For small degrees $j$, some coupling types may be absent due to boundary effects
-	in the index set $\{ \alpha : |\alpha| = j \}$.
-	However, there exists a degree $j_\ast$ such that for all $j \ge j_\ast$ the set
-	of observed admissible shifts coincides with a fixed finite set
-	$\Delta_{\mathcal{O}}$.
-	We refer to this property as \emph{stability} of the delta set.
-	
-	\paragraph{Assembly at arbitrary degree.}
-	Once a stable delta set $\Delta_{\mathcal{O}}$ has been identified, the matrix
-	representation of $\mathcal{O}$ on $\Pi_n^D$ for arbitrary $n$ may be constructed
-	as follows:
-	\begin{enumerate}
-		\item loop over all basis functions (columns) indexed by $\alpha$,
-		\item for each $\alpha$, loop over all $\Delta \in \Delta_{\mathcal{O}}$,
-		\item form the candidate target index $\beta = \alpha + \Delta$,
-		\item if $\beta$ is admissible, insert the corresponding matrix entry
-		coupling $\phi^{(\kappa)}_{\alpha}$ to $\phi^{(\kappa')}_{\beta}$.
-	\end{enumerate}
-	The mapping between multi-indices and linear matrix indices is provided by the
-	fixed ordering of the Jacobi basis within each homogeneous subspace and depends
-	on the total degree, but the set of admissible shifts $\Delta_{\mathcal{O}}$
-	is independent of $n$.
-	
-	\paragraph{Interpretation.}
-	In this formulation, the delta set $\Delta_{\mathcal{O}}$ encodes all possible
-	local coupling types induced by the operator in multi-index space.
-	The degree dependence of the matrix sparsity pattern arises solely from the
-	admissibility conditions and the enumeration of basis functions, not from changes in the underlying operator structure. The apparent spreading of nonzeros with increasing degree is a consequence of the growing number of basis functions between two fixed multi-index shifts in the graded ordering; the underlying multi-index coupling encoded by each delta remains unchanged.
+\paragraph{Relation to cubature.}
+A positive cubature rule of sufficient exactness can sometimes be
+related to commuting coordinate multiplication matrices on an
+appropriate polynomial quotient space.  The finite compressed
+$J_i^{(n,\kappa)}$ do \emph{not} generally commute, so their joint
+orthogonal diagonalization is not an exact generic Gaussian-cubature
+construction.  Approximate joint diagonalization can provide
+candidate nodes for subsequent cubature optimization, as explored
+in the earlier Eikonal study; it is not assumed in the current
+quadrature-based construction of $J_i$, $D_i$, or $K$.
 
-\subsection*{Data-driven discovery of the finite delta sets $\Delta_\ast$}
+\subsection{Multi-index delta stencils: discovery and natural-pruned assembly}
+\label{sec:full_stencils}
+For an operator $O$ with the natural shifts above, a finer sparsity
+pattern is described by multi-index offsets
+$\Delta_O\subset\mathbb Z^D$:
+\begin{equation}\label{eq:full_delta_rule}
+ (O)_{\beta\alpha}\ne0
+ \quad\Longrightarrow\quad
+ \beta=\alpha+\delta,\qquad \delta\in\Delta_O,
+\end{equation}
+subject to $\beta\ge0$ and the degree bands just proved.  These
+multi-index offsets are more informative than matrix bandwidth in
+graded ordering.  The families have degree shifts
+$|\beta|-|\alpha|=-1$ (natural $D_i$), $0$ or $-1$
+(single-increment $K$), and $-1,0,+1$ ($J_i$).
 
-For each operator family $\mathcal{O}$ (e.g.\ $\mathcal{D}$, $\mathcal{K}$, $\mathcal{J}$)
-we assume the existence of a finite multi-index shift set
-\[
-\Delta_{\mathcal{O}} \subset \mathbb{Z}^D
-\]
-such that, for every homogeneous degree $j$ and every basis index $\alpha$ with $|\alpha|=j$,
-the action of $\mathcal{O}$ on $\phi^{(\kappa)}_\alpha$ is supported only on shifts
-$\alpha+\Delta$ with $\Delta \in \Delta_{\mathcal{O}}$ (cf.\ the sparsity assumptions above).
-We describe a practical strategy to discover $\Delta_{\mathcal{O}}$.
+The implementation discovers candidate offsets at modest degrees
+using defining weighted Galerkin matrices evaluated by polynomial-
+exact quadrature.  It removes scale-relative roundoff entries,
+examines representative interior degree blocks, records each
+$\beta-\alpha$, and increases the test degree until the observed
+sets stabilize.  Different bands are examined separately, and
+the resulting sparse pattern is checked against additional degrees
+and parameter choices.  Stabilization is numerical evidence, not a
+proof for arbitrary $D$ and $n$; the structural degree restrictions
+above provide independent mathematical checks.
 
-\paragraph{Step 0: choose a representative homogeneous block.}
-Fix a test degree $n_{\mathrm{test}}$ and select a representative block degree
-\[
-j_{\mathrm{rep}} = j_{\mathrm{rep}}(n_{\mathrm{test}})
-\]
-for extracting the stencil. In our implementation we take
-\[
-j_{\mathrm{rep}} = n_{\mathrm{test}}-1,
-\]
-i.e. the second highest-degree homogeneous block in $\Pi^D_{n_{\mathrm{test}}}$,
-which is the largest block and empirically exhibits the full interior coupling.
-
-\paragraph{Step 1: assemble a pruned dense test operator.}
-Assemble a dense matrix representation
-\[
-O^{(n_{\mathrm{test}})} \in \mathbb{R}^{M\times M},
-\qquad M=\dim \Pi_{n_{\mathrm{test}}}^D,
-\]
-for the operator $\mathcal{O}$ (with the desired parameters $\kappa$, shifts, and axis),
-and apply numerical pruning to remove entries below a relative tolerance
-(e.g.\ row-relative threshold proportional to machine epsilon). This produces
-a matrix whose remaining nonzeros reflect the algebraic sparsity pattern.
-
-\paragraph{Step 2: extract the set of observed deltas from the representative block.}
-Restrict $O^{(n_{\mathrm{test}})}$ to the representative homogeneous block
-\[
-O^{(n_{\mathrm{test}})}_{\mathrm{rep}}
-=
-O^{(n_{\mathrm{test}})}\big|_{\mathcal{H}^D_{j_{\mathrm{rep}}}\times \mathcal{H}^D_{j_{\mathrm{rep}}+s}},
-\]
-where the degree shift $s$ is determined by the operator:
-\[
-s=
-\begin{cases}
-	-1, & \mathcal{O}=\mathcal{D} \\
-	\in\{-1,0\},  & \mathcal{O}=\mathcal{K} \\
-	\in\{-1,0,+1\}, & \mathcal{O}=\mathcal{J}\ \text{(handled per block band)}
-\end{cases}
-\]
-and where $\mathcal{H}^D_{j_{\mathrm{rep}}+s}$ denotes the appropriate source block.
-For each nonzero entry
-\[
-\bigl(O^{(n_{\mathrm{test}})}_{\mathrm{rep}}\bigr)_{i,j} \neq 0,
-\]
-let $\alpha_i$ and $\alpha_j$ be the (unique) multi-indices associated with the
-row and column basis functions in the chosen ordering (existence assumed).
-Define the observed delta
-\[
-\Delta = \alpha_i - \alpha_j \in \mathbb{Z}^D.
-\]
-Collect all such deltas and retain the unique set:
-\[
-\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}
-=
-\Bigl\{
-\alpha_i - \alpha_j \,:\,
-\bigl(O^{(n_{\mathrm{test}})}_{\mathrm{rep}}\bigr)_{i,j} \neq 0
-\Bigr\}.
-\]
-
-\paragraph{Step 3: stabilization over increasing $n_{\mathrm{test}}$.}
-Starting from a minimal degree $n_{\min}$ (e.g.\ $n_{\min}=5$), repeat Steps 1--2
-for $n_{\mathrm{test}} = n_{\min}, n_{\min}+1, \dots, n_{\max}$, producing a sequence
-of candidate delta sets $\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}$.
-We declare the stencil to have stabilized when
-\[
-\Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}
-=
-\Delta^{(n_{\mathrm{test}}-1)}_{\mathcal{O}}
-\]
-(as sets, e.g.\ after sorting a canonical encoding), and set
-\[
-\Delta_{\mathcal{O}} := \Delta^{(n_{\mathrm{test}})}_{\mathcal{O}}.
-\]
-
-\paragraph{Usage at arbitrary degree.}
-Once $\Delta_{\mathcal{O}}$ is known, the operator at any target degree $n$
-can be assembled by looping over source basis functions (multi-indices $\alpha$)
-and applying the admissible shifts:
-\[
-\alpha \mapsto \alpha+\Delta, \qquad \Delta \in \Delta_{\mathcal{O}},
-\]
-discarding invalid targets (e.g.\ negative components or incorrect total degree),
-and placing the corresponding nonzero entry in the sparse matrix representation.
-The conversion between multi-indices and local indices within $\mathcal{H}_j^D$
-is performed by fixed, degree-consistent maps induced by the chosen ordering.
+Once a delta set is available, the natural-pruned builders iterate
+only over admissible pairs $(\alpha,\alpha+\delta)$ and evaluate
+those coefficients by their defining moments; this avoids assembling
+an entire dense matrix merely to discard structural zeros.  The
+result may still be stored in dense form for compatibility with
+existing operators, or in CSC form where suitable.  Direct
+$D_{i;\kappa\to\kappa'}$ and $K_{\kappa\to\kappa'}$ remain well-defined
+for arbitrary admissible target parameters, but only the designated
+natural shifts are asserted to have a reusable fixed-width stencil.
 
 \subsection{Multiplication operators via lifted operator-valued Clenshaw on the $D$-simplex}
 
@@ -1372,13 +1549,11 @@ using symmetry of $J_i^{(K)}$.
 Define the block-lower-triangular operator $L_{p,K}(J)$ (never explicitly assembled for the back-substitution form)
 by its action on block vectors $[v_0;\dots;v_p]$:
 \begin{align*}
-	\text{block row }0:\qquad & I_{M_K}\, v_0,\\
-	\text{block row }(j+1),\ j=0,\dots,p-1:\qquad
-	& (C_j\otimes I_{M_K})\, v_{j-1}
-	\;+\;
-	\bigl(A_j\otimes I_{M_K} - \mathcal J_j\bigr)\, v_j
-	\;+\;
-	(B_j\otimes I_{M_K})\, v_{j+1}.
+  \text{block row }0:\quad & I_{M_K}v_0,\\
+  \text{block row }j+1:\quad &
+    (C_j\otimes I_{M_K})v_{j-1}
+    +\bigl(A_j\otimes I_{M_K}-\mathcal J_j\bigr)v_j\\
+  &\qquad +(B_j\otimes I_{M_K})v_{j+1},\qquad 0\le j<p.
 \end{align*}
 (For $j=0$, the $C_0$ term is absent.)
 

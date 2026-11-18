@@ -294,7 +294,7 @@ struct Basis
       Ktail[j] = sum;
     }
   
-    // Thresholds for detecting proximity to the singular faces.
+    // Threshold for switching to polynomially extended face evaluation.
     const Real eps_face     = Real(1e-14);
     const Real eps_tol_over = Real(1e-14);
   
@@ -302,9 +302,9 @@ struct Basis
     for (int p = 0; p < npts; ++p)
     {
       Real xloc[D];
+      Real omega_true[D];
       Real one_minus[D];
       Real t[D];
-      bool near_face_j[D];
       bool near_face_point = false;
   
       Real s = Real(0.0);
@@ -319,12 +319,7 @@ struct Basis
         // detect proximity to the face: 1 - s ≈ 0
         if (omr <= eps_face && omr >= -eps_tol_over)
         {
-          near_face_j[j] = true;
           near_face_point = true;
-        }
-        else
-        {
-          near_face_j[j] = false;
         }
   
         // safety clamp
@@ -335,11 +330,72 @@ struct Basis
           om = Real(1.0e-14);
         }
   
+        omega_true[j] = omr;
         one_minus[j] = om;
         t[j]         = (Real(2.0) * xpj / om) - Real(1.0);
         s           += xpj;
       }
   
+      // On collapsed faces, evaluate the homogeneous Jacobi factors as
+      // polynomials in (omega_j, x_j). This gives exact ambient gradients
+      // without divisions by omega_j or finite differences.
+      if (near_face_point)
+      {
+        for (int m = 0; m < M; ++m)
+        {
+          const int* arow = alpha_table + m * D;
+          const int* trow = tail_deg + m * D;
+
+          Real F[D];
+          Real dF_dx[D];
+          Real dF_domega[D];
+          Real val = inv_h[m];
+
+          for (int j = 0; j < D; ++j)
+          {
+            const Real a_j = Real(2) * static_cast<Real>(trow[j])
+                           + Ktail[j]
+                           + Real(0.5) * static_cast<Real>(D - j - 2);
+            const Real b_j = kappa[j] - Real(0.5);
+
+            eval_homogeneous_factor(
+              arow[j], a_j, b_j, omega_true[j], xloc[j],
+              F[j], dF_dx[j], dF_domega[j]);
+
+            val *= F[j];
+          }
+
+          V[p + m * ld_V] = val;
+
+          if (dV)
+          {
+            Real pre[D];
+            Real suf[D];
+            pre[0] = Real(1);
+            for (int j = 1; j < D; ++j)
+              pre[j] = pre[j - 1] * F[j - 1];
+
+            suf[D - 1] = Real(1);
+            for (int j = D - 2; j >= 0; --j)
+              suf[j] = suf[j + 1] * F[j + 1];
+
+            Real* g_pm = dV + ((p + m * ld_V) * D);
+            for (int ell = 0; ell < D; ++ell)
+            {
+              Real grad = Real(0);
+              for (int j = ell; j < D; ++j)
+              {
+                const Real dF = (j == ell)
+                  ? dF_dx[j] : -dF_domega[j];
+                grad += dF * pre[j] * suf[j];
+              }
+              g_pm[ell] = inv_h[m] * grad;
+            }
+          }
+        }
+        continue;
+      }
+
       // --- main loop over basis functions m ---
       for (int m = 0; m < M; ++m)
       {
@@ -350,7 +406,7 @@ struct Basis
   
         Real F[D];          // per-level factor
         Real omega_pow[D];  // omega_j^{n_j}
-        Real Pnj[D];        // P_{n_j}(t_j) (for analytic grad path)
+        Real Pnj[D];        // P_{n_j}(t_j) (interior gradient path)
   
         for (int j = 0; j < D; ++j)
         {
@@ -369,48 +425,14 @@ struct Basis
   
           if (n_j > 0)
           {
-            if (!near_face_j[j])
-            {
-              // regular evaluation
-              opow = std::pow(one_minus[j], static_cast<Real>(n_j));
-  
-              P = detail::BasisClassic1D<Real>::eval_n(
-                    n_j,
-                    a_j,
-                    b_j,
-                    t[j]
-                  );
-  
-              F_j = opow * P;
-            }
-            else
-            {
-              // limit formula: (1-s)^n P_n(...) -> C*(2 x_j)^n
-              Real nR       = static_cast<Real>(n_j);
-              Real two_n_ab = Real(2.0) * nR + a_j + b_j;
-  
-              double lg_num  = std::lgamma(
-                                 static_cast<double>(two_n_ab + Real(1.0))
-                               );
-              double lg_den1 = std::lgamma(
-                                 static_cast<double>(nR + Real(1.0))
-                               );
-              double lg_den2 = std::lgamma(
-                                 static_cast<double>(nR + a_j + b_j + Real(1.0))
-                               );
-              Real C = static_cast<Real>(
-                         std::exp(lg_num - lg_den1 - lg_den2)
-                       ) / std::pow(Real(2.0), nR);
-  
-              Real poly = std::pow(Real(2.0) * xloc[j], nR);
-              F_j = C * poly;
-  
-              // not used in FD path, but keep sane
-              opow = Real(1.0);
-              P    = Real(1.0);
-            }
+            opow = std::pow(one_minus[j], static_cast<Real>(n_j));
+
+            P = detail::BasisClassic1D<Real>::eval_n(
+                  n_j, a_j, b_j, t[j]);
+
+            F_j = opow * P;
           }
-  
+
           F[j]         = F_j;
           omega_pow[j] = opow;
           Pnj[j]       = P;
@@ -421,10 +443,8 @@ struct Basis
         V[p + m * ld_V] = val;
   
         // --- analytic gradient path ---
-        if (!dV || near_face_point)
-        {
-          continue;  // we will handle FD patch later for near_face_point
-        }
+        if (!dV)
+          continue;
   
         // product rule: build prefix/suffix for F[j]
         Real pre[D];
@@ -528,162 +548,6 @@ struct Basis
         }
       } // m
   
-      // --- finite-difference gradient patch for near-face points ---
-      if (dV && near_face_point)
-      {
-        const Real h = Real(1e-6);
-        const Real two_h = Real(2.0) * h;
-        const Real inv_2h = Real(1.0) / (Real(2.0) * h);
-  
-        Real sumx = Real(0.0);
-        for (int j = 0; j < D; ++j)
-        {
-          sumx += xloc[j];
-        }
-  
-        // allocate temporary arrays for unpatched evaluations
-        Real* Vp1 = (Real*)std::malloc(sizeof(Real) * (size_t)M);
-        Real* Vp2 = (Real*)std::malloc(sizeof(Real) * (size_t)M);
-        Real* Vm1 = (Real*)std::malloc(sizeof(Real) * (size_t)M);
-        Real* Vm2 = (Real*)std::malloc(sizeof(Real) * (size_t)M);
-  
-        if (!Vp1 || !Vp2 || !Vm1 || !Vm2)
-        {
-          if (Vp1) std::free(Vp1);
-          if (Vp2) std::free(Vp2);
-          if (Vm1) std::free(Vm1);
-          if (Vm2) std::free(Vm2);
-          continue; // out-of-memory; leave gradients as zero / garbage
-        }
-  
-        // f0[m] = V[p + m*ld_V] already computed with patched formula
-        for (int ell = 0; ell < D; ++ell)
-        {
-          // choose one-sided direction that stays inside simplex
-          bool forward_ok  = true;
-          bool backward_ok = true;
-  
-          // forward: x_ell + 2h, sumx + 2h
-          if (xloc[ell] + two_h > Real(1.0) + eps_tol_over)
-          {
-            forward_ok = false;
-          }
-          if (sumx + two_h > Real(1.0) + eps_tol_over)
-          {
-            forward_ok = false;
-          }
-  
-          // backward: x_ell - 2h, sumx - 2h
-          if (xloc[ell] - two_h < Real(0.0) - eps_tol_over)
-          {
-            backward_ok = false;
-          }
-          // sumx - 2h is always <= 1, so no check needed for the inequality.
-  
-          bool use_forward = forward_ok;
-          bool use_backward = (!forward_ok && backward_ok);
-  
-          if (!use_forward && !use_backward)
-          {
-            // cannot move in this direction safely; set derivative to 0
-            for (int m = 0; m < M; ++m)
-            {
-              Real* g_pm = dV + ((p + m * ld_V) * D);
-              g_pm[ell] = Real(0.0);
-            }
-            continue;
-          }
-  
-          if (use_forward)
-          {
-            Real x1[D];
-            Real x2[D];
-            for (int j = 0; j < D; ++j)
-            {
-              x1[j] = xloc[j];
-              x2[j] = xloc[j];
-            }
-            x1[ell] += h;
-            x2[ell] += two_h;
-  
-            eval_point_value_unpatched(x1,
-                                       kappa,
-                                       n,
-                                       alpha_table,
-                                       tail_deg,
-                                       inv_h,
-                                       Ktail,
-                                       Vp1);
-  
-            eval_point_value_unpatched(x2,
-                                       kappa,
-                                       n,
-                                       alpha_table,
-                                       tail_deg,
-                                       inv_h,
-                                       Ktail,
-                                       Vp2);
-  
-            for (int m = 0; m < M; ++m)
-            {
-              Real f0 = V[p + m * ld_V];
-              Real f1 = Vp1[m];
-              Real f2 = Vp2[m];
-  
-              Real deriv = (-Real(3.0) * f0 + Real(4.0) * f1 - f2) * inv_2h;
-              Real* g_pm = dV + ((p + m * ld_V) * D);
-              g_pm[ell] = deriv;
-            }
-          }
-          else if (use_backward)
-          {
-            Real x1[D];
-            Real x2[D];
-            for (int j = 0; j < D; ++j)
-            {
-              x1[j] = xloc[j];
-              x2[j] = xloc[j];
-            }
-            x1[ell] -= h;
-            x2[ell] -= two_h;
-  
-            eval_point_value_unpatched(x1,
-                                       kappa,
-                                       n,
-                                       alpha_table,
-                                       tail_deg,
-                                       inv_h,
-                                       Ktail,
-                                       Vm1);
-  
-            eval_point_value_unpatched(x2,
-                                       kappa,
-                                       n,
-                                       alpha_table,
-                                       tail_deg,
-                                       inv_h,
-                                       Ktail,
-                                       Vm2);
-  
-            for (int m = 0; m < M; ++m)
-            {
-              Real f0 = V[p + m * ld_V];
-              Real f1 = Vm1[m];
-              Real f2 = Vm2[m];
-  
-              Real deriv = (Real(3.0) * f0 - Real(4.0) * f1 + f2) * inv_2h;
-              Real* g_pm = dV + ((p + m * ld_V) * D);
-              g_pm[ell] = deriv;
-            }
-          }
-        } // ell
-  
-        std::free(Vp1);
-        std::free(Vp2);
-        std::free(Vm1);
-        std::free(Vm2);
-      } // if (dV && near_face_point)
-  
     } // p
   }
 
@@ -778,6 +642,60 @@ private:
       alpha[coord] = a;
       fill_degree_rec(total - a, coord + 1, alpha, alpha_table, m);
     }
+  }
+
+  // Homogeneous Jacobi factor H_n(omega,x) =
+  // omega^n P_n^{(a,b)}(2*x/omega - 1), extended polynomially to
+  // omega = 0. Its partial derivatives give the exact Cartesian
+  // gradients on collapsed faces, including simplex vertices.
+  static inline void eval_homogeneous_factor(
+    int n, Real a, Real b, Real omega, Real x,
+    Real& value, Real& dx, Real& domega)
+  {
+    if (n == 0)
+    {
+      value = Real(1);
+      dx = domega = Real(0);
+      return;
+    }
+
+    Real hm2 = Real(1);
+    Real xm2 = Real(0);
+    Real wm2 = Real(0);
+
+    Real hm1 = (a + b + Real(2)) * x - (b + Real(1)) * omega;
+    Real xm1 = a + b + Real(2);
+    Real wm1 = -(b + Real(1));
+
+    for (int k = 2; k <= n; ++k)
+    {
+      const Real kr = static_cast<Real>(k);
+      const Real t = Real(2) * kr + a + b;
+      const Real c = Real(2) * kr * (kr + a + b) * (t - Real(2));
+      const Real A = (t - Real(1)) * t * (t - Real(2));
+      const Real B = (t - Real(1)) * (a * a - b * b);
+      const Real C = Real(2) * (kr + a - Real(1))
+                     * (kr + b - Real(1)) * t;
+      const Real v = A * (Real(2) * x - omega) + B * omega;
+
+      const Real h = (v * hm1 - C * omega * omega * hm2) / c;
+      const Real hx = (Real(2) * A * hm1 + v * xm1
+                       - C * omega * omega * xm2) / c;
+      const Real hw = ((B - A) * hm1 + v * wm1
+                       - C * (Real(2) * omega * hm2
+                              + omega * omega * wm2)) / c;
+
+      hm2 = hm1;
+      xm2 = xm1;
+      wm2 = wm1;
+      hm1 = h;
+      xm1 = hx;
+      wm1 = hw;
+    }
+
+    value = hm1;
+    dx = xm1;
+    domega = wm1;
   }
 
   // Single-point evaluator using the original product formula

@@ -237,6 +237,8 @@ public:
   std::vector<Real> balance_h; // M
 
   bool balance_row_ready = false;
+  // A diagnostic row need not activate the rank-one constrained solve.
+  bool balance_constraint_enabled = false;
   bool dense_conormal_flux_installed = false;
 
 
@@ -582,6 +584,7 @@ public:
     // A change to F invalidates any previously assembled
     // conservation row.
     balance_row_ready = false;
+    balance_constraint_enabled = false;
     balance_a.clear();
     balance_g.clear();
     balance_h.clear();
@@ -593,15 +596,17 @@ public:
     int p_b,
     const Real* b_base,
     int p_c,
-    const Real* c_base)
+    const Real* c_base,
+    bool enforce_constraint = true)
   {
-    // Conservation is currently supported only by the
-    // dense-QR divergence-form leaf.
+    // Diagnostics require the dense co-normal map; enforcement also
+    // requires the dense-QR rank-one update.
     if (operator_mode != LeafOperatorMode::Dense ||
-        least_squares_solver != LeafLeastSquaresSolver::DenseQR)
+        (enforce_constraint &&
+         least_squares_solver != LeafLeastSquaresSolver::DenseQR))
       throw std::invalid_argument(
         "Leaf::assemble_dense_divergence_balance_row "
-        "requires Dense/DenseQR");
+        "requires Dense mode (DenseQR if enforcing)");
 
     if (!dense_conormal_flux_installed)
       throw std::runtime_error(
@@ -626,6 +631,7 @@ public:
         "Leaf: invalid divergence coefficients");
 
     balance_row_ready = false;
+    balance_constraint_enabled = false;
     balance_a.assign((std::size_t)M, Real(0));
     balance_g.assign((std::size_t)nb, Real(0));
     balance_h.assign((std::size_t)M, Real(0));
@@ -633,7 +639,7 @@ public:
     // -------------------------------------------------
     // 1. Source integration:
     //
-    // h_j = |det B| int_T P_j^(kappa+2) dxi.
+    // h_j = int_T P_j^(kappa+2) dxi (source includes |det B|).
     // -------------------------------------------------
 
     const Real volume_scale = geom.detBabs;
@@ -947,6 +953,7 @@ public:
     }
 
     balance_row_ready = true;
+    balance_constraint_enabled = enforce_constraint;
   }
 
 
@@ -1077,6 +1084,7 @@ public:
     // Numerical conservation depends explicitly on tau.
     // Any tau modification invalidates the balance row.
     balance_row_ready = false;
+    balance_constraint_enabled = false;
     balance_a.clear();
     balance_g.clear();
     balance_h.clear();
@@ -1751,11 +1759,9 @@ private:
     }
 
 
-    // Apply the exact physical-balance constraint only
-    // when a divergence-form balance row was assembled.
-    //
-    // Otherwise preserve the original dense-QR maps.
-    if (balance_row_ready)
+    // A diagnostic-only balance row must leave the ordinary
+    // unconstrained dense-QR response maps unchanged.
+    if (balance_row_ready && balance_constraint_enabled)
     {
       apply_dense_divergence_balance_rank_one(
         response_out,
@@ -2405,6 +2411,7 @@ private:
     elliptic_action_work_.reset();
 
     balance_row_ready = false;
+    balance_constraint_enabled = false;
     dense_conormal_flux_installed = false;
 
     balance_a.clear();

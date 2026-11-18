@@ -27,6 +27,12 @@ class HpsLeafLeastSquaresSolver(IntEnum):
   DENSE_QR = 2
 
 
+class HpsConservationMode(IntEnum):
+  NONE = 0
+  ELEMENT_BALANCE = 1
+
+
+
 def _coerce_leaf_operator_mode(
   value: HpsLeafOperatorMode | str | int,
 ) -> HpsLeafOperatorMode:
@@ -88,6 +94,37 @@ def _coerce_leaf_least_squares_solver(
     raise ValueError(
       "leaf_least_squares_solver must be Auto, LSMR, or DenseQR"
     ) from exc
+
+def _coerce_conservation_mode(
+  value: HpsConservationMode | str | int,
+) -> HpsConservationMode:
+  if isinstance(value, HpsConservationMode):
+    return value
+
+  if isinstance(value, str):
+    normalized = value.strip().lower().replace("-", "_")
+    names = {
+      "none": HpsConservationMode.NONE,
+      "off": HpsConservationMode.NONE,
+      "element_balance": HpsConservationMode.ELEMENT_BALANCE,
+      "elementbalance": HpsConservationMode.ELEMENT_BALANCE,
+    }
+
+    try:
+      return names[normalized]
+    except KeyError as exc:
+      raise ValueError(
+        "conservation_mode must be 'none' or 'element_balance'"
+      ) from exc
+
+  try:
+    return HpsConservationMode(int(value))
+  except (TypeError, ValueError) as exc:
+    raise ValueError(
+      "conservation_mode must be 'none' or 'element_balance'"
+    ) from exc
+
+
 
 
 @dataclass
@@ -403,9 +440,35 @@ _set_elliptic_solver_create_signature(
 _set_elliptic_solver_create_signature(
   libjpolyd.jhps_divergence_solver_create
 )
+
+# Versioned divergence constructor: identical to the original
+# except for one conservation_mode integer before handle_out.
+_set_elliptic_solver_create_signature(
+  libjpolyd.jhps_divergence_solver_create_with_conservation
+)
+
+_divergence_cons_create = (
+  libjpolyd.jhps_divergence_solver_create_with_conservation
+)
+
+_cons_argtypes = list(_divergence_cons_create.argtypes)
+_cons_argtypes.insert(29, ct.c_int)
+_divergence_cons_create.argtypes = _cons_argtypes
+
+
 _set_elliptic_solver_solve_signature(
   libjpolyd.jhps_elliptic_solver_solve
 )
+
+# Read-only elementwise conservation diagnostics.
+libjpolyd.jhps_elliptic_solver_get_balance_residuals.argtypes = [
+  ct.c_void_p,  # Persistent solver handle
+  _Float64C,    # Output array, shape (nelem,)
+  ct.c_int,     # Number of elements
+]
+libjpolyd.jhps_elliptic_solver_get_balance_residuals.restype = ct.c_int
+
+
 _set_elliptic_solver_update_variable_robin_signature(
   libjpolyd.jhps_elliptic_solver_update_variable_robin
 )
@@ -988,6 +1051,10 @@ class HpsEllipticSolver:
     leaf_verify_tolerance: float = 0.0,
     leaf_verify_each_solve: bool = True,
     _divergence_form: bool = False,
+    _conservation_mode: HpsConservationMode | str | int = (
+      HpsConservationMode.NONE
+    ),
+
   ) -> None:
     self.D = int(pc.D)
     self.n = int(pc.n)
@@ -1108,12 +1175,40 @@ class HpsEllipticSolver:
       dtype=np.int32,
     )
 
+    conservation_mode = _coerce_conservation_mode(
+      _conservation_mode
+    )
+
+    if (
+      not _divergence_form
+      and conservation_mode != HpsConservationMode.NONE
+    ):
+      raise ValueError(
+        "ElementBalance is supported only for divergence form"
+      )
+
+    self.conservation_mode = conservation_mode
+
     leaf_mode = _coerce_leaf_operator_mode(leaf_operator_mode)
     leaf_solver = _coerce_leaf_least_squares_solver(
       leaf_least_squares_solver
     )
     if _divergence_form and leaf_mode != HpsLeafOperatorMode.DENSE:
       raise ValueError("divergence form currently requires Dense leaf mode")
+    
+    if conservation_mode == HpsConservationMode.ELEMENT_BALANCE:
+      if (
+        leaf_mode != HpsLeafOperatorMode.DENSE
+        or leaf_solver not in (
+          HpsLeafLeastSquaresSolver.AUTO,
+          HpsLeafLeastSquaresSolver.DENSE_QR,
+        )
+      ):
+        raise ValueError(
+          "ElementBalance requires Dense/DenseQR"
+        )
+
+
 
     M_out = ct.c_int()
     m_int_out = ct.c_int()
@@ -1122,15 +1217,25 @@ class HpsEllipticSolver:
     interface_nb_out = ct.c_int()
     leaf_threads_used_out = ct.c_int()
 
-    create_fn = (
-      libjpolyd.jhps_divergence_solver_create if _divergence_form
-      else libjpolyd.jhps_elliptic_solver_create
+    use_conservative_constructor = (
+      _divergence_form
+      and conservation_mode ==
+        HpsConservationMode.ELEMENT_BALANCE
     )
-    create_name = (
-      "jhps_divergence_solver_create" if _divergence_form
-      else "jhps_elliptic_solver_create"
-    )
-    rc = create_fn(
+
+    if use_conservative_constructor:
+      create_fn = (
+        libjpolyd.jhps_divergence_solver_create_with_conservation
+      )
+      create_name = "jhps_divergence_solver_create_with_conservation"
+    elif _divergence_form:
+      create_fn = libjpolyd.jhps_divergence_solver_create
+      create_name = "jhps_divergence_solver_create"
+    else:
+      create_fn = libjpolyd.jhps_elliptic_solver_create
+      create_name = "jhps_elliptic_solver_create"
+
+    create_args = [
       ct.c_int(self.D),
       ct.c_int(self.n),
       ct.c_int(int(pc.q_pad)),
@@ -1160,6 +1265,14 @@ class HpsEllipticSolver:
       ct.c_int(int(leaf_solver)),
       ct.c_double(float(leaf_verify_tolerance)),
       ct.c_int(1 if leaf_verify_each_solve else 0),
+    ]
+
+    if use_conservative_constructor:
+      create_args.append(
+        ct.c_int(int(conservation_mode))
+      )
+
+    create_args.extend([
       ct.byref(self._handle),
       ct.byref(M_out),
       ct.byref(m_int_out),
@@ -1167,7 +1280,10 @@ class HpsEllipticSolver:
       ct.byref(root_nb_out),
       ct.byref(interface_nb_out),
       ct.byref(leaf_threads_used_out),
-    )
+    ])
+
+    rc = create_fn(*create_args)
+
     if rc != 0 or not self._handle.value:
       self._handle = ct.c_void_p()
       raise RuntimeError(
@@ -1393,6 +1509,9 @@ class HpsDivergenceSolver(HpsEllipticSolver):
     ) = HpsLeafLeastSquaresSolver.DENSE_QR,
     leaf_verify_tolerance: float = 0.0,
     leaf_verify_each_solve: bool = True,
+    conservation_mode: HpsConservationMode | str | int = (
+      HpsConservationMode.NONE
+    ),
   ) -> None:
     super().__init__(
       pc,
@@ -1416,9 +1535,46 @@ class HpsDivergenceSolver(HpsEllipticSolver):
       leaf_verify_tolerance=leaf_verify_tolerance,
       leaf_verify_each_solve=leaf_verify_each_solve,
       _divergence_form=True,
+      _conservation_mode=conservation_mode,
     )
     # Result metadata inherited from HpsEllipticResult uses p2, p1, p0;
     # for this mode those denote original input degrees p_A, p_b, p_c.
+
+
+  def balance_residuals(self) -> np.ndarray:
+    """Return elementwise conservation residuals from the last solve.
+
+    Returns
+    -------
+    np.ndarray
+      Shape (nelem,), float64, in mesh element order.
+
+    Available for both conservation modes after a successful
+    divergence-form solve. The residual is
+
+      r_e = a_e.T @ z_e + g_e.T @ lambda_e - h_e.T @ f_e
+
+    where f_e is the Jacobian-scaled physical source input.
+    """
+    if not self._handle.value:
+      raise RuntimeError("HpsDivergenceSolver is closed")
+
+    residuals = np.empty(self.nelem, dtype=np.float64)
+
+    rc = libjpolyd.jhps_elliptic_solver_get_balance_residuals(
+      self._handle,
+      residuals,
+      ct.c_int(self.nelem),
+    )
+
+    if rc != 0:
+      raise RuntimeError(
+        "jhps_elliptic_solver_get_balance_residuals "
+        f"failed with rc={rc}. "
+        "A successful solve is required before reading diagnostics."
+      )
+
+    return residuals
 
 
 def chain_simplex_mesh(D: int, nelem: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

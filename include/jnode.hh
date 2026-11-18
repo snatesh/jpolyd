@@ -21,6 +21,14 @@
 
 namespace jsimplex {
 
+
+enum class ConservationMode : int
+{
+  None = 0,
+  ElementBalance = 1
+};
+
+
 template<int D, class Real>
 struct NodeMergeData
 {
@@ -719,6 +727,10 @@ inline Node<D,Real> make_divergence_form_homogeneous_leaf_node(
   const EllipticElementCoefficientsView<D,Real>& expanded_coeffs,
   int p_A,
   const Real* A_base,
+  int p_b,
+  const Real* b_base,
+  int p_c,
+  const Real* c_base,
   const MultByQQuadraturePlan<D-1,Real>& face_quad,
   MultByQQuadratureWorkspace<Real>& face_work,
   EllipticDenseWorkspace<D,Real>& elliptic_work,
@@ -728,7 +740,8 @@ inline Node<D,Real> make_divergence_form_homogeneous_leaf_node(
   Real atol = Real(1e-14),
   Real btol = Real(1e-14),
   int itnlim = 5000,
-  typename Leaf<D,Real>::SolveWorkspace* solve_workspace = nullptr)
+  typename Leaf<D,Real>::SolveWorkspace* solve_workspace = nullptr,
+  ConservationMode conservation_mode = ConservationMode::None)
 {
   if (leaf_options.operator_mode != LeafOperatorMode::Dense)
     throw std::invalid_argument(
@@ -765,6 +778,7 @@ inline Node<D,Real> make_divergence_form_homogeneous_leaf_node(
     opts,
     leaf_options);
 
+
   // Replace normal flux with physical co-normal flux.
   leaf_out.set_dense_conormal_flux(
     p_A,
@@ -772,7 +786,22 @@ inline Node<D,Real> make_divergence_form_homogeneous_leaf_node(
     face_quad,
     face_work);
 
-  // Materialize HPS response operators using F_A.
+  // Assemble the same physical balance functional in both modes.
+  // Use original divergence-form b and c, not b - div(A).
+  // Only ElementBalance applies the rank-one correction.
+  if (conservation_mode != ConservationMode::None &&
+      conservation_mode != ConservationMode::ElementBalance)
+    throw std::invalid_argument(
+      "divergence-form leaf: invalid conservation mode");
+
+  leaf_out.assemble_dense_divergence_balance_row(
+    p_b,
+    b_base,
+    p_c,
+    c_base,
+    conservation_mode == ConservationMode::ElementBalance);
+
+  // The response-map solve applies the correction only when enabled.
   return node_detail::materialize_homogeneous_leaf_node<D,Real>(
     mesh,
     element_id,

@@ -6,7 +6,7 @@
 
 The core numerical library supports Jacobi bases on the $D$-simplex, quadrature, differentiation and Jacobi-family promotion operators, multiplication operators, affine simplex geometry, trace and flux maps, local Poisson/elliptic operators, and mesh-level HPS merges. A C API and thin Python `ctypes` wrappers expose the same functionality for validation and higher-level mesh experiments.
 
-The **persistent HPS solver** supports variable-coefficient elliptic operators in both non-divergence and divergence form. The divergence-form path uses physical co-normal fluxes for interface conservation and supports scalar or facewise polynomial Robin boundary conditions, mixed exterior boundary conditions, and pure Neumann problems with compatibility checking and a configurable boundary-mean gauge. Elementwise polynomial diffusion tensors may be anisotropic or discontinuous across interfaces.
+The **persistent HPS solver** supports variable-coefficient elliptic operators in both non-divergence and divergence form. The divergence-form path uses physical co-normal fluxes for interface conservation and supports scalar or facewise polynomial Robin boundary conditions, mixed exterior boundary conditions, and pure Neumann problems with compatibility checking and a configurable boundary-mean gauge. Elementwise polynomial diffusion tensors may be anisotropic or discontinuous across interfaces. The divergence-form solver also supports an optional **elementwise conservative** dense-QR leaf: it enforces the unweighted physical integral balance of the represented source, drift, reaction, and numerical co-normal flux to solver tolerance. The same balance diagnostic is available even when enforcement is disabled.
 
 The reference solver backend is dense and precomputed: local elliptic operators are materialized once, the tau-stabilized leaf least-squares problem is factorized with dense QR, and reusable leaf response maps are retained for subsequent boundary data and source terms. Matrix-free and dense/sparse variants remain available for the **non-divergence-form** solver as alternative research backends; the divergence-form implementation currently requires the Dense backend.
 
@@ -104,7 +104,7 @@ Differentiation changes both polynomial degree and Jacobi parameters. The librar
 - Jacobi-family promotion operators (`KMat`);
 - coordinate/Jacobi operators (`JMat`).
 
-Known sparse stencils are used when constructing these operators. `RefSimplexPrecomp` builds and caches the derivative/promotion DAG used by the PDE solvers while retaining dense compatibility maps for validation.
+The natural derivative of coordinate `i` uses the parameter shift `kappa + e_i + e_D` in zero-based C++ indexing (the final parameter belongs to the remaining barycentric coordinate). A one-parameter `KMat` increment has diagonal and degree-lowering blocks; each symmetric `JMat` connects only neighboring total-degree blocks. Natural multi-index stencils are used to prune construction of these operators. `RefSimplexPrecomp` builds and caches the derivative/promotion DAG used by the PDE solvers while retaining dense compatibility maps for validation.
 
 Relevant headers:
 
@@ -225,7 +225,7 @@ Here $A$ is an elementwise polynomial $D\times D$ diffusion tensor, and $b$ and 
 
 The local diffusion tensor may be anisotropic and discontinuous between elements. The HPS merge enforces cancellation of the two outward **co-normal numerical fluxes** across an interface; it does not impose continuity of ordinary normal derivatives. The established tau-stabilized merge algebra is reused unchanged.
 
-The divergence-form implementation currently uses the **Dense leaf backend only**. The polynomial coefficient degrees are specified as `p_A`, `p_b`, and `p_c`; a degree of `-1` for `p_b` or `p_c` disables that term.
+The divergence-form implementation currently uses the **Dense leaf backend only**. The polynomial coefficient degrees are specified as `p_A`, `p_b`, and `p_c`; a degree of `-1` for `p_b` or `p_c` disables that term. Elementwise balance enforcement specifically uses the Dense/DenseQR path.
 
 Relevant headers:
 
@@ -234,6 +234,48 @@ Relevant headers:
 - `include/jelliptic.hh`
 - `include/jnode.hh`
 - `include/jmerge.hh`
+
+### Elementwise physical balance (conservative divergence-form leaves)
+
+The divergence-form solver can enforce **one physical integral conservation law per element**, in addition to the promoted strong residual and stabilized face equations. For the represented coefficients and source, with $q=n^TA\nabla u$ and the numerical co-normal flux $\widehat q_h$ from the tau-stabilized HPS leaf, the condition is
+
+```math
+-\int_{\partial K}\widehat q_h\,dS
++\int_{\partial K}(b_h\cdot n)\lambda_h\,dS
++\int_K(c_h-\nabla\cdot b_h)u_h\,dx
+-\int_K f_{h,R}\,dx =0.
+```
+
+Here $\lambda_h$ is the canonical polynomial skeleton trace, and $f_{h,R}$ is the source represented by degree-$n$ moments in the shifted residual family $\kappa+2$. The face-flux integral uses the degree-$n$ HPS numerical-flux moment representation, including tau stabilization; it is **not** an independently integrated strong-form residual with the raw flux $n^TA_h\nabla u_h$. The volume terms use physical volume measure $dx$, and the face terms use physical surface measure $dS$; neither integral carries an auxiliary Jacobi weight.
+
+The precomputed row is linear in the reconstructed volume coefficients $a_K$, local skeleton moments $\lambda_K$, and element source moments $f_K$:
+
+```math
+\mathcal B_K=\ell_K^Ta_K+g_K^T\lambda_K-h_K^Tf_K.
+```
+
+`conservation_mode="element_balance"` enforces $\mathcal B_K=0$ through the KKT system for the local least-squares problem, giving a rank-one equality-constrained update with the **existing dense QR factorization**. `conservation_mode="none"` retains the original unconstrained response maps, but assembles exactly the same row for diagnostics. Both modes evaluate and retain elementwise residuals following each successful `solve()`, including subsequent source or variable-Robin updates. The interface merge algebra and boundary-moment equations are unchanged. When the normal advective coefficient is continuous across interior faces, these local balances also telescope into a global total-flux balance; if it jumps, a separate advective transmission law is needed.
+
+This is local conservation of the **represented discrete data** and numerical flux, like finite-volume conservation; it does not claim zero error against the unprojected physical source when the data are underresolved. In particular, a degree-$n$ exact solution can satisfy the projected PDE equations while its higher-degree manufactured source still produces a nonzero unconstrained balance residual. The constrained solution may differ at such orders and converges as the source/flux representation is enriched.
+
+In Python:
+
+```python
+from jhps import HpsConservationMode, HpsDivergenceSolver
+
+with HpsDivergenceSolver(
+  pc, vertex_ids, coords, simplices, merge_pairs,
+  A_coeffs, b_coeffs, c_coeffs, boundary_face_keys,
+  p_A=p_A, p_b=p_b, p_c=p_c,
+  conservation_mode=HpsConservationMode.ELEMENT_BALANCE,
+) as solver:
+  solver.update_variable_robin(alpha_faces, beta_faces,
+                               p_alpha=p_alpha, p_beta=p_beta)
+  result = solver.solve(f_int, boundary_g)
+  element_balance = solver.balance_residuals()  # shape (nelem,)
+```
+
+Use `HpsConservationMode.NONE` to obtain unconstrained solutions with the **same** diagnostic. `balance_residuals()` requires a successful preceding solve; it is specific to `HpsDivergenceSolver`. No new balance-row computation is required for a new source, and no change to the PDE leaf or HPS merge is made during diagnostic evaluation. See Section 3.4 of `tex/steklov.tex` for the integral and rank-one derivations.
 
 ### Variable and mixed Robin boundary conditions
 
@@ -431,10 +473,12 @@ with HpsDivergenceSolver(
   A_coeffs, b_coeffs, None, boundary_face_keys,
   p_A=3, p_b=2, p_c=-1,
   alpha=1.0, beta=0.0,
+  conservation_mode="element_balance",  # or "none" for diagnosis only
   leaf_operator_mode=HpsLeafOperatorMode.DENSE,
 ) as solver:
   # Initial Dirichlet solve.
   u_dirichlet = solver.solve(f_int, g_dirichlet)
+  balance_dirichlet = solver.balance_residuals()
 
   # Facewise polynomial alpha=0 and beta(x) != 0: pure Neumann.
   # These arrays are unscaled modal expansion coefficients.
@@ -444,6 +488,7 @@ with HpsDivergenceSolver(
   )
   solver.set_neumann_gauge(0.75)
   u_neumann = solver.solve(f_int, g_neumann)
+  balance_neumann = solver.balance_residuals()
 ```
 
 The coefficient arrays for `update_variable_robin()` have shapes `(nboundary_faces, dimPi(D-1, p_alpha))` and `(nboundary_faces, dimPi(D-1, p_beta))`, respectively, with degrees in `[0,n]`. They use the **original boundary-face order** passed to the constructor; the C++ solver performs the root-face permutation internally. The source and boundary RHS arrays are modal moments, not pointwise values. For nonzero reaction, pass the corresponding `c_coeffs` and `p_c>=0` instead of `None` and `-1`.
@@ -586,12 +631,15 @@ The `testing/` directory contains larger Python validation programs, including:
 - divergence-form manufactured solutions and co-normal flux tests;
 - scalar and facewise polynomial Robin, mixed Dirichlet/Neumann/Robin data;
 - pure-Neumann compatibility, boundary-mean gauge, and persistent Robin/Neumann transitions;
-- high-order exterior co-normal flux corrections for variable Robin coefficients.
+- high-order exterior co-normal flux corrections for variable Robin coefficients;
+- unconstrained versus rank-one conservative divergence-form leaves, including physical elementwise balance diagnostics.
 
 For example, after building and installing the updated Python wrappers:
 
 ```bash
 python testing/test_hps_divergence_variable_robin_polynomial.py
+python testing/test_hps_divergence_conservation.py --D 1,2,3 --min-n 2 --max-n 7
+python testing/test_hps_divergence_conservation_nonpoly.py --D 1,2,3 --min-n 2 --max-n 7
 python testing/test_hps_divergence_mixed_boundary_polynomial.py
 python testing/test_hps_divergence_pure_neumann.py --D 1,2,3 --n 4
 python testing/test_hps_divergence_neumann_robin_transitions.py --D 1,2,3 --n 4
@@ -620,7 +668,12 @@ The current solver stack has been exercised with:
 - scalar pure-Neumann compatibility/gauge tests in $D=1,2,3$, $n=3,4,5,6$;
 - Robin $\leftrightarrow$ variable- $\beta$ Neumann transitions with rollback after invalid data/updates;
 - nonzero physical boundary-mean gauges, including nonzero drift and variable diffusion;
-- nontrivial high-order co-normal coupling $M_\beta^{LH}q_H$ for cubic diffusion in $D=2,3$ at $n=5,6$.
+- nontrivial high-order co-normal coupling $M_\beta^{LH}q_H$ for cubic diffusion in $D=2,3$ at $n=5,6$;
+- physical elementwise balance enforcement for divergence form in $D=1,2,3$, with conservative residuals typically around $10^{-13}$--$10^{-12}$ across $n=2,\ldots,11$ in tested manufactured problems;
+- polynomial manufactured solutions with degree-five exact $u$ and degree-seven source: unconstrained recovery at $n=5$ under projected equations, and conservative recovery as source/flux representations become resolved at $n=7$;
+- smooth nonpolynomial manufactured solutions in $D=1,2,3$, demonstrating decreasing solution errors and conservative balance near roundoff across the tested $p$-refinement ranges, including $D=3$, $n=2,\ldots,11$.
+
+The new conservation tests report the **maximum absolute element balance residual**, not a dimensionless relative balance; its value should be read alongside the physical scaling of the source, flux, and element size. The conservative path satisfies that discrete balance to near roundoff in these tests, while the unconstrained balance defect diminishes with resolution but need not be negligible at low degree. Algebraic conservation does not by itself certify solution accuracy or equality to integrals of unprojected physical data.
 
 The recent polynomial Neumann/Robin tests generally recover solutions near floating-point accuracy (roughly $10^{-13}$ to $10^{-11}$ in relative $L^2$ error in the configurations tested). These are manufactured-solution regressions on fixed affine meshes, not blanket error bounds for arbitrary meshes or coefficient fields. The dense QR/direct-quadrature path remains the reference implementation for solver development.
 
@@ -631,6 +684,8 @@ The `tex/` directory contains derivations and working notes for the simplex Jaco
 - `tex/jsimplex.tex`
 - `tex/steklov.tex`
 - `tex/steklov.pdf`
+
+`steklov.tex` now includes explicit physical-face trace/co-normal moment definitions and a KKT derivation of the rank-one constrained-leaf update (Section 3.4). Its Jacobi-operator section documents the simplex basis product and interior derivative formulas, exact collapsed-face limits, natural `DMat` derivative shifts, `KMat` parameter promotions, symmetric `JMat` coordinate recurrences, and multi-index stencil discovery. Quadrature construction is documented separately.
 
 These files are useful references for the operator-valued Jacobi/Clenshaw formulation, trace/Steklov constructions, and solver derivations.
 
@@ -644,7 +699,7 @@ This repository is research software. The current emphasis is:
 4. keep matrix-free/sparse alternatives available where dimensionality or hardware may favor them;
 5. separate solver mathematics from experimental optimization paths.
 
-The completed divergence-form/co-normal Robin/Neumann extension is now part of the persistent solver. Future work includes broader physical-problem validation and performance/scaling studies; general resonant Neumann/Fredholm problems remain outside the present constant-gauge treatment.
+The completed divergence-form/co-normal Robin/Neumann extension and elementwise conservative Dense/DenseQR leaf are now part of the persistent solver. The conservative path is the preferred reference for transport problems where local budget accounting matters; the unconstrained path remains useful for comparison and projected-equation polynomial recovery. Future work includes the coupled diffusion/transport study, physical refinement and performance/scaling studies; general resonant Neumann/Fredholm problems remain outside the present constant-gauge treatment.
 
 ## Citation
 

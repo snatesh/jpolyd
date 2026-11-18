@@ -569,6 +569,26 @@ target_link_libraries(test_jleaf_divergence_balance_rank_one PRIVATE
   lapack
 )
 
+add_executable(test_jbasis_boundary_gradient
+  src/test_jbasis_boundary_gradient.cpp
+)
+
+target_include_directories(test_jbasis_boundary_gradient PUBLIC
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_jbasis_boundary_gradient PRIVATE
+  jpolyd
+  jpolyd_c
+  OpenMP::OpenMP_CXX
+  ${BLAS_LIBRARIES}
+  ${LAPACK_LIBRARIES}
+  ${LAPACKE_LIB}
+  openblas
+  blas
+  lapack
+)
+
 target_include_directories(assemble_cn_step PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   /usr/include/suitesparse

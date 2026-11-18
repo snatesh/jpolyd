@@ -41,6 +41,14 @@ typedef enum jhps_leaf_least_squares_solver
   JHPS_LEAF_LS_DENSE_QR = 2
 } jhps_leaf_least_squares_solver;
 
+
+typedef enum jhps_conservation_mode
+{
+  JHPS_CONSERVATION_NONE = 0,
+  JHPS_CONSERVATION_ELEMENT_BALANCE = 1
+} jhps_conservation_mode;
+
+
 /*
   Run HPS skeleton tests using dummy leaf DtN maps.
 
@@ -669,6 +677,61 @@ int jhps_divergence_solver_create(
 
 
 /*
+  Persistent Dense divergence-form HPS solver with
+  optional elementwise physical conservation.
+
+  conservation_mode:
+    JHPS_CONSERVATION_NONE
+    JHPS_CONSERVATION_ELEMENT_BALANCE
+
+  ElementBalance requires Dense/DenseQR.
+
+  Other inputs and returned handle semantics match
+  jhps_divergence_solver_create().
+*/
+int jhps_divergence_solver_create_with_conservation(
+  int D,
+  int n,
+  int q_pad,
+  int q_vol,
+  int q_face,
+  const double* kappa,
+  int p_A,
+  int p_b,
+  int p_c,
+  int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts,
+  const int* vertex_ids,
+  const double* coords_rowmajor,
+  int nelem,
+  const int* simplices_rowmajor,
+  int nmerge,
+  const int* merge_pairs_rowmajor,
+  int nboundary_faces,
+  const int* boundary_face_keys_rowmajor,
+  double tau_C,
+  double alpha,
+  double beta,
+  int leaf_operator_mode,
+  int leaf_least_squares_solver,
+  double leaf_verify_tolerance,
+  int leaf_verify_each_solve,
+  int conservation_mode,
+  void** handle_out,
+  int* M_out,
+  int* m_int_out,
+  int* kf_out,
+  int* root_nb_out,
+  int* interface_nb_out,
+  int* leaf_threads_used_out
+);
+
+
+
+/*
   Update facewise variable Robin coefficients on a
   persistent elliptic HPS solver.
 
@@ -707,6 +770,21 @@ int jhps_elliptic_solver_solve(
   double* parent_consistency_residual_inf_out
 );
 
+/*
+  Copy the elementwise conservation residuals from the
+  most recent successful conservative HPS solve.
+
+  residuals_out must have room for nelem doubles.
+
+  Available only for ConservationMode::ElementBalance
+  after a successful solve.
+
+  Returns 0 on success, -1 on error.
+*/
+int jhps_elliptic_solver_get_balance_residuals(
+  void* handle,
+  double* residuals_out,
+  int nelem);
 
 /*
   Set the physical boundary-mean gauge for singular

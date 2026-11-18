@@ -677,7 +677,7 @@ public:
   }
 
 private:
-  // Stage-A numerical factors: dense row-major materializations assembled
+  // Stage A numerical factors: dense row-major materializations assembled
   // from shared stencil structures. These preserve existing public dense
   // operators while eliminating repeated stencil discovery.
   std::vector<Real> D1_factor_rm;
