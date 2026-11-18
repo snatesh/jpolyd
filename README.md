@@ -246,7 +246,7 @@ The divergence-form solver can enforce **one physical integral conservation law 
 -\int_K f_{h,R}\,dx =0.
 ```
 
-Here $\lambda_h$ is the canonical polynomial skeleton trace, and $f_{h,R}$ is the source represented by degree-$n$ moments in the shifted residual family $\kappa+2$. The face-flux integral uses the degree-$n$ HPS numerical-flux moment representation, including tau stabilization; it is **not** an independently integrated strong-form residual with the raw flux $n^TA_h\nabla u_h$. The volume terms use physical volume measure $dx$, and the face terms use physical surface measure $dS$; neither integral carries an auxiliary Jacobi weight.
+Here $\lambda_h$ is the canonical polynomial skeleton trace, and $f_{h,R}$ is the source represented by degree- $n$ moments in the shifted residual family $\kappa+2$. The face-flux integral uses the degree- $n$ HPS numerical-flux moment representation, including tau stabilization; it is **not** an independently integrated strong-form residual with the raw flux $n^TA_h\nabla u_h$. The volume terms use physical volume measure $dx$, and the face terms use physical surface measure $dS$; neither integral carries an auxiliary Jacobi weight.
 
 The precomputed row is linear in the reconstructed volume coefficients $a_K$, local skeleton moments $\lambda_K$, and element source moments $f_K$:
 
