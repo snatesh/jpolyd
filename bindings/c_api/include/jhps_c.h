@@ -569,6 +569,47 @@ int jhps_elliptic_mesh_tree_solve_with_leaf_options(
 
 
 /*
+  Opt-in persistent HPS merge conditioning diagnostics.
+
+  Rows are returned in merge input order (parent node nelem + merge_index).
+  Dimensions count scalar face degrees of freedom, except interface_faces.
+  Tree levels start at 0 for leaves.  H is the interface Schur block
+  S_A,II + S_B,II.  H_rcond_1 is the LAPACK GECON estimate of
+  1 / (||H||_1 ||H^{-1}||_1), not an exact singular-value ratio.
+*/
+typedef struct jhps_merge_condition_record
+{
+  int merge_index;
+  int parent_id;
+  int child_A_id;
+  int child_B_id;
+  int level;
+  int interface_faces;
+  int interface_dofs;
+  int exterior_A_dofs;
+  int exterior_B_dofs;
+  int parent_boundary_dofs;
+  int child_A_boundary_dofs;
+  int child_B_boundary_dofs;
+  double H_norm_1;
+  double H_rcond_1;
+  double parent_S_norm_1;
+} jhps_merge_condition_record;
+
+/* Root condition refers to the current Robin matrix, including any later
+   update_variable_robin() call.  A pure-Neumann root is singular:
+   reciprocal_condition_1 is zero, and nonzero_spectral_ratio is sigma_{n-1}/sigma_1
+   from the Neumann-root SVD.  For ordinary roots, the spectral ratio is -1. */
+typedef struct jhps_root_condition_record
+{
+  int dimension;
+  int singular;
+  double matrix_norm_1;
+  double reciprocal_condition_1;
+  double nonzero_spectral_ratio;
+} jhps_root_condition_record;
+
+/*
   Persistent variable-coefficient elliptic HPS solver.
 
   create() performs the reusable operator work: leaf response construction,
@@ -615,6 +656,29 @@ int jhps_elliptic_solver_create(
   int* leaf_threads_used_out
 );
 
+
+/*
+  Versioned persistent elliptic constructor.  Identical to
+  jhps_elliptic_solver_create except for collect_merge_diagnostics (0/1)
+  immediately before handle_out.  Existing constructor ABI is unchanged.
+*/
+int jhps_elliptic_solver_create_with_merge_diagnostics(
+  int D, int n, int q_pad, int q_vol, int q_face, const double* kappa,
+  int p2, int p1, int p0, int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts, const int* vertex_ids, const double* coords_rowmajor,
+  int nelem, const int* simplices_rowmajor,
+  int nmerge, const int* merge_pairs_rowmajor,
+  int nboundary_faces, const int* boundary_face_keys_rowmajor,
+  double tau_C, double alpha, double beta,
+  int leaf_operator_mode, int leaf_least_squares_solver,
+  double leaf_verify_tolerance, int leaf_verify_each_solve,
+  int collect_merge_diagnostics,
+  void** handle_out,
+  int* M_out, int* m_int_out, int* kf_out,
+  int* root_nb_out, int* interface_nb_out, int* leaf_threads_used_out);
 
 /*
   Create a persistent Dense divergence-form HPS solver:
@@ -730,6 +794,44 @@ int jhps_divergence_solver_create_with_conservation(
 );
 
 
+
+/*
+  Versioned divergence constructor: same as
+  jhps_divergence_solver_create_with_conservation, with an additional
+  collect_merge_diagnostics (0/1) after conservation_mode.
+*/
+int jhps_divergence_solver_create_with_merge_diagnostics(
+  int D, int n, int q_pad, int q_vol, int q_face, const double* kappa,
+  int p_A, int p_b, int p_c, int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts, const int* vertex_ids, const double* coords_rowmajor,
+  int nelem, const int* simplices_rowmajor,
+  int nmerge, const int* merge_pairs_rowmajor,
+  int nboundary_faces, const int* boundary_face_keys_rowmajor,
+  double tau_C, double alpha, double beta,
+  int leaf_operator_mode, int leaf_least_squares_solver,
+  double leaf_verify_tolerance, int leaf_verify_each_solve,
+  int conservation_mode, int collect_merge_diagnostics,
+  void** handle_out,
+  int* M_out, int* m_int_out, int* kf_out,
+  int* root_nb_out, int* interface_nb_out, int* leaf_threads_used_out);
+
+/*
+  Copy merge diagnostics into records_out (capacity >= nmerge) in input
+  merge order. Returns -1 on failure, including diagnostics disabled.
+  For nelem=1 the array is empty and may be a null pointer.
+*/
+int jhps_elliptic_solver_get_merge_conditions(
+  void* handle, jhps_merge_condition_record* records_out, int capacity);
+
+/*
+  Copy the root conditioning record.  The record reflects the last successful
+  variable-Robin update if one was performed. Requires diagnostics enabled.
+*/
+int jhps_elliptic_solver_get_root_condition(
+  void* handle, jhps_root_condition_record* record_out);
 
 /*
   Update facewise variable Robin coefficients on a

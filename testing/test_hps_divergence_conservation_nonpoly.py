@@ -11,13 +11,14 @@ nonpolynomial and is projected into the degree-n residual Jacobi family.
 Both HPS modes use identical data, with element balance measured but enforced
 only in ElementBalance. The test checks the boundary/interface equations,
 conservative element balance, source/Robin projection quadrature stability,
-and the expected reduction in error as n increases (unless already tiny).
+merge/root conditioning in both conservation modes, and the expected
+reduction in error as n increases (unless already tiny).
 
 Examples (from the repository root):
-  python testing/test_hps_divergence_nonpolynomial_conservation.py \
+  python testing/test_hps_divergence_conservation_nonpoly.py \
     --D 1,2,3 --min-n 2 --max-n 7
 
-  python testing/test_hps_divergence_nonpolynomial_conservation.py \
+  python testing/test_hps_divergence_conservation_nonpoly.py \
     --D 2 --min-n 3 --max-n 9 --kappas unweighted,chebyshev,asymmetric
 """
 from __future__ import annotations
@@ -130,6 +131,114 @@ def assert_projection_stability(x, y, tol: float, label: str):
   return discrepancy
 
 
+MERGE_STRUCTURE_FIELDS = (
+  'merge_index', 'parent_id', 'child_A_id', 'child_B_id', 'level',
+  'interface_faces', 'interface_dofs', 'exterior_A_dofs',
+  'exterior_B_dofs', 'parent_boundary_dofs',
+  'child_A_boundary_dofs', 'child_B_boundary_dofs',
+)
+
+
+def inspect_merge_diagnostics(solver, merges, nelem, kf):
+  """Check record integrity, including Schur-block partition dimensions."""
+  records = solver.merge_condition_diagnostics()
+  assert len(records) == len(merges)
+  assert np.array_equal(records['merge_index'], np.arange(len(merges)))
+  assert np.array_equal(records['parent_id'], nelem + np.arange(len(merges)))
+  assert np.array_equal(records['child_A_id'], merges[:, 0])
+  assert np.array_equal(records['child_B_id'], merges[:, 1])
+
+  assert np.all(records['level'] >= 1)
+  assert np.all(records['interface_faces'] >= 1)
+  assert np.array_equal(
+    records['interface_dofs'], records['interface_faces'] * kf
+  )
+  assert np.array_equal(
+    records['child_A_boundary_dofs'],
+    records['exterior_A_dofs'] + records['interface_dofs'],
+  )
+  assert np.array_equal(
+    records['child_B_boundary_dofs'],
+    records['exterior_B_dofs'] + records['interface_dofs'],
+  )
+  assert np.array_equal(
+    records['parent_boundary_dofs'],
+    records['exterior_A_dofs'] + records['exterior_B_dofs'],
+  )
+
+  for field in ('H_norm_1', 'H_rcond_1', 'parent_S_norm_1'):
+    assert np.all(np.isfinite(records[field])), field
+  assert np.all(records['H_norm_1'] > 0)
+  assert np.all(records['parent_S_norm_1'] >= 0)
+  assert np.all((records['H_rcond_1'] >= 0) &
+                (records['H_rcond_1'] <= 1 + 1e-12))
+  return records
+
+
+def inspect_root_diagnostics(solver):
+  """The root estimate describes the current Robin factorization."""
+  root = solver.root_condition_diagnostics()
+  assert root['dimension'] == solver.root_nb
+  assert not root['singular']
+  assert np.isfinite(root['matrix_norm_1'])
+  assert root['matrix_norm_1'] > 0
+  rcond = root['reciprocal_condition_1']
+  assert np.isfinite(rcond) and 0 <= rcond <= 1 + 1e-12
+  return root
+
+
+def add_merge_records(output, records, D, family, n, mode):
+  for record in records:
+    row = dict(D=D, kappa=family, n=n, mode=mode)
+    row.update({
+      name: record[name].item() for name in records.dtype.names
+    })
+    output.append(row)
+
+
+def compare_merge_modes(records_by_mode, D, family, n, comparison_rows):
+  """Compare conditioning, but require equality only of tree structure."""
+  none = records_by_mode['none']
+  balanced = records_by_mode['element_balance']
+  for name in MERGE_STRUCTURE_FIELDS:
+    assert np.array_equal(none[name], balanced[name]), (D, family, n, name)
+
+  tiny = np.finfo(float).tiny
+  log_ratio = (
+    np.log10(np.maximum(balanced['H_rcond_1'], tiny))
+    - np.log10(np.maximum(none['H_rcond_1'], tiny))
+  )
+  for i, delta in enumerate(log_ratio):
+    comparison_rows.append(dict(
+      D=D, kappa=family, n=n,
+      merge_index=int(none['merge_index'][i]),
+      level=int(none['level'][i]),
+      interface_dofs=int(none['interface_dofs'][i]),
+      rcond_none=float(none['H_rcond_1'][i]),
+      rcond_element_balance=float(balanced['H_rcond_1'][i]),
+      delta_log10_rcond=float(delta),
+    ))
+
+  worst = int(np.argmax(np.abs(log_ratio)))
+  print(
+    f'    conditioning comparison: median log10(rcond_bal/rcond_none)='
+    f'{np.median(log_ratio):+.2f}; largest shift merge='
+    f'{int(none["merge_index"][worst])} level='
+    f'{int(none["level"][worst])} '
+    f'delta={log_ratio[worst]:+.2f} decades',
+    flush=True,
+  )
+
+
+def write_csv(path: Path, records):
+  if not records:
+    return
+  with path.open('w', newline='', encoding='utf-8') as stream:
+    writer = csv.DictWriter(stream, fieldnames=list(records[0]))
+    writer.writeheader()
+    writer.writerows(records)
+
+
 def plot_results(rows, output: Path):
   dimensions = sorted(set(row['D'] for row in rows))
   families = sorted(set(row['kappa'] for row in rows))
@@ -138,17 +247,27 @@ def plot_results(rows, output: Path):
       subset = [r for r in rows if r['D'] == D and r['kappa'] == family]
       if not subset:
         continue
-      for key, filename, ylabel, title in (
+      plots = [
         ('relative_L2', 'error', 'Relative weighted L2 error', 'Convergence'),
         ('balance_max', 'balance', 'Maximum element balance residual',
          'Physical elementwise balance'),
-      ):
+      ]
+      if all('merge_min_rcond' in r for r in subset):
+        plots.extend([
+          ('merge_min_rcond', 'merge_rcond',
+           'Minimum merge reciprocal condition', 'Worst interface conditioning'),
+          ('root_rcond', 'root_rcond',
+           'Root Robin reciprocal condition', 'Root conditioning'),
+        ])
+      for key, filename, ylabel, title in plots:
         fig, ax = plt.subplots(figsize=(7.5, 5.0))
         for mode in ('none', 'element_balance'):
           data = sorted((r for r in subset if r['mode'] == mode),
                         key=lambda r: r['n'])
+          floor = (np.finfo(float).tiny if key in ('merge_min_rcond',
+                                                  'root_rcond') else 1e-18)
           ax.semilogy([r['n'] for r in data],
-                      [max(r[key], 1e-18) for r in data],
+                      [max(r[key], floor) for r in data],
                       marker='o', label=mode)
         if key == 'relative_L2':
           best = sorted((r for r in subset if r['mode'] == 'none'),
@@ -166,7 +285,7 @@ def plot_results(rows, output: Path):
         plt.close(fig)
 
 
-def run_dimension(D: int, family: str, args, rows):
+def run_dimension(D: int, family: str, args, rows, merge_rows, comparison_rows):
   ids, X, E, merges, keys, boundary, ninterior, cells = (
     reference.cube_simplicial_mesh(D, args.mesh_resolution)
   )
@@ -217,6 +336,7 @@ def run_dimension(D: int, family: str, args, rows):
     )
     assert np.max(np.abs(f)) > 1e-8, 'Manufactured source should be nonzero'
 
+    records_by_mode = {}
     for mode in ('none', 'element_balance'):
       enforce = mode == 'element_balance'
       with HpsDivergenceSolver(
@@ -227,8 +347,40 @@ def run_dimension(D: int, family: str, args, rows):
         leaf_operator_mode=HpsLeafOperatorMode.DENSE,
         leaf_least_squares_solver=HpsLeafLeastSquaresSolver.DENSE_QR,
         conservation_mode=mode,
+        collect_merge_diagnostics=not args.no_merge_diagnostics,
       ) as solver:
+        diagnostics = {}
+        if not args.no_merge_diagnostics:
+          records = inspect_merge_diagnostics(
+            solver, merges, len(E), pc.kf
+          )
+          records_by_mode[mode] = records
+          add_merge_records(merge_rows, records, D, family, n, mode)
+          initial_root = inspect_root_diagnostics(solver)
+          assert np.isclose(
+            initial_root['reciprocal_condition_1'], 1.0, atol=1e-10
+          ), initial_root
+          diagnostics.update(
+            merge_min_rcond=float(np.min(records['H_rcond_1'])),
+            merge_median_rcond=float(np.median(records['H_rcond_1'])),
+            merge_worst_index=int(records['merge_index'][
+              np.argmin(records['H_rcond_1'])
+            ]),
+            merge_worst_level=int(records['level'][
+              np.argmin(records['H_rcond_1'])
+            ]),
+            merge_max_interface_dofs=int(np.max(records['interface_dofs'])),
+          )
+
         solver.update_variable_robin(alpha, beta, p_alpha=n, p_beta=n)
+        if not args.no_merge_diagnostics:
+          root = inspect_root_diagnostics(solver)
+          assert np.array_equal(records, solver.merge_condition_diagnostics())
+          diagnostics.update(
+            root_rcond=float(root['reciprocal_condition_1']),
+            root_matrix_norm_1=float(root['matrix_norm_1']),
+          )
+
         result = solver.solve(f, g, check_residuals=True)
         reference.assert_result(
           result, len(E), len(boundary), ninterior, args.residual_tol
@@ -249,12 +401,16 @@ def run_dimension(D: int, family: str, args, rows):
           parent_residual=result.parent_consistency_residual_inf,
           source_quadrature_change=f_quad_error,
           robin_quadrature_change=g_quad_error,
+          **diagnostics,
         ))
         print(f'  n={n:2d} M={pc.M:3d} mode={mode:15s} '
               f'relL2={error:.3e} best={best:.3e} '
               f'balance={balance:.3e} '
               f'root={result.root_robin_residual_inf:.2e} '
-              f'iface={result.interface_flux_residual_inf:.2e}', flush=True)
+              f'iface={result.interface_flux_residual_inf:.2e}'
+              + (f' min-rcond={diagnostics["merge_min_rcond"]:.2e} '
+                 f'root-rcond={diagnostics["root_rcond"]:.2e}'
+                 if diagnostics else ''), flush=True)
 
         if args.check_updates and n == args.max_n:
           # Same persistent tree, changed variable Robin coefficients.
@@ -262,6 +418,9 @@ def run_dimension(D: int, family: str, args, rows):
             pc_data, X, E, boundary, model, n, robin_variant=1
           )
           solver.update_variable_robin(a2, b2, p_alpha=n, p_beta=n)
+          if not args.no_merge_diagnostics:
+            updated_root = inspect_root_diagnostics(solver)
+            assert np.array_equal(records, solver.merge_condition_diagnostics())
           changed_robin = solver.solve(f, g2, check_residuals=True)
           reference.assert_result(
             changed_robin, len(E), len(boundary), ninterior,
@@ -294,11 +453,16 @@ def run_dimension(D: int, family: str, args, rows):
           source_balance = balance_diagnostic(
             solver, f2, enforce, args.balance_tol
           )
+          if not args.no_merge_diagnostics:
+            assert inspect_root_diagnostics(solver) == updated_root
           print(f'    persistent updates [{mode}]: '
                 f'robin L2={robin_error:.3e}, '
                 f'source L2={source_error:.3e}, '
                 f'balance Robin={robin_balance:.3e}, '
                 f'balance source={source_balance:.3e}', flush=True)
+
+    if not args.no_merge_diagnostics:
+      compare_merge_modes(records_by_mode, D, family, n, comparison_rows)
 
   # Avoid imposing a particular rate, or a monotone decrease at every n.
   # A substantial endpoint decrease is expected for this smooth function.
@@ -328,6 +492,8 @@ def main():
   parser.add_argument('--projection-tol', type=float, default=1e-9)
   parser.add_argument('--check-updates', action='store_true',
                       help='Check persistent Robin and source updates at max n')
+  parser.add_argument('--no-merge-diagnostics', action='store_true',
+                      help='Skip merge/root conditioning collection and comparisons')
   parser.add_argument('--output-dir', type=Path,
                       default=Path('build/hps_divergence_nonpolynomial'))
   args = parser.parse_args()
@@ -351,19 +517,29 @@ def main():
   set_omp_threads(args.omp_threads)
   args.output_dir.mkdir(parents=True, exist_ok=True)
   rows = []
+  merge_rows = []
+  comparison_rows = []
   for D in dims:
     for kappa in kappas:
-      run_dimension(D, kappa, args, rows)
+      run_dimension(D, kappa, args, rows, merge_rows, comparison_rows)
 
   csv_path = args.output_dir / 'nonpolynomial_conservation.csv'
-  with csv_path.open('w', newline='', encoding='utf-8') as stream:
-    writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
-    writer.writeheader()
-    writer.writerows(rows)
+  write_csv(csv_path, rows)
+  if not args.no_merge_diagnostics:
+    write_csv(args.output_dir / 'nonpolynomial_merge_conditions.csv', merge_rows)
+    write_csv(args.output_dir / 'nonpolynomial_merge_mode_comparison.csv',
+              comparison_rows)
   plot_results(rows, args.output_dir)
   print('\nPASS: nonpolynomial divergence HPS, conservation and p-convergence '
         'checks', flush=True)
   print(f'CSV: {csv_path}', flush=True)
+  if not args.no_merge_diagnostics:
+    print(f'Merge diagnostics: '
+          f'{args.output_dir / "nonpolynomial_merge_conditions.csv"}',
+          flush=True)
+    print(f'Mode comparison: '
+          f'{args.output_dir / "nonpolynomial_merge_mode_comparison.csv"}',
+          flush=True)
   print(f'Plots: {args.output_dir}/nonpolynomial_D*_*.png', flush=True)
 
 

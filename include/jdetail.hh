@@ -1,12 +1,17 @@
 #ifndef JDETAIL_H
 #define JDETAIL_H
 
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <type_traits>
+#include <vector>
 #include <cstddef>
 #include <cstdlib>
 #include <lapacke.h>
 #include <cblas.h>
 #include <iostream> 
+
 namespace jsimplex
 {
 
@@ -128,6 +133,198 @@ struct BlasGemm<double>
                 alpha, A, lda, B, ldb, beta, C, ldc);
   }
 };
+
+
+// General indexed and column-major matrix utilities.
+template<class Real>
+inline void extract_matrix_colmajor(
+  const std::vector<Real>& A,
+  int A_rows,
+  const std::vector<int>& row_idx,
+  const std::vector<int>& col_idx,
+  std::vector<Real>& out
+)
+{
+  if (A_rows <= 0)
+  {
+    throw std::invalid_argument("extract_matrix_colmajor: A_rows must be positive");
+  }
+  if (A.size() % static_cast<std::size_t>(A_rows) != 0)
+  {
+    throw std::invalid_argument("extract_matrix_colmajor: inconsistent A size");
+  }
+
+  const int A_cols = static_cast<int>(A.size() / static_cast<std::size_t>(A_rows));
+  const int m = static_cast<int>(row_idx.size());
+  const int n = static_cast<int>(col_idx.size());
+  out.assign((std::size_t)m * n, Real(0));
+
+  for (int j = 0; j < n; ++j)
+  {
+    const int cj = col_idx[(std::size_t)j];
+    if (cj < 0 || cj >= A_cols)
+    {
+      throw std::out_of_range("extract_matrix_colmajor: column index out of range");
+    }
+
+    for (int i = 0; i < m; ++i)
+    {
+      const int ri = row_idx[(std::size_t)i];
+      if (ri < 0 || ri >= A_rows)
+      {
+        throw std::out_of_range("extract_matrix_colmajor: row index out of range");
+      }
+
+      out[(std::size_t)i + (std::size_t)m * j] =
+        A[(std::size_t)ri + (std::size_t)A_rows * cj];
+    }
+  }
+}
+
+template<class Real>
+inline void extract_vector(
+  const std::vector<Real>& x,
+  const std::vector<int>& idx,
+  std::vector<Real>& out
+)
+{
+  out.assign(idx.size(), Real(0));
+  for (int i = 0; i < static_cast<int>(idx.size()); ++i)
+  {
+    const int k = idx[(std::size_t)i];
+    if (k < 0 || k >= static_cast<int>(x.size()))
+    {
+      throw std::out_of_range("extract_vector: index out of range");
+    }
+    out[(std::size_t)i] = x[(std::size_t)k];
+  }
+}
+
+template<class Real>
+inline void add_in_place(std::vector<Real>& y, const std::vector<Real>& x)
+{
+  if (y.size() != x.size())
+  {
+    throw std::invalid_argument("add_in_place: size mismatch");
+  }
+  for (std::size_t i = 0; i < y.size(); ++i)
+  {
+    y[i] += x[i];
+  }
+}
+
+template<class Real>
+inline void scale_in_place(std::vector<Real>& y, Real alpha)
+{
+  for (Real& v : y)
+  {
+    v *= alpha;
+  }
+}
+
+
+template<class Real>
+inline std::vector<Real> matmul_colmajor(
+  const std::vector<Real>& A,
+  int m,
+  int k,
+  const std::vector<Real>& B,
+  int n
+)
+{
+  if (m < 0 || k < 0 || n < 0)
+  {
+    throw std::invalid_argument("matmul_colmajor: negative dimension");
+  }
+  if (static_cast<int>(A.size()) != m * k)
+  {
+    throw std::invalid_argument("matmul_colmajor: A size mismatch");
+  }
+  if (static_cast<int>(B.size()) != k * n)
+  {
+    throw std::invalid_argument("matmul_colmajor: B size mismatch");
+  }
+
+  std::vector<Real> C((std::size_t)m * n, Real(0));
+  if (m == 0 || k == 0 || n == 0)
+  {
+    return C;
+  }
+
+  BlasGemm<Real>::run(
+    CblasColMajor,
+    CblasNoTrans,
+    CblasNoTrans,
+    m,
+    n,
+    k,
+    Real(1),
+    A.data(),
+    m,
+    B.data(),
+    k,
+    Real(0),
+    C.data(),
+    m);
+
+  return C;
+}
+
+template<class Real>
+inline void set_block_colmajor(
+  std::vector<Real>& A,
+  int A_rows,
+  int row0,
+  int col0,
+  const std::vector<Real>& B,
+  int B_rows,
+  int B_cols
+)
+{
+  if (A_rows <= 0 || row0 < 0 || col0 < 0 || B_rows < 0 || B_cols < 0)
+  {
+    throw std::invalid_argument("set_block_colmajor: invalid dimensions");
+  }
+  if (static_cast<int>(B.size()) != B_rows * B_cols)
+  {
+    throw std::invalid_argument("set_block_colmajor: B size mismatch");
+  }
+  if (A.size() % static_cast<std::size_t>(A_rows) != 0)
+  {
+    throw std::invalid_argument("set_block_colmajor: A size mismatch");
+  }
+  const int A_cols = static_cast<int>(A.size() / static_cast<std::size_t>(A_rows));
+  if (row0 + B_rows > A_rows || col0 + B_cols > A_cols)
+  {
+    throw std::out_of_range("set_block_colmajor: block out of range");
+  }
+
+  for (int j = 0; j < B_cols; ++j)
+  {
+    for (int i = 0; i < B_rows; ++i)
+    {
+      A[(std::size_t)(row0 + i) + (std::size_t)A_rows * (col0 + j)] =
+        B[(std::size_t)i + (std::size_t)B_rows * j];
+    }
+  }
+}
+
+template<class Real>
+inline void axpy_matrix_in_place(
+  std::vector<Real>& Y,
+  const std::vector<Real>& X,
+  Real alpha = Real(1)
+)
+{
+  if (Y.size() != X.size())
+  {
+    throw std::invalid_argument("axpy_matrix_in_place: size mismatch");
+  }
+  for (std::size_t i = 0; i < Y.size(); ++i)
+  {
+    Y[i] += alpha * X[i];
+  }
+}
 
 template<class Real>
 struct BlasTrsm;
@@ -405,6 +602,110 @@ struct LapackGetrs<double>
   }
 };
 
+
+
+// Dense LU and 1-norm reciprocal condition estimates for reusable solves.
+// Dense LU and 1-norm reciprocal condition estimates for reusable solves.
+template<class Real>
+struct LapackGecon;
+
+template<>
+struct LapackGecon<float>
+{
+  static lapack_int run(lapack_int n, const float* LU,
+                        float anorm, float* result)
+  {
+    return LAPACKE_sgecon(LAPACK_COL_MAJOR, '1', n, LU, n,
+                          anorm, result);
+  }
+};
+
+template<>
+struct LapackGecon<double>
+{
+  static lapack_int run(lapack_int n, const double* LU,
+                        double anorm, double* result)
+  {
+    return LAPACKE_dgecon(LAPACK_COL_MAJOR, '1', n, LU, n,
+                          anorm, result);
+  }
+};
+
+template<class Real>
+inline Real matrix_norm_1(const std::vector<Real>& A, int n)
+{
+  Real result = Real(0);
+  for (int j = 0; j < n; ++j)
+  {
+    Real column_sum = Real(0);
+    for (int i = 0; i < n; ++i)
+    {
+      column_sum += std::abs(A[(std::size_t)i + (std::size_t)n * j]);
+    }
+    result = std::max(result, column_sum);
+  }
+  return result;
+}
+
+template<class Real>
+struct DenseLuFactorization
+{
+  int n;
+  std::vector<Real> LU;
+  std::vector<lapack_int> piv;
+
+  DenseLuFactorization(int n_, const std::vector<Real>& A)
+    : n(n_), LU(A), piv((std::size_t)std::max(n_, 0))
+  {
+    static_assert(std::is_same<Real,float>::value ||
+                  std::is_same<Real,double>::value,
+                  "Dense LU requires float or double");
+
+    if (n <= 0 || A.size() != (std::size_t)n * n)
+    {
+      throw std::invalid_argument("Dense LU: invalid dimensions");
+    }
+
+    const lapack_int info = LapackGetrf<Real>::run(
+      (lapack_int)n, (lapack_int)n, LU.data(), (lapack_int)n, piv.data());
+    if (info != 0)
+    {
+      throw std::runtime_error("Dense LU: getrf failed or matrix is singular");
+    }
+  }
+
+  void solve(int nrhs, std::vector<Real>& B) const
+  {
+    if (nrhs < 0 || B.size() != (std::size_t)n * nrhs)
+    {
+      throw std::invalid_argument("Dense LU: invalid RHS dimensions");
+    }
+    if (nrhs == 0)
+    {
+      return;
+    }
+
+    const lapack_int info = LapackGetrs<Real>::run(
+      'N', (lapack_int)n, (lapack_int)nrhs,
+      LU.data(), (lapack_int)n, piv.data(), B.data(), (lapack_int)n);
+    if (info != 0)
+    {
+      throw std::runtime_error("Dense LU: getrs failed");
+    }
+  }
+
+  Real rcond_1(Real anorm) const
+  {
+    Real result = Real(0);
+    const lapack_int info = LapackGecon<Real>::run(
+      (lapack_int)n, LU.data(), anorm, &result);
+    if (info != 0)
+    {
+      throw std::runtime_error("Dense LU: gecon failed");
+    }
+    return result;
+  }
+};
 
 // ------------------------------------------------------------
 // cond_2(V): 2-norm condition number via SVD.

@@ -912,7 +912,9 @@ std::vector<Real> solve_root_robin(
   {
     lambda[(std::size_t)i] -= beta * root.b[(std::size_t)i];
   }
-  jsimplex::hps_detail::dense_solve_in_place<Real>(n, 1, M, lambda);
+  //jsimplex::hps_detail::dense_solve_in_place<Real>(n, 1, M, lambda);
+  const jsimplex::detail::DenseLuFactorization<Real> M_lu(n, M);
+  M_lu.solve(1, lambda);
 
   std::vector<Real> mu((std::size_t)n, Real(0));
   jsimplex::apply_node_dtn<D,Real>(root, lambda.data(), mu.data());
@@ -1076,7 +1078,9 @@ std::vector<Real> solve_monolithic_skeleton(
     }
   }
 
-  jsimplex::hps_detail::dense_solve_in_place<Real>(n, 1, M, rhs);
+  //jsimplex::hps_detail::dense_solve_in_place<Real>(n, 1, M, rhs);
+  const jsimplex::detail::DenseLuFactorization<Real> M_lu(n, M);
+  M_lu.solve(1, rhs);
   return rhs;
 }
 
@@ -3136,6 +3140,10 @@ struct EllipticSolverBase
   virtual const std::vector<double>&
   balance_residuals() const = 0;
 
+  virtual const std::vector<jhps_merge_condition_record>&
+  merge_conditions() const = 0;
+  virtual jhps_root_condition_record root_condition() const = 0;
+
 
   int nelem = 0;
   int M = 0;
@@ -3188,13 +3196,15 @@ public:
     double leaf_verify_tolerance,
     int leaf_verify_each_solve,
     EllipticInputForm input_form = EllipticInputForm::Expanded,
-    jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None)
+    jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None,
+    bool collect_merge_diagnostics = false)
     : alpha(alpha_in),
       beta(beta_in),
       nmerge(nmerge_in),
       nboundary_faces(nboundary_faces_in),
       input_form_(input_form),
-      conservation_mode_(conservation_mode)
+      conservation_mode_(conservation_mode),
+      collect_merge_diagnostics_(collect_merge_diagnostics)
   {
     if (n < 2)
       throw std::invalid_argument("HPS elliptic solver create: require n>=2");
@@ -3661,6 +3671,12 @@ public:
 
     const int total_nodes = nelem + nmerge;
     nodes.resize((std::size_t)total_nodes);
+    std::vector<int> node_levels;
+    if (collect_merge_diagnostics_)
+    {
+      node_levels.assign((std::size_t)total_nodes, 0);
+      merge_condition_records_.reserve((std::size_t)nmerge);
+    }
     std::vector<unsigned char> built((std::size_t)total_nodes, 0);
     std::vector<unsigned char> active((std::size_t)total_nodes, 0);
 
@@ -3689,12 +3705,43 @@ public:
           "HPS elliptic solver create: invalid merge tree");
       }
 
+      jsimplex::MergeConditionEstimate<Real> estimate;
+      const int level = collect_merge_diagnostics_
+        ? 1 + std::max(node_levels[(std::size_t)child_A],
+                       node_levels[(std::size_t)child_B])
+        : 0;
+
       nodes[(std::size_t)parent_id] = jsimplex::merge_nodes<D,Real>(
         nodes[(std::size_t)child_A],
         nodes[(std::size_t)child_B],
         child_A,
-        child_B);
+        child_B,
+        collect_merge_diagnostics_ ? &estimate : nullptr);
 
+      if (collect_merge_diagnostics_)
+      {
+        const Node& parent = nodes[(std::size_t)parent_id];
+        jhps_merge_condition_record record{};
+        record.merge_index = m;
+        record.parent_id = parent_id;
+        record.child_A_id = child_A;
+        record.child_B_id = child_B;
+        record.level = level;
+        record.interface_faces =
+          static_cast<int>(parent.merge.I_faces.size());
+        record.interface_dofs = estimate.interface_dim;
+        record.exterior_A_dofs = parent.merge.nAE;
+        record.exterior_B_dofs = parent.merge.nBE;
+        record.parent_boundary_dofs = parent.nb();
+        record.child_A_boundary_dofs = nodes[(std::size_t)child_A].nb();
+        record.child_B_boundary_dofs = nodes[(std::size_t)child_B].nb();
+        record.H_norm_1 = estimate.H_norm_1;
+        record.H_rcond_1 = estimate.H_rcond_1;
+        record.parent_S_norm_1 =
+          jsimplex::detail::matrix_norm_1(parent.S, parent.nb());
+        merge_condition_records_.push_back(record);
+        node_levels[(std::size_t)parent_id] = level;
+      }
 
       if (high_conormal_enabled_)
       {
@@ -3761,6 +3808,10 @@ public:
       value *= beta;
     add_scaled_identity_colmajor(root_lu, root_nb, alpha);
 
+    const Real initial_root_norm = collect_merge_diagnostics_
+      ? jsimplex::detail::matrix_norm_1(root_lu, root_nb)
+      : Real(0);
+
     if (alpha == Real(0))
     {
       // With no reaction, constants are analytically in ker(L).
@@ -3818,6 +3869,11 @@ public:
           "HPS elliptic solver create: root Robin LU failed");
     }
 
+    if (collect_merge_diagnostics_)
+    {
+      root_condition_record_ = make_root_condition(initial_root_norm);
+    }
+
     node_lambdas.resize((std::size_t)total_nodes);
     root_g_workspace.resize((std::size_t)root_nb);
   }
@@ -3840,6 +3896,52 @@ public:
     return last_balance_residuals_;
   }
 
+
+  const std::vector<jhps_merge_condition_record>&
+  merge_conditions() const override
+  {
+    if (!collect_merge_diagnostics_)
+      throw std::logic_error("HPS merge diagnostics were not enabled");
+    return merge_condition_records_;
+  }
+
+  jhps_root_condition_record root_condition() const override
+  {
+    if (!collect_merge_diagnostics_)
+      throw std::logic_error("HPS merge diagnostics were not enabled");
+    return root_condition_record_;
+  }
+
+  jhps_root_condition_record make_root_condition(Real anorm) const
+  {
+    jhps_root_condition_record result{};
+    result.dimension = root_nb;
+    result.singular = neumann_singular_ ? 1 : 0;
+    result.matrix_norm_1 = anorm;
+    result.nonzero_spectral_ratio = -1.0;
+
+    if (neumann_singular_)
+    {
+      result.reciprocal_condition_1 = Real(0);
+      if (neumann_root_plan_.sigma_max > Real(0))
+      {
+        result.nonzero_spectral_ratio =
+          neumann_root_plan_.sigma_next / neumann_root_plan_.sigma_max;
+      }
+    }
+    else
+    {
+      const lapack_int info =
+        jsimplex::detail::LapackGecon<Real>::run(
+          (lapack_int)root_nb,
+          root_lu.data(),
+          anorm,
+          &result.reciprocal_condition_1);
+      if (info != 0)
+        throw std::runtime_error("HPS root: GECON failed");
+    }
+    return result;
+  }
 
   void set_neumann_gauge(double eta) override
   {
@@ -3970,6 +4072,10 @@ public:
         next_lu);
     }
 
+    const Real next_root_norm = collect_merge_diagnostics_
+      ? jsimplex::detail::matrix_norm_1(next_lu, root_nb)
+      : Real(0);
+
     const bool alpha_is_zero = std::all_of(
       alpha_root.begin(), alpha_root.end(),
       [](Real value) { return value == Real(0); });
@@ -4012,6 +4118,31 @@ public:
           "HPS elliptic solver: variable Robin LU failed");
     }
     
+    jhps_root_condition_record next_root_condition{};
+    if (collect_merge_diagnostics_)
+    {
+      next_root_condition.dimension = root_nb;
+      next_root_condition.matrix_norm_1 = next_root_norm;
+      next_root_condition.singular = next_neumann_singular ? 1 : 0;
+      next_root_condition.nonzero_spectral_ratio = -1.0;
+      if (next_neumann_singular)
+      {
+        next_root_condition.reciprocal_condition_1 = 0.0;
+        if (next_neumann_plan.sigma_max > Real(0))
+          next_root_condition.nonzero_spectral_ratio =
+            next_neumann_plan.sigma_next / next_neumann_plan.sigma_max;
+      }
+      else
+      {
+        const lapack_int info =
+          jsimplex::detail::LapackGecon<Real>::run(
+            (lapack_int)root_nb, next_lu.data(), next_root_norm,
+            &next_root_condition.reciprocal_condition_1);
+        if (info != 0)
+          throw std::runtime_error("HPS root: Robin GECON failed");
+      }
+    }
+
     // Commit only after successful factorization.
     robin_alpha_blocks = std::move(next_alpha_blocks);
     robin_beta_blocks = std::move(next_beta_blocks);
@@ -4022,7 +4153,9 @@ public:
     
     neumann_root_plan_ = std::move(next_neumann_plan);
     neumann_singular_ = next_neumann_singular;
-    
+    if (collect_merge_diagnostics_)
+      root_condition_record_ = next_root_condition;
+
     variable_robin_enabled = true;
     balance_residuals_valid_ = false;
   }
@@ -4389,6 +4522,9 @@ private:
   jsimplex::NeumannRootPlan<D,Real> neumann_root_plan_;
   bool reaction_is_zero_ = false;
   jsimplex::ConservationMode conservation_mode_ = jsimplex::ConservationMode::None;
+  bool collect_merge_diagnostics_ = false;
+  std::vector<jhps_merge_condition_record> merge_condition_records_;
+  jhps_root_condition_record root_condition_record_{};
 
   // Retained physical conservation rows for each HPS leaf.
   //
@@ -4442,7 +4578,8 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   EllipticInputForm input_form = EllipticInputForm::Expanded,
-  jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None)
+  jsimplex::ConservationMode conservation_mode = jsimplex::ConservationMode::None,
+  bool collect_merge_diagnostics = false)
 {
 #define JHPS_PERSISTENT_CASE(DIM) \
   case DIM: \
@@ -4454,7 +4591,8 @@ std::unique_ptr<EllipticSolverBase> make_elliptic_solver(
       nmerge, merge_pairs_rowmajor, nboundary_faces, \
       boundary_face_keys_rowmajor, tau_C, alpha, beta, \
       leaf_operator_mode, leaf_least_squares_solver, \
-      leaf_verify_tolerance, leaf_verify_each_solve, input_form, conservation_mode)
+      leaf_verify_tolerance, leaf_verify_each_solve, input_form, \
+      conservation_mode, collect_merge_diagnostics)
 
   switch (D)
   {
@@ -5214,7 +5352,7 @@ extern "C" int jhps_elliptic_mesh_tree_solve_with_leaf_options(
   }
 }
 
-extern "C" int jhps_elliptic_solver_create(
+extern "C" int jhps_elliptic_solver_create_with_merge_diagnostics(
   int D,
   int n,
   int q_pad,
@@ -5244,6 +5382,7 @@ extern "C" int jhps_elliptic_solver_create(
   int leaf_least_squares_solver,
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
+  int collect_merge_diagnostics,
   void** handle_out,
   int* M_out,
   int* m_int_out,
@@ -5287,7 +5426,10 @@ extern "C" int jhps_elliptic_solver_create(
       leaf_operator_mode,
       leaf_least_squares_solver,
       leaf_verify_tolerance,
-      leaf_verify_each_solve);
+      leaf_verify_each_solve,
+      EllipticInputForm::Expanded,
+      jsimplex::ConservationMode::None,
+      collect_merge_diagnostics != 0);
 
     if (M_out) *M_out = solver->M;
     if (m_int_out) *m_int_out = solver->m_int;
@@ -5313,7 +5455,36 @@ extern "C" int jhps_elliptic_solver_create(
   }
 }
 
-extern "C" int jhps_divergence_solver_create_with_conservation(
+extern "C" int jhps_elliptic_solver_create(
+  int D, int n, int q_pad, int q_vol, int q_face, const double* kappa,
+  int p2, int p1, int p0, int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts, const int* vertex_ids, const double* coords_rowmajor,
+  int nelem, const int* simplices_rowmajor,
+  int nmerge, const int* merge_pairs_rowmajor,
+  int nboundary_faces, const int* boundary_face_keys_rowmajor,
+  double tau_C, double alpha, double beta,
+  int leaf_operator_mode, int leaf_least_squares_solver,
+  double leaf_verify_tolerance, int leaf_verify_each_solve,
+  void** handle_out,
+  int* M_out, int* m_int_out, int* kf_out,
+  int* root_nb_out, int* interface_nb_out, int* leaf_threads_used_out)
+{
+  return jhps_elliptic_solver_create_with_merge_diagnostics(
+    D, n, q_pad, q_vol, q_face, kappa,
+    p2, p1, p0, assume_symmetric,
+    A_coeffs_elementmajor, b_coeffs_elementmajor, c_coeffs_elementmajor,
+    nverts, vertex_ids, coords_rowmajor, nelem, simplices_rowmajor,
+    nmerge, merge_pairs_rowmajor, nboundary_faces, boundary_face_keys_rowmajor,
+    tau_C, alpha, beta, leaf_operator_mode, leaf_least_squares_solver,
+    leaf_verify_tolerance, leaf_verify_each_solve, 0,
+    handle_out, M_out, m_int_out, kf_out,
+    root_nb_out, interface_nb_out, leaf_threads_used_out);
+}
+
+extern "C" int jhps_divergence_solver_create_with_merge_diagnostics(
   int D,
   int n,
   int q_pad,
@@ -5344,6 +5515,7 @@ extern "C" int jhps_divergence_solver_create_with_conservation(
   double leaf_verify_tolerance,
   int leaf_verify_each_solve,
   int conservation_mode,
+  int collect_merge_diagnostics,
   void** handle_out,
   int* M_out,
   int* m_int_out,
@@ -5409,7 +5581,8 @@ extern "C" int jhps_divergence_solver_create_with_conservation(
         leaf_verify_tolerance,
         leaf_verify_each_solve,
         EllipticInputForm::Divergence,
-        static_cast<jsimplex::ConservationMode>(conservation_mode));
+        static_cast<jsimplex::ConservationMode>(conservation_mode),
+        collect_merge_diagnostics != 0);
 
     if (M_out)
       *M_out = solver->M;
@@ -5443,6 +5616,37 @@ extern "C" int jhps_divergence_solver_create_with_conservation(
   }
 }
 
+
+extern "C" int jhps_divergence_solver_create_with_conservation(
+  int D, int n, int q_pad, int q_vol, int q_face, const double* kappa,
+  int p_A, int p_b, int p_c, int assume_symmetric,
+  const double* A_coeffs_elementmajor,
+  const double* b_coeffs_elementmajor,
+  const double* c_coeffs_elementmajor,
+  int nverts, const int* vertex_ids, const double* coords_rowmajor,
+  int nelem, const int* simplices_rowmajor,
+  int nmerge, const int* merge_pairs_rowmajor,
+  int nboundary_faces, const int* boundary_face_keys_rowmajor,
+  double tau_C, double alpha, double beta,
+  int leaf_operator_mode, int leaf_least_squares_solver,
+  double leaf_verify_tolerance, int leaf_verify_each_solve,
+  int conservation_mode,
+  void** handle_out,
+  int* M_out, int* m_int_out, int* kf_out,
+  int* root_nb_out, int* interface_nb_out, int* leaf_threads_used_out)
+{
+  return jhps_divergence_solver_create_with_merge_diagnostics(
+    D, n, q_pad, q_vol, q_face, kappa,
+    p_A, p_b, p_c, assume_symmetric,
+    A_coeffs_elementmajor, b_coeffs_elementmajor, c_coeffs_elementmajor,
+    nverts, vertex_ids, coords_rowmajor, nelem, simplices_rowmajor,
+    nmerge, merge_pairs_rowmajor, nboundary_faces, boundary_face_keys_rowmajor,
+    tau_C, alpha, beta, leaf_operator_mode, leaf_least_squares_solver,
+    leaf_verify_tolerance, leaf_verify_each_solve,
+    conservation_mode, 0,
+    handle_out, M_out, m_int_out, kf_out,
+    root_nb_out, interface_nb_out, leaf_threads_used_out);
+}
 
 extern "C" int jhps_divergence_solver_create(
   int D,
@@ -5523,6 +5727,48 @@ extern "C" int jhps_divergence_solver_create(
 }
 
 
+
+extern "C" int jhps_elliptic_solver_get_merge_conditions(
+  void* handle, jhps_merge_condition_record* records_out, int capacity)
+{
+  if (!handle || capacity < 0)
+    return -1;
+  try
+  {
+    const auto& records =
+      static_cast<EllipticSolverBase*>(handle)->merge_conditions();
+    if (capacity < static_cast<int>(records.size()) ||
+        (!records.empty() && !records_out))
+      return -1;
+    if (!records.empty())
+      std::copy(records.begin(), records.end(), records_out);
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "jhps_elliptic_solver_get_merge_conditions failed: "
+              << e.what() << "\n";
+    return -1;
+  }
+}
+
+extern "C" int jhps_elliptic_solver_get_root_condition(
+  void* handle, jhps_root_condition_record* record_out)
+{
+  if (!handle || !record_out)
+    return -1;
+  try
+  {
+    *record_out = static_cast<EllipticSolverBase*>(handle)->root_condition();
+    return 0;
+  }
+  catch (const std::exception& e)
+  {
+    std::cerr << "jhps_elliptic_solver_get_root_condition failed: "
+              << e.what() << "\n";
+    return -1;
+  }
+}
 
 extern "C" int jhps_elliptic_solver_set_neumann_gauge(
   void* handle,

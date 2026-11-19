@@ -292,7 +292,7 @@ connection map converts that projected polynomial exactly; it does
 not control the unrepresented residual tail or quadrature aliasing.
 Such terms need separate consistency bounds in a full convergence
 argument.
-
+\newpage
 \section{Discrete leaf: strong residual and stabilized trace extension}
 
 For fixed skeleton data $\lambda_K$ and promoted source moments
@@ -306,7 +306,43 @@ by
  +\tfrac12\|T_Ka-\lambda_K\|_{W_K}^2.}
 \end{equation}
 The interior row scale $s_K>0$ and positive definite face penalty
-$W_K=W_K^\top\succ0$ are discretization parameters.  The active
+$W_K=W_K^\top\succ0$ are discretization parameters
+\footnote{%
+	In \texttt{JPolyD}, the face penalty $W_K$ is controlled by
+	the stabilization parameter \texttt{tau\_C}, denoted $\tau_C$.
+	The current implementation restricts $W_K$ to a scalar diagonal
+	penalty on each face, rather than exposing a general positive
+	definite face operator. For polynomial degree $p$, the
+	facewise parameter is computed as
+	$\tau_{K,F}=\tau_C\,\tau_{K,F}^{\mathrm{base}}$, where
+	$\tau_{K,F}^{\mathrm{base}}
+	=(m_R/m_2)(p+1)^2/h_{K,F}$,
+	$h_{K,F}$ is the characteristic face size,
+	$m_R=\dim\Pi_R^D$, and $m_2=\dim\Pi_{p-2}^D$.
+	The factor $m_R/m_2$ accounts for the enlarged interior
+	residual space (presently $R=p$). Thus the user-supplied
+	multiplier $\tau_C>0$ controls the strength of the
+	trace--skeleton penalty and the corresponding augmented
+	numerical co-normal flux while retaining the internally
+	computed degree- and geometry-dependent scaling.
+	
+	This parameter is also a practical stability control.
+	In time-dependent problems advanced through shifted elliptic
+	solves, such as backward Euler or BDF2, numerical stability
+	and physical accuracy can depend jointly on mesh resolution
+	$h$, polynomial degree $p$, time step $\Delta t$, the time
+	integrator, and $\tau_C$. Tuning $\tau_C$ is therefore a
+	first-line diagnostic when numerical growth, inaccurate
+	physical fluxes, or loss of accuracy occurs, both with and
+	without explicit elementwise conservation constraints.
+	Such tuning has substantially improved the observed
+	diffusion stability of refined high-order calculations.
+	The characterization of admissible stability regions remains
+	an open problem; regardless of the chosen stabilization
+	criterion, energy behavior, physical fluxes, conservation,
+	and conditioning must be independently verified.%
+}
+.  The active
 implementation takes $W_K$ diagonal in canonical orthonormal face
 coordinates and uses a dense QR factorization of the stacked matrix
 \begin{equation}\label{eq:full_leaf_stack}

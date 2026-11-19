@@ -14,6 +14,36 @@ _Int32C = np.ctypeslib.ndpointer(dtype=np.int32, flags="C_CONTIGUOUS")
 _Float64C = np.ctypeslib.ndpointer(dtype=np.float64, flags="C_CONTIGUOUS")
 
 
+class _MergeConditionRecord(ct.Structure):
+  _fields_ = [
+    ("merge_index", ct.c_int),
+    ("parent_id", ct.c_int),
+    ("child_A_id", ct.c_int),
+    ("child_B_id", ct.c_int),
+    ("level", ct.c_int),
+    ("interface_faces", ct.c_int),
+    ("interface_dofs", ct.c_int),
+    ("exterior_A_dofs", ct.c_int),
+    ("exterior_B_dofs", ct.c_int),
+    ("parent_boundary_dofs", ct.c_int),
+    ("child_A_boundary_dofs", ct.c_int),
+    ("child_B_boundary_dofs", ct.c_int),
+    ("H_norm_1", ct.c_double),
+    ("H_rcond_1", ct.c_double),
+    ("parent_S_norm_1", ct.c_double),
+  ]
+
+
+class _RootConditionRecord(ct.Structure):
+  _fields_ = [
+    ("dimension", ct.c_int),
+    ("singular", ct.c_int),
+    ("matrix_norm_1", ct.c_double),
+    ("reciprocal_condition_1", ct.c_double),
+    ("nonzero_spectral_ratio", ct.c_double),
+  ]
+
+
 class HpsLeafOperatorMode(IntEnum):
   DENSE = 0
   MATRIX_FREE = 1
@@ -454,6 +484,39 @@ _divergence_cons_create = (
 _cons_argtypes = list(_divergence_cons_create.argtypes)
 _cons_argtypes.insert(29, ct.c_int)
 _divergence_cons_create.argtypes = _cons_argtypes
+
+# Diagnostics constructors are versioned; legacy symbols retain their ABI.
+_set_elliptic_solver_create_signature(
+  libjpolyd.jhps_elliptic_solver_create_with_merge_diagnostics
+)
+_merge_argtypes = list(
+  libjpolyd.jhps_elliptic_solver_create_with_merge_diagnostics.argtypes
+)
+_merge_argtypes.insert(29, ct.c_int)
+libjpolyd.jhps_elliptic_solver_create_with_merge_diagnostics.argtypes = (
+  _merge_argtypes
+)
+
+_set_elliptic_solver_create_signature(
+  libjpolyd.jhps_divergence_solver_create_with_merge_diagnostics
+)
+_merge_div_argtypes = list(
+  libjpolyd.jhps_divergence_solver_create_with_merge_diagnostics.argtypes
+)
+_merge_div_argtypes.insert(29, ct.c_int)  # conservation mode
+_merge_div_argtypes.insert(30, ct.c_int)  # collect diagnostics
+libjpolyd.jhps_divergence_solver_create_with_merge_diagnostics.argtypes = (
+  _merge_div_argtypes
+)
+
+libjpolyd.jhps_elliptic_solver_get_merge_conditions.argtypes = [
+  ct.c_void_p, ct.POINTER(_MergeConditionRecord), ct.c_int,
+]
+libjpolyd.jhps_elliptic_solver_get_merge_conditions.restype = ct.c_int
+libjpolyd.jhps_elliptic_solver_get_root_condition.argtypes = [
+  ct.c_void_p, ct.POINTER(_RootConditionRecord),
+]
+libjpolyd.jhps_elliptic_solver_get_root_condition.restype = ct.c_int
 
 
 _set_elliptic_solver_solve_signature(
@@ -1054,7 +1117,7 @@ class HpsEllipticSolver:
     _conservation_mode: HpsConservationMode | str | int = (
       HpsConservationMode.NONE
     ),
-
+    collect_merge_diagnostics: bool = False,
   ) -> None:
     self.D = int(pc.D)
     self.n = int(pc.n)
@@ -1064,6 +1127,7 @@ class HpsEllipticSolver:
     self.alpha = float(alpha)
     self.beta = float(beta)
     self._handle = ct.c_void_p()
+    self.collect_merge_diagnostics = bool(collect_merge_diagnostics)
 
     if self.D < 1 or self.D > 5:
       raise ValueError("D must be in 1..5")
@@ -1092,6 +1156,7 @@ class HpsEllipticSolver:
     )
     self.nelem = int(simplices.shape[0])
     nmerge = int(merge_pairs.shape[0])
+    self.nmerge = nmerge
 
     kappa = np.ascontiguousarray(pc.kappa, dtype=np.float64)
     if kappa.shape != (self.D + 1,):
@@ -1223,17 +1288,18 @@ class HpsEllipticSolver:
         HpsConservationMode.ELEMENT_BALANCE
     )
 
-    if use_conservative_constructor:
-      create_fn = (
-        libjpolyd.jhps_divergence_solver_create_with_conservation
-      )
+    if self.collect_merge_diagnostics:
+      if _divergence_form:
+        create_name = "jhps_divergence_solver_create_with_merge_diagnostics"
+      else:
+        create_name = "jhps_elliptic_solver_create_with_merge_diagnostics"
+    elif use_conservative_constructor:
       create_name = "jhps_divergence_solver_create_with_conservation"
     elif _divergence_form:
-      create_fn = libjpolyd.jhps_divergence_solver_create
       create_name = "jhps_divergence_solver_create"
     else:
-      create_fn = libjpolyd.jhps_elliptic_solver_create
       create_name = "jhps_elliptic_solver_create"
+    create_fn = getattr(libjpolyd, create_name)
 
     create_args = [
       ct.c_int(self.D),
@@ -1267,10 +1333,13 @@ class HpsEllipticSolver:
       ct.c_int(1 if leaf_verify_each_solve else 0),
     ]
 
-    if use_conservative_constructor:
-      create_args.append(
-        ct.c_int(int(conservation_mode))
-      )
+    if use_conservative_constructor or (
+      self.collect_merge_diagnostics and _divergence_form
+    ):
+      create_args.append(ct.c_int(int(conservation_mode)))
+
+    if self.collect_merge_diagnostics:
+      create_args.append(ct.c_int(1))
 
     create_args.extend([
       ct.byref(self._handle),
@@ -1305,6 +1374,60 @@ class HpsEllipticSolver:
         "Python/C++ RefSimplexPrecomp dimension mismatch: "
         f"C++ returned {returned_dims}, Python has {expected_dims}"
       )
+
+  def merge_condition_diagnostics(self) -> np.ndarray:
+    """Construction-time interface conditioning, in merge input order.
+
+    Returns a structured NumPy array containing node IDs, tree levels,
+    Schur-block sizes, 1-norms and LAPACK GECON reciprocal estimates.
+    Requires ``collect_merge_diagnostics=True`` at construction.
+    """
+    if not self._handle.value:
+      raise RuntimeError("HpsEllipticSolver is closed")
+    if not self.collect_merge_diagnostics:
+      raise RuntimeError("merge diagnostics were not enabled")
+
+    records = (_MergeConditionRecord * self.nmerge)()
+    rc = libjpolyd.jhps_elliptic_solver_get_merge_conditions(
+      self._handle, records, ct.c_int(self.nmerge)
+    )
+    if rc != 0:
+      raise RuntimeError(f"get_merge_conditions failed with rc={rc}")
+
+    dtype = np.dtype([
+      (name, np.float64 if ctype == ct.c_double else np.int32)
+      for name, ctype in _MergeConditionRecord._fields_
+    ])
+    values = np.empty(self.nmerge, dtype=dtype)
+    for name in values.dtype.names:
+      values[name] = [getattr(record, name) for record in records]
+    return values
+
+  def root_condition_diagnostics(self) -> dict[str, int | float | bool]:
+    """Conditioning of the current root Robin system.
+
+    For pure Neumann, the root matrix is singular: reciprocal_condition_1
+    is zero, and nonzero_spectral_ratio is its penultimate-to-largest
+    singular-value ratio (not the bordered system's condition number).
+    """
+    if not self._handle.value:
+      raise RuntimeError("HpsEllipticSolver is closed")
+    if not self.collect_merge_diagnostics:
+      raise RuntimeError("merge diagnostics were not enabled")
+
+    record = _RootConditionRecord()
+    rc = libjpolyd.jhps_elliptic_solver_get_root_condition(
+      self._handle, ct.byref(record)
+    )
+    if rc != 0:
+      raise RuntimeError(f"get_root_condition failed with rc={rc}")
+    return {
+      "dimension": record.dimension,
+      "singular": bool(record.singular),
+      "matrix_norm_1": record.matrix_norm_1,
+      "reciprocal_condition_1": record.reciprocal_condition_1,
+      "nonzero_spectral_ratio": record.nonzero_spectral_ratio,
+    }
 
   def update_variable_robin(
     self,
@@ -1512,6 +1635,7 @@ class HpsDivergenceSolver(HpsEllipticSolver):
     conservation_mode: HpsConservationMode | str | int = (
       HpsConservationMode.NONE
     ),
+    collect_merge_diagnostics: bool = False,
   ) -> None:
     super().__init__(
       pc,
@@ -1536,6 +1660,7 @@ class HpsDivergenceSolver(HpsEllipticSolver):
       leaf_verify_each_solve=leaf_verify_each_solve,
       _divergence_form=True,
       _conservation_mode=conservation_mode,
+      collect_merge_diagnostics=collect_merge_diagnostics,
     )
     # Result metadata inherited from HpsEllipticResult uses p2, p1, p0;
     # for this mode those denote original input degrees p_A, p_b, p_c.

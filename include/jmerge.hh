@@ -3,11 +3,10 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 #include <cstddef>
-#include <lapacke.h>
 #include <map>
 #include <stdexcept>
-#include <type_traits>
 #include <vector>
 
 #include <jdetail.hh>
@@ -15,41 +14,6 @@
 
 namespace jsimplex {
 namespace hps_detail {
-
-template<class Real>
-struct LapackGesv;
-
-template<>
-struct LapackGesv<float>
-{
-  static inline lapack_int run(
-    lapack_int n,
-    lapack_int nrhs,
-    float* A,
-    lapack_int lda,
-    lapack_int* ipiv,
-    float* B,
-    lapack_int ldb)
-  {
-    return LAPACKE_sgesv(LAPACK_COL_MAJOR, n, nrhs, A, lda, ipiv, B, ldb);
-  }
-};
-
-template<>
-struct LapackGesv<double>
-{
-  static inline lapack_int run(
-    lapack_int n,
-    lapack_int nrhs,
-    double* A,
-    lapack_int lda,
-    lapack_int* ipiv,
-    double* B,
-    lapack_int ldb)
-  {
-    return LAPACKE_dgesv(LAPACK_COL_MAJOR, n, nrhs, A, lda, ipiv, B, ldb);
-  }
-};
 
 inline std::vector<int> expand_face_positions(
   const std::vector<int>& face_pos,
@@ -96,246 +60,17 @@ inline std::map<DSimplexFaceKey<D>,int> make_face_position_map(
   return pos;
 }
 
-template<class Real>
-inline void extract_matrix_colmajor(
-  const std::vector<Real>& A,
-  int A_rows,
-  const std::vector<int>& row_idx,
-  const std::vector<int>& col_idx,
-  std::vector<Real>& out
-)
-{
-  if (A_rows <= 0)
-  {
-    throw std::invalid_argument("extract_matrix_colmajor: A_rows must be positive");
-  }
-  if (A.size() % static_cast<std::size_t>(A_rows) != 0)
-  {
-    throw std::invalid_argument("extract_matrix_colmajor: inconsistent A size");
-  }
-
-  const int A_cols = static_cast<int>(A.size() / static_cast<std::size_t>(A_rows));
-  const int m = static_cast<int>(row_idx.size());
-  const int n = static_cast<int>(col_idx.size());
-  out.assign((std::size_t)m * n, Real(0));
-
-  for (int j = 0; j < n; ++j)
-  {
-    const int cj = col_idx[(std::size_t)j];
-    if (cj < 0 || cj >= A_cols)
-    {
-      throw std::out_of_range("extract_matrix_colmajor: column index out of range");
-    }
-
-    for (int i = 0; i < m; ++i)
-    {
-      const int ri = row_idx[(std::size_t)i];
-      if (ri < 0 || ri >= A_rows)
-      {
-        throw std::out_of_range("extract_matrix_colmajor: row index out of range");
-      }
-
-      out[(std::size_t)i + (std::size_t)m * j] =
-        A[(std::size_t)ri + (std::size_t)A_rows * cj];
-    }
-  }
-}
-
-template<class Real>
-inline void extract_vector(
-  const std::vector<Real>& x,
-  const std::vector<int>& idx,
-  std::vector<Real>& out
-)
-{
-  out.assign(idx.size(), Real(0));
-  for (int i = 0; i < static_cast<int>(idx.size()); ++i)
-  {
-    const int k = idx[(std::size_t)i];
-    if (k < 0 || k >= static_cast<int>(x.size()))
-    {
-      throw std::out_of_range("extract_vector: index out of range");
-    }
-    out[(std::size_t)i] = x[(std::size_t)k];
-  }
-}
-
-template<class Real>
-inline void add_in_place(std::vector<Real>& y, const std::vector<Real>& x)
-{
-  if (y.size() != x.size())
-  {
-    throw std::invalid_argument("add_in_place: size mismatch");
-  }
-  for (std::size_t i = 0; i < y.size(); ++i)
-  {
-    y[i] += x[i];
-  }
-}
-
-template<class Real>
-inline void scale_in_place(std::vector<Real>& y, Real alpha)
-{
-  for (Real& v : y)
-  {
-    v *= alpha;
-  }
-}
-
-template<class Real>
-inline void dense_solve_in_place(
-  int n,
-  int nrhs,
-  const std::vector<Real>& H_in,
-  std::vector<Real>& B_inout
-)
-{
-  static_assert(std::is_same<Real,float>::value || std::is_same<Real,double>::value,
-                "dense_solve_in_place supports Real=float or Real=double");
-
-  if (n <= 0)
-  {
-    throw std::invalid_argument("dense_solve_in_place: n must be positive");
-  }
-  if (nrhs < 0)
-  {
-    throw std::invalid_argument("dense_solve_in_place: nrhs must be nonnegative");
-  }
-  if (static_cast<int>(H_in.size()) != n * n)
-  {
-    throw std::invalid_argument("dense_solve_in_place: H has wrong size");
-  }
-  if (static_cast<int>(B_inout.size()) != n * nrhs)
-  {
-    throw std::invalid_argument("dense_solve_in_place: RHS has wrong size");
-  }
-  if (nrhs == 0)
-  {
-    return;
-  }
-
-  std::vector<Real> H = H_in;
-  std::vector<lapack_int> ipiv((std::size_t)n, 0);
-
-  const lapack_int info = LapackGesv<Real>::run(
-    (lapack_int)n,
-    (lapack_int)nrhs,
-    H.data(),
-    (lapack_int)n,
-    ipiv.data(),
-    B_inout.data(),
-    (lapack_int)n);
-
-  if (info != 0)
-  {
-    throw std::runtime_error("dense_solve_in_place: LAPACK gesv failed or matrix is singular");
-  }
-}
-
-template<class Real>
-inline std::vector<Real> matmul_colmajor(
-  const std::vector<Real>& A,
-  int m,
-  int k,
-  const std::vector<Real>& B,
-  int n
-)
-{
-  if (m < 0 || k < 0 || n < 0)
-  {
-    throw std::invalid_argument("matmul_colmajor: negative dimension");
-  }
-  if (static_cast<int>(A.size()) != m * k)
-  {
-    throw std::invalid_argument("matmul_colmajor: A size mismatch");
-  }
-  if (static_cast<int>(B.size()) != k * n)
-  {
-    throw std::invalid_argument("matmul_colmajor: B size mismatch");
-  }
-
-  std::vector<Real> C((std::size_t)m * n, Real(0));
-  if (m == 0 || k == 0 || n == 0)
-  {
-    return C;
-  }
-
-  detail::BlasGemm<Real>::run(
-    CblasColMajor,
-    CblasNoTrans,
-    CblasNoTrans,
-    m,
-    n,
-    k,
-    Real(1),
-    A.data(),
-    m,
-    B.data(),
-    k,
-    Real(0),
-    C.data(),
-    m);
-
-  return C;
-}
-
-template<class Real>
-inline void set_block_colmajor(
-  std::vector<Real>& A,
-  int A_rows,
-  int row0,
-  int col0,
-  const std::vector<Real>& B,
-  int B_rows,
-  int B_cols
-)
-{
-  if (A_rows <= 0 || row0 < 0 || col0 < 0 || B_rows < 0 || B_cols < 0)
-  {
-    throw std::invalid_argument("set_block_colmajor: invalid dimensions");
-  }
-  if (static_cast<int>(B.size()) != B_rows * B_cols)
-  {
-    throw std::invalid_argument("set_block_colmajor: B size mismatch");
-  }
-  if (A.size() % static_cast<std::size_t>(A_rows) != 0)
-  {
-    throw std::invalid_argument("set_block_colmajor: A size mismatch");
-  }
-  const int A_cols = static_cast<int>(A.size() / static_cast<std::size_t>(A_rows));
-  if (row0 + B_rows > A_rows || col0 + B_cols > A_cols)
-  {
-    throw std::out_of_range("set_block_colmajor: block out of range");
-  }
-
-  for (int j = 0; j < B_cols; ++j)
-  {
-    for (int i = 0; i < B_rows; ++i)
-    {
-      A[(std::size_t)(row0 + i) + (std::size_t)A_rows * (col0 + j)] =
-        B[(std::size_t)i + (std::size_t)B_rows * j];
-    }
-  }
-}
-
-template<class Real>
-inline void axpy_matrix_in_place(
-  std::vector<Real>& Y,
-  const std::vector<Real>& X,
-  Real alpha = Real(1)
-)
-{
-  if (Y.size() != X.size())
-  {
-    throw std::invalid_argument("axpy_matrix_in_place: size mismatch");
-  }
-  for (std::size_t i = 0; i < Y.size(); ++i)
-  {
-    Y[i] += alpha * X[i];
-  }
-}
-
 } // namespace hps_detail
+
+// Optional construction-time diagnostic. Not retained in NodeMergeData;
+// the caller decides whether to store it for later Python reporting.
+template<class Real>
+struct MergeConditionEstimate
+{
+  int interface_dim = 0;
+  Real H_norm_1 = Real(0);
+  Real H_rcond_1 = Real(0);
+};
 
 /*
   Merge two HPS nodes A and B.
@@ -357,7 +92,8 @@ inline Node<D,Real> merge_nodes(
   const Node<D,Real>& A,
   const Node<D,Real>& B,
   int child_A_id = -1,
-  int child_B_id = -1
+  int child_B_id = -1,
+  MergeConditionEstimate<Real>* condition_out = nullptr
 )
 {
   A.validate();
@@ -435,31 +171,23 @@ inline Node<D,Real> merge_nodes(
   std::vector<Real> SB_EE, SB_EI, SB_IE, SB_II;
   std::vector<Real> bA_E, bA_I, bB_E, bB_I;
 
-  hps_detail::extract_matrix_colmajor(A.S, nbA, A_E_idx, A_E_idx, SA_EE);
-  hps_detail::extract_matrix_colmajor(A.S, nbA, A_E_idx, A_I_idx, SA_EI);
-  hps_detail::extract_matrix_colmajor(A.S, nbA, A_I_idx, A_E_idx, SA_IE);
-  hps_detail::extract_matrix_colmajor(A.S, nbA, A_I_idx, A_I_idx, SA_II);
+  detail::extract_matrix_colmajor(A.S, nbA, A_E_idx, A_E_idx, SA_EE);
+  detail::extract_matrix_colmajor(A.S, nbA, A_E_idx, A_I_idx, SA_EI);
+  detail::extract_matrix_colmajor(A.S, nbA, A_I_idx, A_E_idx, SA_IE);
+  detail::extract_matrix_colmajor(A.S, nbA, A_I_idx, A_I_idx, SA_II);
 
-  hps_detail::extract_matrix_colmajor(B.S, nbB, B_E_idx, B_E_idx, SB_EE);
-  hps_detail::extract_matrix_colmajor(B.S, nbB, B_E_idx, B_I_idx, SB_EI);
-  hps_detail::extract_matrix_colmajor(B.S, nbB, B_I_idx, B_E_idx, SB_IE);
-  hps_detail::extract_matrix_colmajor(B.S, nbB, B_I_idx, B_I_idx, SB_II);
+  detail::extract_matrix_colmajor(B.S, nbB, B_E_idx, B_E_idx, SB_EE);
+  detail::extract_matrix_colmajor(B.S, nbB, B_E_idx, B_I_idx, SB_EI);
+  detail::extract_matrix_colmajor(B.S, nbB, B_I_idx, B_E_idx, SB_IE);
+  detail::extract_matrix_colmajor(B.S, nbB, B_I_idx, B_I_idx, SB_II);
 
-  hps_detail::extract_vector(A.b, A_E_idx, bA_E);
-  hps_detail::extract_vector(A.b, A_I_idx, bA_I);
-  hps_detail::extract_vector(B.b, B_E_idx, bB_E);
-  hps_detail::extract_vector(B.b, B_I_idx, bB_I);
-
-  std::vector<Real> H = SA_II;
-  hps_detail::add_in_place(H, SB_II);
+  detail::extract_vector(A.b, A_E_idx, bA_E);
+  detail::extract_vector(A.b, A_I_idx, bA_I);
+  detail::extract_vector(B.b, B_E_idx, bB_E);
+  detail::extract_vector(B.b, B_I_idx, bB_I);
 
   std::vector<Real> R_A = SA_IE;
-  hps_detail::dense_solve_in_place<Real>(nI, nAE, H, R_A);
-  hps_detail::scale_in_place(R_A, Real(-1));
-
   std::vector<Real> R_B = SB_IE;
-  hps_detail::dense_solve_in_place<Real>(nI, nBE, H, R_B);
-  hps_detail::scale_in_place(R_B, Real(-1));
 
   // Precompute the source-only interface inverse and its exterior transfers.
   // These depend only on the child DtN operators, not on the current source.
@@ -468,29 +196,48 @@ inline Node<D,Real> merge_nodes(
   {
     R_f[(std::size_t)i + (std::size_t)nI * i] = Real(1);
   }
-  hps_detail::dense_solve_in_place<Real>(nI, nI, H, R_f);
-  hps_detail::scale_in_place(R_f, Real(-1));
+
+  // One LU factorization supplies all three reconstruction maps. Limit the
+  // lifetime of H and its LU copy so they are freed before Schur products.
+  {
+    std::vector<Real> H = SA_II;
+    detail::add_in_place(H, SB_II);
+    const detail::DenseLuFactorization<Real> H_lu(nI, H);
+    if (condition_out)
+    {
+      condition_out->interface_dim = nI;
+      condition_out->H_norm_1 = detail::matrix_norm_1(H, nI);
+      condition_out->H_rcond_1 = H_lu.rcond_1(condition_out->H_norm_1);
+    }
+
+    H_lu.solve(nAE, R_A);
+    H_lu.solve(nBE, R_B);
+    H_lu.solve(nI, R_f);
+  }
+  detail::scale_in_place(R_A, Real(-1));
+  detail::scale_in_place(R_B, Real(-1));
+  detail::scale_in_place(R_f, Real(-1));
 
   std::vector<Real> P_A =
-    hps_detail::matmul_colmajor(SA_EI, nAE, nI, R_f, nI);
+    detail::matmul_colmajor(SA_EI, nAE, nI, R_f, nI);
   std::vector<Real> P_B =
-    hps_detail::matmul_colmajor(SB_EI, nBE, nI, R_f, nI);
+    detail::matmul_colmajor(SB_EI, nBE, nI, R_f, nI);
 
   std::vector<Real> source_interface = bA_I;
-  hps_detail::add_in_place(source_interface, bB_I);
+  detail::add_in_place(source_interface, bB_I);
   std::vector<Real> r =
-    hps_detail::matmul_colmajor(R_f, nI, nI, source_interface, 1);
+    detail::matmul_colmajor(R_f, nI, nI, source_interface, 1);
 
   std::vector<Real> TL = SA_EE;
-  std::vector<Real> prod = hps_detail::matmul_colmajor(SA_EI, nAE, nI, R_A, nAE);
-  hps_detail::axpy_matrix_in_place(TL, prod);
+  std::vector<Real> prod = detail::matmul_colmajor(SA_EI, nAE, nI, R_A, nAE);
+  detail::axpy_matrix_in_place(TL, prod);
 
-  std::vector<Real> TR = hps_detail::matmul_colmajor(SA_EI, nAE, nI, R_B, nBE);
-  std::vector<Real> BL = hps_detail::matmul_colmajor(SB_EI, nBE, nI, R_A, nAE);
+  std::vector<Real> TR = detail::matmul_colmajor(SA_EI, nAE, nI, R_B, nBE);
+  std::vector<Real> BL = detail::matmul_colmajor(SB_EI, nBE, nI, R_A, nAE);
 
   std::vector<Real> BR = SB_EE;
-  prod = hps_detail::matmul_colmajor(SB_EI, nBE, nI, R_B, nBE);
-  hps_detail::axpy_matrix_in_place(BR, prod);
+  prod = detail::matmul_colmajor(SB_EI, nBE, nI, R_B, nBE);
+  detail::axpy_matrix_in_place(BR, prod);
 
   const int nP = nAE + nBE;
   Node<D,Real> P;
@@ -501,20 +248,20 @@ inline Node<D,Real> merge_nodes(
   P.S.assign((std::size_t)nP * nP, Real(0));
   P.b.assign((std::size_t)nP, Real(0));
 
-  hps_detail::set_block_colmajor(P.S, nP, 0, 0, TL, nAE, nAE);
-  hps_detail::set_block_colmajor(P.S, nP, 0, nAE, TR, nAE, nBE);
-  hps_detail::set_block_colmajor(P.S, nP, nAE, 0, BL, nBE, nAE);
-  hps_detail::set_block_colmajor(P.S, nP, nAE, nAE, BR, nBE, nBE);
+  detail::set_block_colmajor(P.S, nP, 0, 0, TL, nAE, nAE);
+  detail::set_block_colmajor(P.S, nP, 0, nAE, TR, nAE, nBE);
+  detail::set_block_colmajor(P.S, nP, nAE, 0, BL, nBE, nAE);
+  detail::set_block_colmajor(P.S, nP, nAE, nAE, BR, nBE, nBE);
 
   std::vector<Real> btop = bA_E;
   std::vector<Real> brcorr =
-    hps_detail::matmul_colmajor(P_A, nAE, nI, source_interface, 1);
-  hps_detail::add_in_place(btop, brcorr);
+    detail::matmul_colmajor(P_A, nAE, nI, source_interface, 1);
+  detail::add_in_place(btop, brcorr);
 
   std::vector<Real> bbot = bB_E;
   brcorr =
-    hps_detail::matmul_colmajor(P_B, nBE, nI, source_interface, 1);
-  hps_detail::add_in_place(bbot, brcorr);
+    detail::matmul_colmajor(P_B, nBE, nI, source_interface, 1);
+  detail::add_in_place(bbot, brcorr);
 
   for (int i = 0; i < nAE; ++i)
   {
@@ -574,26 +321,26 @@ inline void update_merge_source(
   }
 
   std::vector<Real> bA_E, bA_I, bB_E, bB_I;
-  hps_detail::extract_vector(A.b, md.A_E_idx, bA_E);
-  hps_detail::extract_vector(A.b, md.A_I_idx, bA_I);
-  hps_detail::extract_vector(B.b, md.B_E_idx, bB_E);
-  hps_detail::extract_vector(B.b, md.B_I_idx, bB_I);
+  detail::extract_vector(A.b, md.A_E_idx, bA_E);
+  detail::extract_vector(A.b, md.A_I_idx, bA_I);
+  detail::extract_vector(B.b, md.B_E_idx, bB_E);
+  detail::extract_vector(B.b, md.B_I_idx, bB_I);
 
   std::vector<Real> source_interface = bA_I;
-  hps_detail::add_in_place(source_interface, bB_I);
+  detail::add_in_place(source_interface, bB_I);
 
-  md.r = hps_detail::matmul_colmajor(
+  md.r = detail::matmul_colmajor(
     md.R_f, md.nI, md.nI, source_interface, 1);
 
   std::vector<Real> btop = bA_E;
-  std::vector<Real> correction = hps_detail::matmul_colmajor(
+  std::vector<Real> correction = detail::matmul_colmajor(
     md.P_A, md.nAE, md.nI, source_interface, 1);
-  hps_detail::add_in_place(btop, correction);
+  detail::add_in_place(btop, correction);
 
   std::vector<Real> bbot = bB_E;
-  correction = hps_detail::matmul_colmajor(
+  correction = detail::matmul_colmajor(
     md.P_B, md.nBE, md.nI, source_interface, 1);
-  hps_detail::add_in_place(bbot, correction);
+  detail::add_in_place(bbot, correction);
 
   parent.b.assign((std::size_t)(md.nAE + md.nBE), Real(0));
   std::copy(btop.begin(), btop.end(), parent.b.begin());
