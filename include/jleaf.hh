@@ -623,7 +623,7 @@ public:
       throw std::runtime_error(
         "Leaf: incompatible conservation precompute");
 
-    if (p_b < -1 || p_b > n ||
+    if (p_b < -1 ||
         p_c < -1 || p_c > n ||
         (p_b >= 0 && !b_base) ||
         (p_c >= 0 && !c_base))
@@ -699,20 +699,22 @@ public:
       std::vector<int> alpha, tail;
       std::vector<Real> invh;
 
+      const int basis_degree = std::max({n, p_b, p_c});
+      const int M_basis = Basis<D,Real>::dim_Pi(basis_degree);
       Basis<D,Real>::build_structures(
-        n, pre->kappa.data(),
+        basis_degree, pre->kappa.data(),
         alpha, tail, invh);
 
       std::vector<Real> V(
-        (std::size_t)nq * M);
+        (std::size_t)nq * M_basis);
 
       std::vector<Real> dV(
         p_b >= 1 ?
-        (std::size_t)nq * M * D : 0);
+        (std::size_t)nq * M_basis * D : 0);
 
       Basis<D,Real>::eval_all(
         X.data(), D, 1, nq,
-        pre->kappa.data(), n,
+        pre->kappa.data(), basis_degree,
         alpha.data(), tail.data(), invh.data(),
         V.data(), nq,
         dV.empty() ? nullptr : dV.data());
@@ -784,6 +786,7 @@ public:
 
     std::vector<Real> Vface;
     std::vector<Real> Wface;
+    std::vector<Real> Yface;
     int nq_face_leb = 0;
 
     if constexpr (D > 1)
@@ -801,7 +804,7 @@ public:
         std::array<Real,D> kappa_leb{};
         kappa_leb.fill(Real(0.5));
 
-        std::vector<Real> Y(
+        Yface.resize(
           (std::size_t)nq_face_leb * (D-1));
 
         Wface.assign(
@@ -810,7 +813,7 @@ public:
         if (QuadMapped<D-1,Real>::build_kappa(
               (unsigned int)q_order,
               kappa_leb.data(),
-              Y.data(),
+              Yface.data(),
               Wface.data()) != nq_face_leb)
           throw std::runtime_error(
             "Leaf: face Lebesgue quadrature failed");
@@ -826,7 +829,7 @@ public:
           (std::size_t)nq_face_leb * kf);
 
         Basis<D-1,Real>::eval_all(
-          Y.data(), D-1, 1, nq_face_leb,
+          Yface.data(), D-1, 1, nq_face_leb,
           pre->kappa_face.data(), n,
           alpha.data(), tail.data(), invh.data(),
           Vface.data(), nq_face_leb, nullptr);
@@ -872,6 +875,81 @@ public:
       // No advection: only the conormal contribution.
       if (p_b < 0)
         continue;
+
+      if (p_b > n)
+      {
+        // The cached T_ref contains only degree-n volume columns.
+        // Evaluate the degree-p_b velocity directly at each oriented
+        // canonical face quadrature point, then integrate (b.n)*psi_j.
+        std::vector<Real> Xf;
+        int nq_bface = nq_face_leb;
+        if constexpr (D == 1)
+        {
+          nq_bface = 1;
+          Xf.assign(1, f == 0 ? Real(1) : Real(0));
+        }
+        else
+        {
+          int fv[D];
+          dsimplex_face_vertices<D>(f, fv);
+          int sigma[D];
+          lehmer_index_to_perm<D>(face_sigma_index[(std::size_t)f], sigma);
+          Xf.assign((std::size_t)nq_bface * D, Real(0));
+          for (int iq = 0; iq < nq_bface; ++iq)
+          {
+            Real mu[D];
+            Real sum_y = Real(0);
+            for (int a = 1; a < D; ++a)
+            {
+              mu[a] = Yface[(std::size_t)iq * (D-1) + (a-1)];
+              sum_y += mu[a];
+            }
+            mu[0] = Real(1) - sum_y;
+            Real lambda[D+1]{};
+            for (int local = 0; local < D; ++local)
+              lambda[fv[local]] = mu[sigma[local]];
+            for (int a = 0; a < D; ++a)
+              Xf[(std::size_t)iq * D + a] = lambda[a+1];
+          }
+        }
+
+        std::vector<int> alpha_b, tail_b;
+        std::vector<Real> invh_b;
+        Basis<D,Real>::build_structures(
+          p_b, pre->kappa.data(), alpha_b, tail_b, invh_b);
+        std::vector<Real> Vb((std::size_t)nq_bface * MpB);
+        Basis<D,Real>::eval_all(
+          Xf.data(), D, 1, nq_bface,
+          pre->kappa.data(), p_b,
+          alpha_b.data(), tail_b.data(), invh_b.data(),
+          Vb.data(), nq_bface, nullptr);
+
+        const Real inv_face_factorial = Real(1) /
+          static_cast<Real>(factorial_int(D-1));
+        for (int iq = 0; iq < nq_bface; ++iq)
+        {
+          Real bn = Real(0);
+          for (int r = 0; r < D; ++r)
+          {
+            Real br = Real(0);
+            for (int j = 0; j < MpB; ++j)
+              br += b_base[(std::size_t)r * MpB + j] *
+                Vb[(std::size_t)iq + (std::size_t)nq_bface * j];
+            bn += unit_normal[(std::size_t)f * D + r] * br;
+          }
+          if constexpr (D == 1)
+            balance_g[(std::size_t)offset] += bn;
+          else
+          {
+            const Real factor = inv_face_factorial *
+              Wface[(std::size_t)iq] * bn;
+            for (int j = 0; j < kf; ++j)
+              balance_g[(std::size_t)(offset+j)] += factor *
+                Vface[(std::size_t)iq + (std::size_t)nq_bface * j];
+          }
+        }
+        continue;
+      }
 
       // Extract b.n in the existing canonical face basis.
       //
