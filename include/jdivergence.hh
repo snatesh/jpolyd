@@ -17,7 +17,8 @@ namespace jsimplex {
 
     -div(A grad u) + b.grad(u) + c*u = f.
 
-  All input polynomial degrees are <= n.
+  The diffusion and reaction degrees are <= n; the advection degree
+  may exceed n when using restricted multiplication.
   A is required; b and c may be absent (degree -1).
 */
 inline EllipticDegreeSpec
@@ -32,7 +33,7 @@ divergence_form_expanded_degrees(
       "divergence form: require n >= 2");
 
   if (p_A < 0 || p_A > n ||
-      p_b < -1 || p_b > n ||
+      p_b < -1 ||
       p_c < -1 || p_c > n)
     throw std::invalid_argument(
       "divergence form: invalid coefficient degree");
@@ -87,7 +88,9 @@ struct DivergenceFormExpandedCoefficients
     Coefficients are in kappa_res = kappa + 2,
     packed to the expanded polynomial degrees.
 
-  All coefficient degrees must be <= pre.n.
+  The diffusion and reaction degrees must be <= pre.n.
+  For p_b > pre.n the first-order coefficients are promoted using
+  independent high-degree quadrature rather than pre.L0_ref.
 */
 template<int D, class Real>
 DivergenceFormExpandedCoefficients<D,Real>
@@ -193,18 +196,84 @@ expand_divergence_form_element(
   {
     const int MpB = Basis<D,Real>::dim_Pi(p_b);
 
-    for (int s = 0; s < D; ++s)
+    if (p_b <= pre.n)
     {
-      const Real* b_s = b + (std::size_t)s * MpB;
-      Real* bout_s = out.b.data() + (std::size_t)s * Mp1;
-
-      for (int j = 0; j < MpB; ++j)
+      // Use the cached promotion for coefficient degrees up to n.
+      for (int s = 0; s < D; ++s)
       {
-        const Real coeff = b_s[j];
-        const Real* L0_col = L0 + (std::size_t)M * j;
+        const Real* b_s = b + (std::size_t)s * MpB;
+        Real* bout_s = out.b.data() + (std::size_t)s * Mp1;
 
+        for (int j = 0; j < MpB; ++j)
+        {
+          const Real coeff = b_s[j];
+          const Real* L0_col = L0 + (std::size_t)M * j;
+
+          for (int i = 0; i < MpB; ++i)
+            bout_s[i] += L0_col[i] * coeff;
+        }
+      }
+    }
+    else
+    {
+      // The cached degree-n L0_ref cannot index the additional columns.
+      // Exactly promote each degree-p_b base-kappa coefficient polynomial
+      // into the degree-p_b kappa_res basis. The downstream quadrature
+      // multiplier independently restricts the product to R = n.
+      // 2*p_b <= 2*(p_b+1)-1 guarantees exact triple-free promotion.
+      const int q_order = p_b + 1;
+      const int nq = static_cast<int>(
+        QuadMapped<D,Real>::npoints((unsigned int)q_order));
+      std::vector<Real> X((std::size_t)nq * D);
+      std::vector<Real> W((std::size_t)nq);
+      if (QuadMapped<D,Real>::build_kappa(
+            (unsigned int)q_order, pre.kappa_res.data(),
+            X.data(), W.data()) != nq)
+        throw std::runtime_error(
+          "expand_divergence_form_element: coefficient quadrature failed");
+
+      std::vector<int> alpha_base, tail_base;
+      std::vector<Real> invh_base;
+      Basis<D,Real>::build_structures(
+        p_b, pre.kappa.data(), alpha_base, tail_base, invh_base);
+      std::vector<int> alpha_res, tail_res;
+      std::vector<Real> invh_res;
+      Basis<D,Real>::build_structures(
+        p_b, pre.kappa_res.data(), alpha_res, tail_res, invh_res);
+
+      std::vector<Real> V_base((std::size_t)nq * MpB);
+      std::vector<Real> V_res((std::size_t)nq * MpB);
+      Basis<D,Real>::eval_all(
+        X.data(), D, 1, nq, pre.kappa.data(), p_b,
+        alpha_base.data(), tail_base.data(), invh_base.data(),
+        V_base.data(), nq, nullptr);
+      Basis<D,Real>::eval_all(
+        X.data(), D, 1, nq, pre.kappa_res.data(), p_b,
+        alpha_res.data(), tail_res.data(), invh_res.data(),
+        V_res.data(), nq, nullptr);
+
+      std::vector<Real> values((std::size_t)nq);
+      for (int s = 0; s < D; ++s)
+      {
+        const Real* b_s = b + (std::size_t)s * MpB;
+        Real* bout_s = out.b.data() + (std::size_t)s * Mp1;
+        for (int iq = 0; iq < nq; ++iq)
+        {
+          Real value = Real(0);
+          for (int j = 0; j < MpB; ++j)
+            value += b_s[j] * V_base[
+              (std::size_t)iq + (std::size_t)nq * j];
+          values[(std::size_t)iq] = W[(std::size_t)iq] * value;
+        }
         for (int i = 0; i < MpB; ++i)
-          bout_s[i] += L0_col[i] * coeff;
+        {
+          Real projected = Real(0);
+          for (int iq = 0; iq < nq; ++iq)
+            projected += V_res[
+              (std::size_t)iq + (std::size_t)nq * i] *
+              values[(std::size_t)iq];
+          bout_s[i] += projected;
+        }
       }
     }
   }
